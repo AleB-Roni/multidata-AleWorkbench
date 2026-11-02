@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.6.1.4
+// @version      1.6.1.5
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -180,7 +180,6 @@
   //   intern:      eigene Firmen (Zeiten-Tab „Intern“, nie abrechenbar)
   //   othersBillable: Vorschlag für alle übrigen Kunden
   const team = () => ({ nonBillable: [], intern: [], othersBillable: true, ...store.get(CFG.store.team, {}) });
-  //   officeAutoOpen: Office-Dateien öffnen sich per Browser-Richtlinie automatisch (keine Einrichtungshinweise)
   const teamConfigured = () => { const t = store.get(CFG.store.team, null); return !!t && ('nonBillable' in t || 'intern' in t); };
   const normName = s => String(s || '').replace(/^\d+\s*-\s*/, '').toUpperCase().replace(/[^A-ZÄÖÜ0-9]+/g, ' ').trim();
   const inList = (list, kndId, name) => kndId ? list.some(c => String(c.id) === String(kndId))
@@ -299,7 +298,7 @@
   }
   // --- Office-Dateien lokal öffnen ---
   // Die Originaldatei wird heruntergeladen; der Browser öffnet sie im installierten Office (Word, Excel, PowerPoint, Visio).
-  // Ohne Rückfrage geht das, wenn „Dateien dieses Typs immer öffnen“ gesetzt ist (je Typ) oder per Richtlinie AutoOpenFileTypes.
+  // Ohne Rückfrage geht das, wenn im Browser „Dateien dieses Typs immer öffnen“ gesetzt ist (einmal je Dateityp).
   const OFFICE_EXT = new Set(['doc', 'docx', 'docm', 'dot', 'dotx', 'dotm', 'odt', 'xls', 'xlsx', 'xlsm', 'xlsb', 'ods', 'ppt', 'pptx', 'pptm', 'pps', 'ppsx', 'pot', 'potx', 'odp', 'vsd', 'vsdx']);
   const fileExt = n => (String(n || '').toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
   async function openLocal(doc) {
@@ -309,7 +308,7 @@
   }
   const OFFICE_ACK = 'mdqt.officeAck'; // Dateitypen, für die „immer öffnen“ eingerichtet wurde (bzw. Hinweis aus)
   const officeAck = () => store.get(OFFICE_ACK, { all: false, ext: [] });
-  const officeHintNeeded = ext => !team().officeAutoOpen && !officeAck().all && !officeAck().ext.includes(ext);
+  const officeHintNeeded = ext => !officeAck().all && !officeAck().ext.includes(ext);
   const isEdge = () => /\bEdg\//.test(navigator.userAgent);
   const officeHowTo = ext => isEdge()
     ? `Edge: oben rechts erscheint der Download. Dort bei der .${ext}-Datei auf „…“ klicken → „Dateien dieses Typs immer öffnen“.`
@@ -1332,11 +1331,10 @@
           <input type="file" data-ref="stImportFile" accept=".json,application/json" style="display:none">
         </div>
         <h3 style="margin:14px 0 6px">Office-Dateien (Word, Excel, PowerPoint, Visio)</h3>
-        <div class="hint">„🖥 In Office öffnen“ lädt die Originaldatei herunter, der Browser öffnet sie im installierten Office. Damit das ohne weiteren Klick passiert, einmal je Dateityp „Dateien dieses Typs immer öffnen“ wählen – die Werkbank zeigt dazu beim ersten Öffnen eine kurze Anleitung. Im Team zentral per Richtlinie: siehe README (deploy/office-autoopen.ps1). Änderungen werden nicht nach MultiData zurückgeschrieben.</div>
+        <div class="hint">„🖥 In Office öffnen“ lädt die Originaldatei herunter, der Browser öffnet sie im installierten Office. Damit das ohne weiteren Klick passiert, einmal je Dateityp „Dateien dieses Typs immer öffnen“ wählen – die Werkbank zeigt dazu beim ersten Öffnen eine kurze Anleitung. Änderungen werden nicht nach MultiData zurückgeschrieben.</div>
         <div class="row" style="margin-top:6px;align-items:center"><span class="hint" data-ref="oStatus" style="flex:1"></span>
           <button class="btn sm sec" data-ref="oReset">Hinweise wieder anzeigen</button></div>
-        <label class="chk"><input type="checkbox" data-ref="oManaged"> Im Team per Richtlinie eingerichtet – keine Einrichtungshinweise zeigen (wird mit der Team-Datei exportiert)</label>
-        <div class="hint" style="margin-top:8px">Die exportierte Team-Datei (JSON) enthält Kundenlisten und die Office-Einstellung und kann an Kolleg:innen weitergegeben werden.</div>
+        <div class="hint" style="margin-top:8px">Die exportierte Team-Datei (JSON) enthält die Kundenlisten und kann an Kolleg:innen weitergegeben werden.</div>
         <div class="msg" data-ref="stTeamMsg"></div>
 
         <h3 style="margin:18px 0 6px">Lokale Daten</h3>
@@ -2910,19 +2908,13 @@
   const nbPick = multiPick($('stNb'), { placeholder: 'Kunde suchen (Name oder Nr.) …', source: custSource, onChange: saveTeam });
   const inPick = multiPick($('stIn'), { placeholder: 'Kunde suchen (Name oder Nr.) …', source: custSource, onChange: saveTeam });
   function renderOffice() {
-    const a = officeAck(), managed = !!team().officeAutoOpen;
-    $('oManaged').checked = managed;
-    $('oStatus').textContent = managed ? '✔ Per Richtlinie eingerichtet – keine Hinweise.'
-      : a.all ? 'Einrichtungshinweise ausgeschaltet.'
+    const a = officeAck();
+    $('oStatus').textContent = a.all ? 'Einrichtungshinweise ausgeschaltet.'
       : a.ext.length ? `Eingerichtet für: ${a.ext.map(e => '.' + e).join(', ')}. Für weitere Typen erscheint beim ersten Öffnen ein Hinweis.`
       : 'Beim ersten Öffnen je Dateityp erscheint eine kurze Anleitung.';
-    $('oReset').style.display = !managed && (a.all || a.ext.length) ? '' : 'none';
+    $('oReset').style.display = a.all || a.ext.length ? '' : 'none';
   }
   $('oReset').addEventListener('click', () => { store.set(OFFICE_ACK, { all: false, ext: [] }); renderOffice(); });
-  $('oManaged').addEventListener('change', () => {
-    store.set(CFG.store.team, { ...store.get(CFG.store.team, {}), officeAutoOpen: $('oManaged').checked });
-    renderOffice(); msg('stTeamMsg', '✔ Office-Einstellung übernommen.', 'ok');
-  });
   function renderTeam() {
     renderOffice();
     const tc = team();
@@ -2941,7 +2933,6 @@
   $('stExport').addEventListener('click', () => {
     const tc = team();
     const data = { type: 'mdqt-team', version: 1, exportedAt: new Date().toISOString(), nonBillable: tc.nonBillable, intern: tc.intern, othersBillable: tc.othersBillable !== false };
-    if (tc.officeAutoOpen) data.officeAutoOpen = true;
     if ($('stExpTpl').checked) data.templates = templates();
     download('werkbank-team-config.json', JSON.stringify(data, null, 2), 'application/json');
     msg('stTeamMsg', '✔ Exportiert.', 'ok');
@@ -2954,7 +2945,7 @@
       const d = JSON.parse(await f.text());
       if (!d || d.type !== 'mdqt-team') throw new Error('Keine Werkbank-Team-Konfiguration.');
       const clean = l => (Array.isArray(l) ? l : []).filter(c => c && c.id != null).map(c => ({ id: String(c.id), name: String(c.name || c.id) }));
-      store.set(CFG.store.team, { nonBillable: clean(d.nonBillable), intern: clean(d.intern), othersBillable: d.othersBillable !== false, officeAutoOpen: d.officeAutoOpen === true });
+      store.set(CFG.store.team, { nonBillable: clean(d.nonBillable), intern: clean(d.intern), othersBillable: d.othersBillable !== false });
       let extra = '';
       if (Array.isArray(d.templates) && d.templates.length) {
         const own = templates(), names = new Set(own.map(t => t.name));

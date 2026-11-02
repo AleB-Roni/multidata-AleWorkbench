@@ -54,18 +54,7 @@ Kundenspezifisches (welche Kunden nicht abrechenbar bzw. intern sind) steht **ni
 
 ### Office-Dateien ohne Klick öffnen
 
-Damit sich die Datei nach dem Download sofort in Office öffnet, braucht der Browser die Einstellung „immer öffnen“ für den Dateityp.
-
-**Zentral für alle (empfohlen, Admin):** `deploy/office-autoopen.ps1` setzt für Chrome und Edge die Richtlinien `AutoOpenFileTypes` (Word-, Excel-, PowerPoint-, Visio-Formate) und `AutoOpenAllowedForURLs` = `csp.synaforce.com`. Automatisch geöffnet wird also nur, was von MultiData kommt; vorhandene Einträge bleiben erhalten.
-
-- Intune: als Plattformskript hochladen, im Systemkontext, 64-Bit-PowerShell. Alternativ dieselben zwei Richtlinien über den Einstellungskatalog (Chrome/Edge) setzen.
-- Manuell: PowerShell als Administrator, `.\office-autoopen.ps1` (Test ohne Änderung: `-WhatIf`, Rückbau: `-Remove`).
-- Chrome und Edge werten diese Richtlinien unter Windows nur auf verwalteten Geräten aus (AD, Entra ID oder Intune). Kontrolle unter `edge://policy` bzw. `chrome://policy`.
-- Makrofähige Formate (docm, xlsm, pptm, xlsb …) sind absichtlich nicht enthalten.
-
-Danach in der Werkbank unter ⚙ → Office-Dateien „Im Team per Richtlinie eingerichtet“ anhaken und die Team-Konfiguration exportieren. Dann bekommt niemand mehr Einrichtungshinweise.
-
-**Ohne Richtlinie:** Beim ersten Öffnen eines Dateityps zeigt die Werkbank eine kurze Anleitung für den eigenen Browser: im Download-Fenster bei der Datei „Dateien dieses Typs immer öffnen“ wählen. Das ist einmal je Dateityp (docx, xlsx …) nötig.
+Damit sich die Datei nach dem Download sofort in Office öffnet, braucht der Browser für den Dateityp die Einstellung „Dateien dieses Typs immer öffnen“. Beim ersten Öffnen eines Dateityps zeigt die Werkbank dazu eine kurze Anleitung für Chrome bzw. Edge. Das ist einmal je Dateityp (docx, xlsx …) nötig. Unter ⚙ → Office-Dateien lassen sich die Hinweise wieder einblenden.
 
 ## Datenschutz
 
