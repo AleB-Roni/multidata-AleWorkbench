@@ -1,0 +1,64 @@
+# Beta → Stable freigeben
+# Manuell starten: GitHub → Actions → „Beta freigeben“ → Run workflow.
+# Kopiert beta/multidata-werkbank.user.js nach stable/ und passt den Kopf an:
+#   @name     „MultiData Werkbank (Beta)“ → „MultiData Werkbank“
+#   @version  1.5.0.3 → 1.5.0   (4. Stelle = Beta-Zähler entfällt)
+#   URLs      /beta/ → /stable/
+name: Beta freigeben
+
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: "Kurz: Was ist neu? (erscheint im Commit und im Release)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stable-Datei erzeugen
+        id: build
+        run: |
+          set -euo pipefail
+          src=beta/multidata-werkbank.user.js
+          dst=stable/multidata-werkbank.user.js
+          mkdir -p stable
+          beta_ver=$(grep -m1 -oP '^// @version\s+\K\S+' "$src")
+          ver=$(echo "$beta_ver" | cut -d. -f1-3)
+          if [ -f "$dst" ]; then
+            old=$(grep -m1 -oP '^// @version\s+\K\S+' "$dst")
+            if [ "$(printf '%s\n%s\n' "$old" "$ver" | sort -V | tail -1)" != "$ver" ] || [ "$old" = "$ver" ]; then
+              echo "::error::Stable ist bereits $old – Beta-Version ($beta_ver) erst auf eine höhere Version setzen (z. B. 1.5.1.1)."
+              exit 1
+            fi
+          fi
+          sed -E \
+            -e 's#^(// @name\s+.*) \(Beta\)$#\1#' \
+            -e "s#^(// @version\s+).*#\1${ver}#" \
+            -e 's#(/main)/beta/#\1/stable/#g' \
+            "$src" > "$dst"
+          grep -q "^// @version\s\+${ver}$" "$dst"
+          if sed -n '1,/==\/UserScript==/p' "$dst" | grep -q -e '(Beta)' -e '/beta/'; then echo "::error::Kopf nicht vollständig umgestellt"; exit 1; fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Commit, Tag und Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ inputs.notes }}
+          VER: ${{ steps.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add stable/multidata-werkbank.user.js
+          git commit -m "Release v${VER}${NOTES:+ – $NOTES}"
+          git tag "v${VER}"
+          git push origin HEAD --tags
+          gh release create "v${VER}" stable/multidata-werkbank.user.js --title "v${VER}" --notes "${NOTES:-Freigabe aus Beta}"

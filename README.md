@@ -22,8 +22,6 @@ Updates: Tampermonkey prüft regelmäßig (standardmäßig täglich) und install
 | Beta | `beta/multidata-werkbank.user.js` | Entwicklung/Test (Version `x.y.z.n`, Name „… (Beta)“) |
 | Stable | `stable/multidata-werkbank.user.js` | alle Kolleg:innen (Version `x.y.z`) |
 
-Beta installieren (nur zum Testen): **https://raw.githubusercontent.com/lukasebner1998-ship-it/multidata-werkbank/main/beta/multidata-werkbank.user.js**
-
 Bitte **nicht beide** gleichzeitig aktiv haben; es läuft ohnehin nur die zuerst geladene.
 
 ## Release-Ablauf
