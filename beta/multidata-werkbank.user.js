@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.6.1.1
+// @version      1.6.1.2
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -70,6 +70,9 @@
     inboxIntervalMin: 5,        // Inbox automatisch alle n Minuten aktualisieren
     inboxDays: 14,              // Zeitraum für Kundenantworten / Kommentare in der Inbox
     appHash: '#werkbank',        // App-Modus: …/mdweb/rwi/HOME/0#werkbank[/ticket/<Nr> | /search | /times …]
+    // Eingebaute App-Registrierung „MultiData Werkbank“ (Entra, Typ SPA) für Office Online. Die Client-ID ist kein
+    // Geheimnis. tenant leer = automatisch aus der eigenen MultiData-Mailadresse (Domäne) ermitteln.
+    m365: { clientId: '', tenant: '' },
     maxUploadMB: 25,
     fonts: ['Arial', 'Consolas', 'Calibri', 'Segoe UI', 'Verdana', 'Tahoma', 'Times New Roman', 'Courier New'],
     defaultFont: 'Arial',
@@ -188,9 +191,14 @@
   //   intern:      eigene Firmen (Zeiten-Tab „Intern“, nie abrechenbar)
   //   othersBillable: Vorschlag für alle übrigen Kunden
   const team = () => ({ nonBillable: [], intern: [], othersBillable: true, ...store.get(CFG.store.team, {}) });
-  //   m365: { tenant, clientId, folder } – „Office-Dateien in Office Online öffnen“ (App-Registrierung in Entra)
-  const m365Cfg = () => ({ tenant: '', clientId: '', folder: 'Werkbank-Anhänge', ...(team().m365 || {}) });
-  const m365Ready = () => { const c = m365Cfg(); return !!(c.tenant && c.clientId); };
+  //   m365: { tenant, clientId, folder } – optionale Abweichung von der eingebauten App-Registrierung (CFG.m365).
+  //   Leere Werte zählen nicht: dann gilt der eingebaute Wert bzw. der Mandant wird automatisch ermittelt.
+  const m365Cfg = () => {
+    const o = team().m365 || {}, pick = (v, d) => (typeof v === 'string' && v.trim()) ? v.trim() : d;
+    return { tenant: pick(o.tenant, CFG.m365.tenant), clientId: pick(o.clientId, CFG.m365.clientId), folder: pick(o.folder, 'Werkbank-Anhänge') };
+  };
+  // Office Online ist aktiv, sobald eine Client-ID bekannt ist (eingebaut oder per Team-Datei); der Mandant ergibt sich automatisch.
+  const m365Ready = () => !!m365Cfg().clientId;
   const teamConfigured = () => store.get(CFG.store.team, null) !== null;
   const normName = s => String(s || '').replace(/^\d+\s*-\s*/, '').toUpperCase().replace(/[^A-ZÄÖÜ0-9]+/g, ' ').trim();
   const inList = (list, kndId, name) => kndId ? list.some(c => String(c.id) === String(kndId))
@@ -316,29 +324,45 @@
   const m365Redirect = () => location.origin + '/mdweb/werkbank-auth';
   const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const graphStore = { get: () => store.get('mdqt.graph', null), set: v => store.set('mdqt.graph', v), clear: () => { try { localStorage.removeItem('mdqt.graph'); } catch { /* ignore */ } } };
-  async function tokenRequest(params) {
+  // Mandant und Anmeldename automatisch: eigene Mailadresse aus MultiData → Domäne als Mandant (z. B. firma.de).
+  // Funktioniert für Ein-Mandanten-App-Registrierungen; ohne Mailadresse → „organizations“.
+  let m365Who = null;
+  async function m365Identity() {
+    const c = m365Cfg();
+    if (!m365Who) {
+      let email = '';
+      try { const id = await me(); email = ((await loadUsers()).find(u => u.id === id)?.email || '').trim().toLowerCase(); } catch { /* ohne Hinweis weiter */ }
+      m365Who = { email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : '' };
+    }
+    return { email: m365Who.email, authority: c.tenant || m365Who.email.split('@')[1] || 'organizations' };
+  }
+  async function tokenRequest(params, authority) {
     const c = m365Cfg();
     let r;
     try {
-      r = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(c.tenant)}/oauth2/v2.0/token`, {
+      r = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(authority)}/oauth2/v2.0/token`, {
         method: 'POST', body: new URLSearchParams({ client_id: c.clientId, scope: M365_SCOPES, ...params }),
       });
     } catch (e) { throw new Error('Microsoft-Anmeldung nicht erreichbar (' + e.message + ').'); }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error('Microsoft-Anmeldung: ' + (j.error_description || j.error || r.status).toString().split('\r')[0]), { code: j.error });
     const prev = graphStore.get() || {};
-    const v = { access: j.access_token, exp: Date.now() + (j.expires_in - 120) * 1000, refresh: j.refresh_token || prev.refresh, user: prev.user || null, tenant: c.tenant, clientId: c.clientId };
+    const v = { access: j.access_token, exp: Date.now() + (j.expires_in - 120) * 1000, refresh: j.refresh_token || prev.refresh, user: prev.user || null,
+      authority, tenant: c.tenant, clientId: c.clientId };
     graphStore.set(v);
     return v;
   }
+  // Angemeldet (Refresh-Token passend zur aktuellen App-Registrierung vorhanden)?
+  const graphSignedIn = () => { const g = graphStore.get(), c = m365Cfg(); return !!(g?.refresh && g.clientId === c.clientId && (g.tenant || '') === c.tenant); };
   // Gültiges Token ohne Benutzerinteraktion (oder null)
   async function graphTokenSilent() {
     const g = graphStore.get(), c = m365Cfg();
-    if (!g || g.tenant !== c.tenant || g.clientId !== c.clientId) return null;
+    if (!g || g.clientId !== c.clientId || (g.tenant || '') !== c.tenant) return null;
     if (g.access && g.exp > Date.now()) return g.access;
     if (!g.refresh) return null;
-    try { return (await tokenRequest({ grant_type: 'refresh_token', refresh_token: g.refresh })).access; }
-    catch { graphStore.clear(); return null; }
+    const authority = g.authority || g.tenant || (await m365Identity()).authority;
+    try { return (await tokenRequest({ grant_type: 'refresh_token', refresh_token: g.refresh }, authority)).access; }
+    catch (e) { if (e.code) graphStore.clear(); return null; } // nur bei echter Ablehnung abmelden, nicht bei Netzfehlern
   }
   // Fenster-Hilfen für das vorab geöffnete Fenster (Popup-Blocker)
   function winMessage(win, text) {
@@ -350,9 +374,10 @@
     const verifier = b64url(crypto.getRandomValues(new Uint8Array(48)));
     const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
     const state = 'mdqt' + b64url(crypto.getRandomValues(new Uint8Array(12)));
-    const g = graphStore.get();
+    const g = graphStore.get(), who = await m365Identity();
+    const hint = g?.user?.upn || who.email;
     const q = new URLSearchParams({ client_id: c.clientId, response_type: 'code', response_mode: 'fragment', redirect_uri: m365Redirect(), scope: M365_SCOPES,
-      state, code_challenge: challenge, code_challenge_method: 'S256', ...(g?.user?.upn ? { login_hint: g.user.upn } : { prompt: 'select_account' }) });
+      state, code_challenge: challenge, code_challenge_method: 'S256', ...(hint ? { login_hint: hint } : { prompt: 'select_account' }) });
     const result = new Promise((resolve, reject) => {
       const ch = 'BroadcastChannel' in window ? new BroadcastChannel('mdqt-auth') : null;
       const t0 = Date.now();
@@ -367,9 +392,9 @@
         try { const h = win.location.hash; if (/[#&]state=mdqt/.test(h)) { const p = new URLSearchParams(h.slice(1)); handle({ type: 'auth', state: p.get('state'), code: p.get('code'), error: p.get('error'), errorText: p.get('error_description') }); } } catch { /* noch bei Microsoft */ }
       }, 300);
     });
-    win.location.href = `https://login.microsoftonline.com/${encodeURIComponent(c.tenant)}/oauth2/v2.0/authorize?` + q;
+    win.location.href = `https://login.microsoftonline.com/${encodeURIComponent(who.authority)}/oauth2/v2.0/authorize?` + q;
     const code = await result;
-    const v = await tokenRequest({ grant_type: 'authorization_code', code, redirect_uri: m365Redirect(), code_verifier: verifier });
+    const v = await tokenRequest({ grant_type: 'authorization_code', code, redirect_uri: m365Redirect(), code_verifier: verifier }, who.authority);
     try { const me = await graphFetch('/me?$select=displayName,userPrincipalName', {}, v.access); graphStore.set({ ...graphStore.get(), user: { name: me.displayName, upn: me.userPrincipalName } }); } catch { /* optional */ }
     return { access: v.access, state };
   }
@@ -418,6 +443,21 @@
       else winMessage(win, '✖ ' + e.message);
       throw e;
     } finally { if (ch) setTimeout(() => ch.close(), 2000); }
+  }
+
+  // Nur anmelden (Einstellungen): eigenes Fenster, nach Erfolg kurze Bestätigung und automatisch schließen.
+  // Muss direkt aus einem Klick aufgerufen werden (Popup-Blocker).
+  async function m365SignIn() {
+    const win = window.open('about:blank', '_blank', 'popup,width=520,height=680');
+    if (!win) throw new Error('Das Anmeldefenster wurde vom Browser blockiert – Pop-ups für diese Seite erlauben.');
+    winMessage(win, 'Microsoft-Anmeldung wird geöffnet …');
+    const { state } = await graphLogin(win);
+    const text = '✔ Angemeldet. Office-Dateien öffnen sich ab jetzt direkt in Office Online. Dieses Fenster schließt sich gleich.';
+    try { winMessage(win, text); setTimeout(() => { try { win.close(); } catch { /* ignore */ } }, 1800); }
+    catch {
+      const ch = 'BroadcastChannel' in window ? new BroadcastChannel('mdqt-auth') : null;
+      if (ch) { ch.postMessage({ type: 'msg', state, text }); setTimeout(() => { ch.postMessage({ type: 'close', state }); ch.close(); }, 1800); }
+    }
   }
 
   // --- .eml-Vorschau (lokal im Browser, nichts wird hochgeladen) ---
@@ -1290,14 +1330,18 @@
           <input type="file" data-ref="stImportFile" accept=".json,application/json" style="display:none">
         </div>
         <h3 style="margin:14px 0 6px">Microsoft 365 – Office-Dateien in Office Online öffnen</h3>
-        <div class="hint">Word-, Excel- und PowerPoint-Anhänge werden als Kopie in deinen OneDrive-Ordner geladen (Unterordner je Ticket) und in Office Online geöffnet. Änderungen dort werden nicht nach MultiData zurückgeschrieben. Benötigt eine App-Registrierung in Entra (Typ „Single-Page-Anwendung“, Umleitungs-URI unten, delegiert Files.ReadWrite + User.Read).</div>
-        <div class="row" style="margin-top:6px">
-          <div class="c"><label class="l">Mandant (Tenant-ID oder Domäne)</label><input type="text" data-ref="mTenant" placeholder="z. B. firma.onmicrosoft.com"></div>
-          <div class="c"><label class="l">Anwendungs-ID (Client-ID)</label><input type="text" data-ref="mClient" placeholder="00000000-0000-0000-0000-000000000000"></div>
-          <div class="c"><label class="l">OneDrive-Ordner</label><input type="text" data-ref="mFolder" placeholder="Werkbank-Anhänge"></div>
-        </div>
-        <div class="hint">Umleitungs-URI für die App-Registrierung: <code data-ref="mRedirect"></code></div>
-        <div class="row" style="margin-top:6px;align-items:center"><button class="btn sm sec" data-ref="mSave">Übernehmen</button><button class="btn sm sec" data-ref="mLogout">Abmelden</button><span class="hint" data-ref="mStatus"></span></div>
+        <div class="hint">Word-, Excel-, PowerPoint- und Visio-Anhänge öffnen sich in Office Online: Die Werkbank legt eine Kopie in deinem OneDrive ab (Unterordner je Ticket). Änderungen dort werden nicht nach MultiData zurückgeschrieben. Beim ersten Öffnen erscheint einmalig die Microsoft-Anmeldung in einem eigenen Fenster – danach geht es ohne Rückfrage.</div>
+        <div class="row" style="margin-top:6px;align-items:center"><span data-ref="mStatus" style="flex:1"></span>
+          <button class="btn sm" data-ref="mLogin">Jetzt anmelden</button><button class="btn sm sec" data-ref="mLogout">Abmelden</button></div>
+        <details data-ref="mAdv" style="margin-top:6px"><summary class="hint" style="cursor:pointer">Erweitert: eigene App-Registrierung / OneDrive-Ordner</summary>
+          <div class="hint" style="margin-top:4px">Normalerweise nichts einzutragen. Leere Felder = eingebaute App-Registrierung, Mandant automatisch aus deiner MultiData-Mailadresse. Eigene App-Registrierung: Entra → App-Registrierungen, Typ „Single-Page-Anwendung“, delegiert User.Read, Files.ReadWrite, offline_access, Umleitungs-URI <code data-ref="mRedirect"></code></div>
+          <div class="row" style="margin-top:6px">
+            <div class="c"><label class="l">Mandant (Tenant-ID oder Domäne)</label><input type="text" data-ref="mTenant" placeholder="automatisch"></div>
+            <div class="c"><label class="l">Anwendungs-ID (Client-ID)</label><input type="text" data-ref="mClient" placeholder="eingebaut"></div>
+            <div class="c"><label class="l">OneDrive-Ordner</label><input type="text" data-ref="mFolder" placeholder="Werkbank-Anhänge"></div>
+          </div>
+          <div class="row" style="margin-top:6px"><button class="btn sm sec" data-ref="mSave">Übernehmen</button></div>
+        </details>
         <div class="hint" style="margin-top:8px">Die exportierte Team-Datei (JSON) enthält Kundenlisten und – falls eingerichtet – Mandant/Client-ID (keine Anmeldedaten) und kann an Kolleg:innen weitergegeben werden.</div>
         <div class="msg" data-ref="stTeamMsg"></div>
 
@@ -2849,17 +2893,28 @@
   const nbPick = multiPick($('stNb'), { placeholder: 'Kunde suchen (Name oder Nr.) …', source: custSource, onChange: saveTeam });
   const inPick = multiPick($('stIn'), { placeholder: 'Kunde suchen (Name oder Nr.) …', source: custSource, onChange: saveTeam });
   function renderM365() {
-    const c = m365Cfg(), g = graphStore.get();
-    $('mTenant').value = c.tenant; $('mClient').value = c.clientId; $('mFolder').value = c.folder;
+    const o = team().m365 || {}, g = graphStore.get(), ready = m365Ready(), signed = graphSignedIn();
+    $('mTenant').value = o.tenant || ''; $('mClient').value = o.clientId || ''; $('mFolder').value = o.folder && o.folder !== 'Werkbank-Anhänge' ? o.folder : '';
+    $('mClient').placeholder = CFG.m365.clientId ? 'eingebaut' : '00000000-0000-0000-0000-000000000000';
     $('mRedirect').textContent = m365Redirect();
-    $('mStatus').textContent = !m365Ready() ? 'nicht eingerichtet' : g?.refresh && g.tenant === c.tenant ? `angemeldet${g.user ? ' als ' + g.user.upn : ''}` : 'eingerichtet – Anmeldung beim ersten Öffnen';
-    $('mLogout').style.display = g?.refresh ? '' : 'none';
+    $('mStatus').textContent = !ready ? '⚠ Office Online ist noch nicht verfügbar (keine App-Registrierung hinterlegt) – Office-Dateien werden heruntergeladen.'
+      : signed ? `✔ Angemeldet${g.user ? ' als ' + g.user.upn : ''} – Office-Dateien öffnen sich in Office Online.`
+      : 'Noch nicht angemeldet – die Anmeldung startet automatisch beim ersten Öffnen einer Office-Datei.';
+    $('mLogin').style.display = ready && !signed ? '' : 'none';
+    $('mLogout').style.display = signed ? '' : 'none';
+    if (!ready || o.tenant || o.clientId) $('mAdv').open = true;
   }
+  $('mLogin').addEventListener('click', ev => busy(ev.target, async () => {
+    try { await m365SignIn(); renderM365(); msg('stTeamMsg', '✔ Bei Microsoft 365 angemeldet.', 'ok'); }
+    catch (e) { if (!e.quiet) msg('stTeamMsg', '✖ ' + e.message, 'err'); }
+  }));
   $('mSave').addEventListener('click', () => {
-    const tenant = $('mTenant').value.trim(), clientId = $('mClient').value.trim(), folder = $('mFolder').value.trim().replace(/^\/+|\/+$/g, '') || 'Werkbank-Anhänge';
-    if (clientId && !/^[0-9a-f-]{36}$/i.test(clientId)) return msg('stTeamMsg', '✖ Die Client-ID muss eine GUID sein.', 'err');
-    store.set(CFG.store.team, { ...store.get(CFG.store.team, {}), m365: { tenant, clientId, folder } });
-    graphStore.clear(); renderM365(); msg('stTeamMsg', '✔ Microsoft-365-Einstellungen übernommen.', 'ok');
+    const tenant = $('mTenant').value.trim(), clientId = $('mClient').value.trim(), folder = $('mFolder').value.trim().replace(/^\/+|\/+$/g, '');
+    if (clientId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId)) return msg('stTeamMsg', '✖ Die Client-ID muss eine GUID sein.', 'err');
+    const tc = store.get(CFG.store.team, {});
+    if (tenant || clientId || folder) tc.m365 = { tenant, clientId, folder }; else delete tc.m365;
+    store.set(CFG.store.team, tc);
+    m365Who = null; graphStore.clear(); renderM365(); msg('stTeamMsg', '✔ Microsoft-365-Einstellungen übernommen.', 'ok');
   });
   $('mLogout').addEventListener('click', () => { graphStore.clear(); renderM365(); msg('stTeamMsg', '✔ Von Microsoft 365 abgemeldet (nur in dieser Werkbank).', 'ok'); });
   function renderTeam() {
@@ -2880,7 +2935,7 @@
   $('stExport').addEventListener('click', () => {
     const tc = team();
     const data = { type: 'mdqt-team', version: 1, exportedAt: new Date().toISOString(), nonBillable: tc.nonBillable, intern: tc.intern, othersBillable: tc.othersBillable !== false };
-    if (m365Ready()) data.m365 = m365Cfg();
+    if (tc.m365 && (tc.m365.tenant || tc.m365.clientId || tc.m365.folder)) data.m365 = tc.m365; // nur eigene Abweichungen, keine Anmeldedaten
     if ($('stExpTpl').checked) data.templates = templates();
     download('werkbank-team-config.json', JSON.stringify(data, null, 2), 'application/json');
     msg('stTeamMsg', '✔ Exportiert.', 'ok');

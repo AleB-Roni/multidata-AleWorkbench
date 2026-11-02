@@ -52,9 +52,11 @@ Kundenspezifisches (welche Kunden nicht abrechenbar bzw. intern sind) steht **ni
    - Umleitungs-URI: Plattform **Single-Page-Anwendung (SPA)**, `https://csp.synaforce.com/mdweb/werkbank-auth`
 2. Unter **API-Berechtigungen** die delegierten Microsoft-Graph-Berechtigungen `User.Read`, `Files.ReadWrite` und `offline_access` hinzufügen. Danach optional „Administratorzustimmung erteilen“, damit niemand einzeln zustimmen muss.
 3. Kein Client-Secret anlegen; eine SPA braucht keins.
-4. In der Werkbank unter ⚙ → Microsoft 365 die **Verzeichnis-ID (Mandant)** und die **Anwendungs-ID** eintragen, dann „Übernehmen“. Danach die Team-Konfiguration exportieren; Mandant und Client-ID sind darin enthalten, Anmeldedaten nicht.
+4. Die **Anwendungs-ID (Client-ID)** im Skript unter `CFG.m365.clientId` eintragen. Sie ist kein Geheimnis und damit für alle Installationen fest eingebaut. Den Mandanten ermittelt die Werkbank selbst aus der Domäne der eigenen MultiData-Mailadresse.
 
-Beim ersten Öffnen einer Office-Datei meldet man sich einmal mit dem eigenen Microsoft-Konto an. Die Anmeldung bleibt im Browser gespeichert, bis man sich unter ⚙ abmeldet.
+Für Kolleg:innen ist danach nichts einzurichten: Beim ersten Klick auf „🌐 In Office öffnen“ öffnet sich ein Fenster mit der Microsoft-Anmeldung (Konto ist vorausgefüllt), danach öffnet sich das Dokument. Ab dann geht es ohne Rückfrage. Alternativ unter ⚙ → Microsoft 365 → „Jetzt anmelden“. Die Anmeldung bleibt im Browser gespeichert, bis man sich dort abmeldet.
+
+Eine abweichende App-Registrierung, einen festen Mandanten oder einen anderen OneDrive-Ordner kann man unter ⚙ → Microsoft 365 → „Erweitert“ eintragen; das wird auch mit der Team-Konfiguration exportiert.
 
 ## Datenschutz
 
