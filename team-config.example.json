@@ -2,10 +2,17 @@
   "type": "mdqt-team",
   "version": 1,
   "nonBillable": [
-    { "id": "10001", "name": "BEISPIEL KUNDE MIT SERVICEVERTRAG" }
+    {
+      "id": "10001",
+      "name": "BEISPIEL KUNDE MIT SERVICEVERTRAG"
+    }
   ],
   "intern": [
-    { "id": "10002", "name": "EIGENE FIRMA" }
+    {
+      "id": "10002",
+      "name": "EIGENE FIRMA"
+    }
   ],
-  "othersBillable": true
+  "othersBillable": true,
+  "officeAutoOpen": false
 }

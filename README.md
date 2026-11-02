@@ -42,28 +42,28 @@ Kundenspezifisches (welche Kunden nicht abrechenbar bzw. intern sind) steht **ni
 ## Anhänge im Browser öffnen
 
 - **.eml** wird direkt in der Werkbank als Mail angezeigt: Kopfzeilen, Text und Anhänge, auch weitergeleitete Mails. Das passiert vollständig im Browser, ohne Upload. Externe Bilder lädt die Vorschau erst auf Klick, Skripte in der Mail werden nie ausgeführt.
-- **Word, Excel, PowerPoint und Visio** öffnen sich in Office Online, wenn Microsoft 365 eingerichtet ist (siehe unten). Die Werkbank lädt die Datei dazu als Kopie in den eigenen OneDrive-Ordner `Werkbank-Anhänge/Ticket <Nr>/`. Ein erneutes Öffnen ersetzt die Kopie. Änderungen werden **nicht** nach MultiData zurückgeschrieben.
+- **Word, Excel, PowerPoint und Visio**: „🖥 In Office öffnen“ lädt die Originaldatei herunter, der Browser öffnet sie im lokal installierten Office. „👁 Vorschau“ zeigt sie als PDF im Browser. Änderungen werden **nicht** nach MultiData zurückgeschrieben. Die Datei öffnet sich in der geschützten Ansicht; zum Bearbeiten „Bearbeitung aktivieren“.
 
-### Microsoft 365 einrichten (einmalig, durch eine Admin-Person)
+### Office-Dateien ohne Klick öffnen
 
-1. In Entra ID unter **App-Registrierungen** → „Neue Registrierung“ anlegen.
-   - Name: `MultiData Werkbank`
-   - Kontotypen: nur dieses Organisationsverzeichnis
-   - Umleitungs-URI: Plattform **Single-Page-Anwendung (SPA)**, `https://csp.synaforce.com/mdweb/werkbank-auth`
-2. Unter **API-Berechtigungen** die delegierten Microsoft-Graph-Berechtigungen `User.Read`, `Files.ReadWrite` und `offline_access` hinzufügen. Danach optional „Administratorzustimmung erteilen“, damit niemand einzeln zustimmen muss.
-3. Kein Client-Secret anlegen; eine SPA braucht keins.
-4. Die **Anwendungs-ID (Client-ID)** im Skript unter `CFG.m365.clientId` eintragen. Sie ist kein Geheimnis und damit für alle Installationen fest eingebaut. Den Mandanten ermittelt die Werkbank selbst aus der Domäne der eigenen MultiData-Mailadresse.
+Damit sich die Datei nach dem Download sofort in Office öffnet, braucht der Browser die Einstellung „immer öffnen“ für den Dateityp.
 
-Für Kolleg:innen ist danach nichts einzurichten: Beim ersten Klick auf „🌐 In Office öffnen“ öffnet sich ein Fenster mit der Microsoft-Anmeldung (Konto ist vorausgefüllt), danach öffnet sich das Dokument. Ab dann geht es ohne Rückfrage. Alternativ unter ⚙ → Microsoft 365 → „Jetzt anmelden“. Die Anmeldung bleibt im Browser gespeichert, bis man sich dort abmeldet.
+**Zentral für alle (empfohlen, Admin):** `deploy/office-autoopen.ps1` setzt für Chrome und Edge die Richtlinien `AutoOpenFileTypes` (Word-, Excel-, PowerPoint-, Visio-Formate) und `AutoOpenAllowedForURLs` = `csp.synaforce.com`. Automatisch geöffnet wird also nur, was von MultiData kommt; vorhandene Einträge bleiben erhalten.
 
-Eine abweichende App-Registrierung, einen festen Mandanten oder einen anderen OneDrive-Ordner kann man unter ⚙ → Microsoft 365 → „Erweitert“ eintragen; das wird auch mit der Team-Konfiguration exportiert.
+- Intune: als Plattformskript hochladen, im Systemkontext, 64-Bit-PowerShell. Alternativ dieselben zwei Richtlinien über den Einstellungskatalog (Chrome/Edge) setzen.
+- Manuell: PowerShell als Administrator, `.\office-autoopen.ps1` (Test ohne Änderung: `-WhatIf`, Rückbau: `-Remove`).
+- Chrome und Edge werten diese Richtlinien unter Windows nur auf verwalteten Geräten aus (AD, Entra ID oder Intune). Kontrolle unter `edge://policy` bzw. `chrome://policy`.
+- Makrofähige Formate (docm, xlsm, pptm, xlsb …) sind absichtlich nicht enthalten.
+
+Danach in der Werkbank unter ⚙ → Office-Dateien „Im Team per Richtlinie eingerichtet“ anhaken und die Team-Konfiguration exportieren. Dann bekommt niemand mehr Einrichtungshinweise.
+
+**Ohne Richtlinie:** Beim ersten Öffnen eines Dateityps zeigt die Werkbank eine kurze Anleitung für den eigenen Browser: im Download-Fenster bei der Datei „Dateien dieses Typs immer öffnen“ wählen. Das ist einmal je Dateityp (docx, xlsx …) nötig.
 
 ## Datenschutz
 
 - Lokal im Browser (localStorage) liegen: Signatur, Textbausteine, Entwürfe, Filter und Vorlagen, Personio-Zeiten (falls importiert), Posteingangs-Vorschau und Protokoll.
 - Diese Daten werden nirgendwohin übertragen. Unter ⚙ → „Alle Werkbank-Daten in diesem Browser löschen“ lassen sie sich entfernen.
-- Das Skript spricht mit `csp.synaforce.com`. Nur wenn Microsoft 365 eingerichtet ist, kommen beim Öffnen von Office-Dateien `login.microsoftonline.com` und `graph.microsoft.com` hinzu (eigener Mandant, eigenes OneDrive).
-- Lokal gespeichert wird dann zusätzlich die Microsoft-Anmeldung (Token).
+- Das Skript spricht ausschließlich mit `csp.synaforce.com`. Office-Anhänge werden lokal heruntergeladen (Downloads-Ordner), nicht in eine Cloud hochgeladen.
 
 ## Hinweise
 
