@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.6.1.5
+// @version      1.6.1.6
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -86,7 +86,7 @@
   };
   const TICKET_COLS = ['ROW_ID', 'SID', 'TITEL', 'STATUS', 'PRIORITY', 'KND_ID', 'MATCHCODE', 'ANLAGE_DATUM', 'BEARBEITER_USER_ID',
     'SUM_STD', 'MEMO_SUM_ABRSTD', 'SUPPRESS_NOTIFY', 'DATE_MODIFIED'];
-  const TICKET_DETAIL_COLS = [...TICKET_COLS, 'EMAIL_TO', 'EMAIL_CC', 'ANLAGE_NOTIZ', 'MDERRDA_SID', 'ERRQ_ID', 'MDERRQ_FK__NAME_KB', 'TERMIN'];
+  const TICKET_DETAIL_COLS = [...TICKET_COLS, 'ANLAGE_USER_ID', 'EMAIL_TO', 'EMAIL_CC', 'ANLAGE_NOTIZ', 'MDERRDA_SID', 'ERRQ_ID', 'MDERRQ_FK__NAME_KB', 'TERMIN'];
   // MEMO_IA = '1' → eingehende Mail (Absender steht dann in EMAIL_TO)
   const COMMENT_COLS = ['ROW_ID', 'SID', 'MDERRDA_SID', 'STATUS', 'BEARBEITER_USER_ID', 'LST_TITEL', 'LST_ID', 'LST_DATUM',
     'LFZ_VON', 'LFZ_BIS', 'LFZ_STD', 'INABR_STD', 'LFZ_STD_MAN', 'NOTIZ', 'MEMO_MIN', 'EMAIL_TO', 'EMAIL_CC', 'EMAIL_BCC', 'EMAIL_DATUM', 'MEMO_IA'];
@@ -1240,8 +1240,8 @@
         <div class="results" data-ref="nResults" style="display:none"></div>
         <div class="chips" data-ref="nRecent"></div>
         <div class="msg" data-ref="nFirm"></div>
-        <label class="l">Betreff *</label><input type="text" data-ref="nTitle">
-        <label class="l">Beschreibung</label><textarea data-ref="nDesc"></textarea>
+        <label class="l">Betreff *</label><input type="text" data-ref="nTitle" spellcheck="true" lang="de">
+        <label class="l">Beschreibung</label><textarea data-ref="nDesc" spellcheck="true" lang="de"></textarea>
         <label class="chk"><input type="checkbox" data-ref="nNoNotify"> Keine Benachrichtigungen (dann gehen zu diesem Ticket keine Mails raus)</label>
         <label class="chk"><input type="checkbox" data-ref="nWithTime"> Direkt Zeit buchen</label>
         <div data-ref="nTimeBox" style="display:none"></div>
@@ -1308,7 +1308,7 @@
         <div class="row"><div class="c s" style="flex-basis:260px"><select data-ref="stTheme"><option value="auto">Automatisch (wie Windows/Browser)</option><option value="light">Hell</option><option value="dark">Dunkel</option></select></div></div>
         <h3 style="margin:14px 0 6px">Signatur</h3>
         <div class="hint">Wird bei „Als Mail senden“ automatisch angehängt (abschaltbar) und steht im Editor unter „✍ Signatur“ bereit. Einfügen aus Outlook inkl. Logo per Strg+V möglich.</div>
-        <div class="rte" contenteditable="true" data-ref="stSig" style="margin-top:6px;font-family:Arial;font-size:10pt"></div>
+        <div class="rte" contenteditable="true" spellcheck="true" lang="de" data-ref="stSig" style="margin-top:6px;font-family:Arial;font-size:10pt"></div>
         <label class="chk"><input type="checkbox" data-ref="stAuto"> Signatur bei neuen Mails automatisch anhängen</label>
         <h3 style="margin:14px 0 6px">Eigene Textbausteine</h3>
         <div data-ref="stBlocks"></div>
@@ -1963,7 +1963,7 @@
       <h3>#${t.SID} <a href="#" data-ref="hOpen" target="_blank" style="font-size:12px;font-weight:400;margin-left:8px" title="Öffnet MultiData mit diesem Ticket in einem neuen Tab">in MultiData öffnen ↗</a>
         <a href="#" data-ref="hNewTab" style="font-size:12px;font-weight:400;margin-left:8px" title="Dieses Ticket in einem weiteren Werkbank-Tab öffnen">in neuem Tab ⧉</a></h3>
       <div class="row">
-        <div class="c" style="flex:3"><label class="l">Betreff</label><input type="text" data-ref="hTitle"></div>
+        <div class="c" style="flex:3"><label class="l">Betreff</label><input type="text" data-ref="hTitle" spellcheck="true" lang="de"></div>
         <div class="c"><label class="l">Status</label><select data-ref="hStatus"></select></div>
         <div class="c"><label class="l">Priorität</label><select data-ref="hPrio"></select></div>
         <div class="c"><label class="l">Queue</label><select data-ref="hQueue"></select></div>
@@ -2027,7 +2027,10 @@
     let newUser = t.BEARBEITER_USER_ID || null;
     wbLink($('hNewTab', head), ticketRoute(t.SID), () => openInNewTab(ticketRoute(t.SID)));
     const hUser = $('hUser', head);
-    loadUsers().then(() => { hUser.value = t.BEARBEITER_USER_ID ? userLabel(t.BEARBEITER_USER_ID) : ''; }).catch(() => { hUser.value = t.BEARBEITER_USER_ID || ''; });
+    loadUsers().then(() => {
+      hUser.value = t.BEARBEITER_USER_ID ? userLabel(t.BEARBEITER_USER_ID) : '';
+      if (t.ANLAGE_USER_ID) $('hCreator', head).textContent = userLabel(t.ANLAGE_USER_ID); // Ersteller (MultiData-Feld „Ersteller“)
+    }).catch(() => { hUser.value = t.BEARBEITER_USER_ID || ''; });
     attachSuggest(hUser, $('hUserRes', head), userSource([{ value: '__ME__', label: '👤 Mir zuweisen' }]), {
       onPick: async it => {
         newUser = it.value === '__ME__' ? await me() : it.value;
@@ -2037,7 +2040,7 @@
     });
     hUser.addEventListener('focus', () => hUser.select());
     $('hMail', head).textContent = `An: ${t.EMAIL_TO || '–'}${t.EMAIL_CC ? ' · Cc: ' + t.EMAIL_CC : ''}`;
-    $('hSums', head).innerHTML = `Angelegt ${fmtDate(t.ANLAGE_DATUM)} · Bearbeiter ${esc(t.BEARBEITER_USER_ID || '–')}<br>
+    $('hSums', head).innerHTML = `Angelegt ${fmtDate(t.ANLAGE_DATUM)} von <b data-ref="hCreator">${esc(t.ANLAGE_USER_ID || '–')}</b> · Bearbeiter ${esc(t.BEARBEITER_USER_ID || '–')}<br>
       Stunden <b>${fmtH(t.SUM_STD)}</b> · abrechenbar <b>${fmtH(t.MEMO_SUM_ABRSTD)}</b>`;
     $('hOpen', head).href = mdTicketUrl(t.SID); // immer neuer Tab (Linksklick: wechseln, Mittelklick: im Hintergrund)
     $('hSave', head).addEventListener('click', ev => busy(ev.target, async () => {
@@ -2375,7 +2378,7 @@
         <div class="c"><div class="hint" data-ref="eHint"></div></div>
       </div>
       <label class="l">Text</label>
-      <div class="rte" contenteditable="true" data-ref="eTxt"></div>
+      <div class="rte" contenteditable="true" spellcheck="true" lang="de" data-ref="eTxt"></div>
       <div class="row" style="margin-top:8px">
         <button class="btn" data-ref="eSave">Speichern</button>
         <button class="btn sec" data-ref="eCancel">Abbrechen</button>
@@ -2471,7 +2474,7 @@
       <div class="tb" data-ref="tblPop" style="display:none;align-items:center">Tabelle: <input type="number" data-ref="tblR" value="3" min="1" max="50" style="width:50px"> Zeilen ×
         <input type="number" data-ref="tblC" value="3" min="1" max="20" style="width:50px"> Spalten <label class="chk" style="margin:0 6px"><input type="checkbox" data-ref="tblH" checked> Kopfzeile</label>
         <button type="button" data-ref="tblIns">Einfügen</button></div>
-      <div class="rte" contenteditable="true" data-ref="fText" style="font-family:${CFG.defaultFont};font-size:${CFG.defaultFontSize}pt"></div>
+      <div class="rte" contenteditable="true" spellcheck="true" lang="de" data-ref="fText" style="font-family:${CFG.defaultFont};font-size:${CFG.defaultFontSize}pt"></div>
       ${allowFiles ? `<div class="drop" data-ref="fDrop">📎 Dateien hierher ziehen oder <u>auswählen</u><input type="file" multiple data-ref="fFile" style="display:none"></div>
       ${ticketDocs.length ? `<details style="margin-top:4px"><summary style="font-weight:400">📎 Anhänge aus dem Ticket hinzufügen (${ticketDocs.length})</summary><div data-ref="fDocs"></div>
         <button type="button" class="btn sm sec" data-ref="fDocsAdd" style="margin-top:4px">Ausgewählte hinzufügen</button></details>` : ''}
@@ -2968,7 +2971,7 @@
     const box = $('stBlocks'); box.querySelector('[data-empty]')?.remove();
     const c = el('div', { className: 'card' });
     c.innerHTML = `<div class="row"><div class="c"><input type="text" data-a="name" placeholder="Name des Bausteins"></div><button class="btn sm warn" data-a="del">Entfernen</button></div>
-      <div class="rte" contenteditable="true" data-a="html" style="margin-top:4px;font-family:Arial;font-size:10pt"></div>`;
+      <div class="rte" contenteditable="true" spellcheck="true" lang="de" data-a="html" style="margin-top:4px;font-family:Arial;font-size:10pt"></div>`;
     c.querySelector('[data-a=name]').value = b.name || '';
     c.querySelector('[data-a=html]').innerHTML = sanitize(b.html || '');
     c.querySelector('[data-a=del]').addEventListener('click', () => c.remove());
