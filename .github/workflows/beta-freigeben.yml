@@ -1,0 +1,103 @@
+name: Beta freigeben
+
+# Kopiert die aktuelle Beta nach stable/, entfernt "(Beta)" aus @name,
+# kürzt @version auf drei Stellen, biegt die Update-URLs auf stable/ um,
+# legt einen Git-Tag und ein GitHub-Release an.
+
+on:
+  workflow_dispatch:
+    inputs:
+      notiz:
+        description: "Kurze Release-Notiz (optional)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: beta-freigeben
+  cancel-in-progress: false
+
+jobs:
+  freigeben:
+    runs-on: ubuntu-latest
+    env:
+      BETA: beta/multidata-werkbank.user.js
+      STABLE: stable/multidata-werkbank.user.js
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versionen prüfen
+        id: v
+        run: |
+          set -euo pipefail
+          [ -f "$BETA" ] || { echo "::error::$BETA fehlt"; exit 1; }
+
+          beta_ver=$(grep -m1 -E '^//[[:space:]]*@version' "$BETA" | awk '{print $3}')
+          [ -n "$beta_ver" ] || { echo "::error::Keine @version in $BETA gefunden"; exit 1; }
+          new_ver=$(echo "$beta_ver" | cut -d. -f1-3)
+
+          old_ver=""
+          if [ -f "$STABLE" ]; then
+            old_ver=$(grep -m1 -E '^//[[:space:]]*@version' "$STABLE" | awk '{print $3}')
+          fi
+
+          echo "Beta:          $beta_ver"
+          echo "Neue Stable:   $new_ver"
+          echo "Bisher Stable: ${old_ver:-<keine>}"
+
+          if [ -n "$old_ver" ]; then
+            highest=$(printf '%s\n%s\n' "$old_ver" "$new_ver" | sort -V | tail -n1)
+            if [ "$new_ver" = "$old_ver" ] || [ "$highest" != "$new_ver" ]; then
+              echo "::error::Stable-Version würde nicht steigen ($old_ver → $new_ver). Beta-@version erhöhen (z. B. ${new_ver%.*}.$(( ${new_ver##*.} + 1 )).1)."
+              exit 1
+            fi
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/v$new_ver" >/dev/null 2>&1; then
+            echo "::error::Tag v$new_ver existiert bereits"
+            exit 1
+          fi
+
+          echo "beta_ver=$beta_ver" >> "$GITHUB_OUTPUT"
+          echo "new_ver=$new_ver"   >> "$GITHUB_OUTPUT"
+
+      - name: Stable erzeugen
+        env:
+          NEW_VER: ${{ steps.v.outputs.new_ver }}
+        run: |
+          set -euo pipefail
+          mkdir -p stable
+          sed -E \
+            -e 's#^(//[[:space:]]*@name[[:space:]]+.*)[[:space:]]+\(Beta\)[[:space:]]*$#\1#' \
+            -e "s#^(//[[:space:]]*@version[[:space:]]+).*#\1${NEW_VER}#" \
+            -e 's#/beta/multidata-werkbank\.user\.js#/stable/multidata-werkbank.user.js#g' \
+            "$BETA" > "$STABLE"
+          echo "--- Kopfzeilen der neuen Stable ---"
+          sed -n '1,/==\/UserScript==/p' "$STABLE"
+
+      - name: Commit, Tag und Release
+        env:
+          NEW_VER: ${{ steps.v.outputs.new_ver }}
+          BETA_VER: ${{ steps.v.outputs.beta_ver }}
+          NOTIZ: ${{ inputs.notiz }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$STABLE"
+          git commit -m "Stable $NEW_VER (aus Beta $BETA_VER)"
+          git tag -a "v$NEW_VER" -m "MultiData Werkbank $NEW_VER"
+          git push origin HEAD
+          git push origin "v$NEW_VER"
+
+          {
+            echo "Freigegeben aus Beta \`$BETA_VER\`."
+            if [ -n "$NOTIZ" ]; then echo; echo "$NOTIZ"; fi
+          } > release-notes.md
+
+          gh release create "v$NEW_VER" "$STABLE" \
+            --title "MultiData Werkbank $NEW_VER" \
+            --notes-file release-notes.md

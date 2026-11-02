@@ -1,0 +1,8 @@
+# Die echte Team-Konfiguration wird intern geteilt, nicht im Repo.
+team-config*.json
+!team-config.example.json
+
+.DS_Store
+Thumbs.db
+*.swp
+release-notes.md
