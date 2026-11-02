@@ -42,7 +42,15 @@ Kundenspezifisches (welche Kunden nicht abrechenbar bzw. intern sind) steht **ni
 ## Anhänge im Browser öffnen
 
 - **.eml** wird direkt in der Werkbank als Mail angezeigt: Kopfzeilen, Text und Anhänge, auch weitergeleitete Mails. Das passiert vollständig im Browser, ohne Upload. Externe Bilder lädt die Vorschau erst auf Klick, Skripte in der Mail werden nie ausgeführt.
-- **Word, Excel, PowerPoint und Visio**: „🖥 In Office öffnen“ lädt die Originaldatei herunter, der Browser öffnet sie im lokal installierten Office. „👁 Vorschau“ zeigt sie als PDF im Browser. Änderungen werden **nicht** nach MultiData zurückgeschrieben. Die Datei öffnet sich in der geschützten Ansicht; zum Bearbeiten „Bearbeitung aktivieren“.
+- **Vorschau ohne Download** („👁 Vorschau“ bzw. „👁 Anzeigen“): Die Datei wird nur in den Arbeitsspeicher geladen und in einem neuen Fenster angezeigt, ohne Upload und ohne Anmeldung. Auch Anhänge innerhalb von .eml-Mails lassen sich so ansehen.
+  - Bilder: png, jpg, gif, webp, bmp, svg, avif (Klick wechselt zwischen eingepasst und Originalgröße)
+  - Video und Audio: mp4, webm, mov, mp3, wav, m4a, ogg … (was der Browser abspielen kann)
+  - Word: docx (Text, Tabellen, Bilder, Kopf-/Fußzeilen; komplexe Layouts können abweichen)
+  - Excel: xlsx, xlsm, xlsb, xls, ods, csv (alle sichtbaren Blätter als Reiter, je Blatt die ersten 2.000 Zeilen, Werte statt Formeln)
+  - Text: txt, log, json, xml, ps1 …
+  - Keine Vorschau: altes .doc, PowerPoint, Visio – dafür „In Office öffnen“.
+  - Dokumentinhalte laufen in einer abgeschotteten Ansicht ohne Skripte. Die Bibliotheken dafür ([docx-preview](https://github.com/VolodymyrBaydalka/docxjs), [SheetJS](https://sheetjs.com), JSZip) lädt Tampermonkey einmalig mit Prüfsumme.
+- **Word, Excel, PowerPoint und Visio**: „🖥 In Office öffnen“ lädt die Originaldatei herunter, der Browser öffnet sie im lokal installierten Office. Änderungen werden **nicht** nach MultiData zurückgeschrieben. Die Datei öffnet sich in der geschützten Ansicht; zum Bearbeiten „Bearbeitung aktivieren“.
 
 ### Office-Dateien ohne Klick öffnen
 
@@ -63,7 +71,8 @@ Danach in der Werkbank unter ⚙ → Office-Dateien „Im Team per Richtlinie ei
 
 - Lokal im Browser (localStorage) liegen: Signatur, Textbausteine, Entwürfe, Filter und Vorlagen, Personio-Zeiten (falls importiert), Posteingangs-Vorschau und Protokoll.
 - Diese Daten werden nirgendwohin übertragen. Unter ⚙ → „Alle Werkbank-Daten in diesem Browser löschen“ lassen sie sich entfernen.
-- Das Skript spricht ausschließlich mit `csp.synaforce.com`. Office-Anhänge werden lokal heruntergeladen (Downloads-Ordner), nicht in eine Cloud hochgeladen.
+- Das Skript spricht im Betrieb ausschließlich mit `csp.synaforce.com`. Vorschauen entstehen im Browser; „In Office öffnen“ lädt in den Downloads-Ordner. Nichts wird in eine Cloud hochgeladen.
+- Tampermonkey lädt beim Installieren/Aktualisieren zusätzlich die Vorschau-Bibliotheken von `cdn.jsdelivr.net` und `cdn.sheetjs.com` (fest versioniert, mit Prüfsumme).
 
 ## Hinweise
 

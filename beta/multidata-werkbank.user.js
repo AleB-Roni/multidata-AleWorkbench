@@ -1,13 +1,16 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.6.1.3
+// @version      1.6.1.4
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
 // @homepageURL  https://github.com/lukasebner1998-ship-it/multidata-werkbank
 // @updateURL    https://raw.githubusercontent.com/lukasebner1998-ship-it/multidata-werkbank/main/beta/multidata-werkbank.user.js
 // @downloadURL  https://raw.githubusercontent.com/lukasebner1998-ship-it/multidata-werkbank/main/beta/multidata-werkbank.user.js
+// @require      https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js#sha256-rMfkFFWoB2W1/Zx+4bgHim0WC7vKRVrq6FTeZclH1Z4=
+// @require      https://cdn.jsdelivr.net/npm/docx-preview@0.4.1/dist/docx-preview.min.js#sha256-xKEzxloRJ5njWxQ8Vy3/+ekjo785tf07B6BqoPj1MMI=
+// @require      https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js#sha256-zAFRMKqFIefwiPiImOupSczcv7ON8L0Sm0S3Jzw6b0E=
 // @grant        none
 // @run-at       document-start
 // ==/UserScript==
@@ -26,6 +29,14 @@
  */
 (function () {
   'use strict';
+  // Bibliotheken für die Datei-Vorschau (per @require geladen, mit Prüfsumme): sofort übernehmen und aus dem
+  // Seitenkontext entfernen, damit MultiData eigene Versionen (z. B. JSZip für den Excel-Export) ungestört nutzt.
+  /* global XLSX, docx */
+  const LIBS = {
+    XLSX: typeof XLSX !== 'undefined' ? XLSX : window.XLSX,
+    docx: typeof docx !== 'undefined' ? docx : window.docx,
+  };
+  for (const k of ['JSZip', 'docx', 'XLSX']) { try { delete window[k]; } catch { /* nicht löschbar */ } }
   if (window.__mdqtLoaded || location.protocol === 'about:') return;
   window.__mdqtLoaded = true;
   // Läuft schon beim Seitenstart: Adresse sichern (#werkbank/… bzw. #mdopen/…), bevor MultiData sie umschreibt.
@@ -411,7 +422,12 @@
       const a = d.createElement('a'); a.textContent = '📎 ' + name + ` (${Math.max(1, Math.round(p.bytes.length / 1024))} KB)`;
       const blob = new Blob([p.bytes], { type: p.type || 'application/octet-stream' });
       a.href = win.URL.createObjectURL(blob);
-      if (/^(application\/pdf|image\/|text\/plain)/.test(p.type) || /\.(pdf|png|jpe?g|gif|txt)$/i.test(name)) { a.target = '_blank'; a.title = 'Klick: im Browser öffnen'; } else a.download = name;
+      const kind = previewKind(fileExt(name)) || (/^image\//.test(p.type) ? 'image' : /^video\//.test(p.type) ? 'video' : null);
+      if (/^application\/pdf/.test(p.type) || /\.pdf$/i.test(name)) { a.target = '_blank'; a.title = 'Klick: im Browser öffnen'; } else a.download = name;
+      if (kind) {
+        a.title = 'Klick: Vorschau · Rechtsklick: speichern';
+        a.addEventListener('click', ev => { ev.preventDefault(); const w2 = win.open('about:blank', '_blank'); if (w2) renderPreview(w2, p.bytes, name, kind).catch(e => winMessage(w2, '✖ ' + (e.message || e))); });
+      }
       if (p.type === 'message/rfc822' || fileExt(name) === 'eml') {
         a.title = 'Klick: Vorschau · Rechtsklick: speichern';
         a.addEventListener('click', ev => { ev.preventDefault(); const w2 = win.open('about:blank', '_blank'); if (w2) renderEml(w2, p.bytes, name); });
@@ -424,6 +440,144 @@
     winMessage(win, `„${doc.DOCUMENT_NAME}“ wird geladen …`);
     const f = await docAsFile(doc);
     renderEml(win, new Uint8Array(await f.arrayBuffer()), doc.DOCUMENT_NAME);
+  }
+
+  // --- Vorschau im Browser: Bilder, Video, Audio, Text, Word (.docx), Excel (.xlsx/.xls/.ods/.csv) ---
+  // Die Datei wird nur in den Arbeitsspeicher geladen und im Fenster angezeigt – kein Download, kein Upload.
+  // Dokumentinhalte laufen wie bei .eml in einer abgeschotteten Ansicht ohne Skripte.
+  const PREVIEW = {
+    image: ['png', 'jpg', 'jpeg', 'jfif', 'gif', 'webp', 'bmp', 'svg', 'avif', 'ico'],
+    video: ['mp4', 'm4v', 'webm', 'mov', 'ogv', 'mkv'],
+    audio: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'flac'],
+    text: ['txt', 'log', 'json', 'xml', 'ini', 'cfg', 'conf', 'md', 'ps1', 'psm1', 'bat', 'cmd', 'sh', 'yml', 'yaml', 'reg'],
+    word: ['docx', 'docm', 'dotx'],
+    sheet: ['xlsx', 'xlsm', 'xlsb', 'xls', 'ods', 'csv'],
+  };
+  const previewKind = ext => Object.keys(PREVIEW).find(k => PREVIEW[k].includes(ext)) || null;
+  const MEDIA_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+    svg: 'image/svg+xml', avif: 'image/avif', ico: 'image/x-icon', mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/mp4', webm: 'video/webm', ogv: 'video/ogg',
+    mkv: 'video/webm', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', flac: 'audio/flac' };
+  const PREVIEW_MAX_ROWS = 2000; // Excel: je Blatt höchstens so viele Zeilen anzeigen
+  const PREVIEW_MAX_TEXT = 2 * 1024 * 1024;
+
+  // Grundgerüst des Vorschaufensters: Kopfzeile mit Name, Größe, Herunterladen; darunter der Inhalt
+  function previewShell(win, name, bytes, icon) {
+    const d = win.document;
+    d.open(); d.write(`<!doctype html><html><head><meta charset="utf-8"><title></title><style>
+      body{margin:0;font:13px Segoe UI,Arial,sans-serif;color:#222;background:#f4f6f6;display:flex;flex-direction:column;height:100vh}
+      header{background:#fff;border-bottom:1px solid #ddd;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+      h1{font-size:17px;margin:0;color:#00695c;flex:1;min-width:200px;word-break:break-all}.sz{color:#777}
+      header button,.tabs button{border:1px solid #00897b;background:#e0f2f1;color:#00695c;border-radius:4px;padding:4px 10px;cursor:pointer;font:inherit}
+      .tabs{display:flex;gap:4px;flex-wrap:wrap;padding:6px 16px 0;background:#fff;border-bottom:1px solid #ddd}
+      .tabs button{border-radius:4px 4px 0 0;border-bottom:none;background:#f4f6f6}.tabs button.on{background:#00897b;color:#fff}
+      .note{padding:6px 16px;color:#8a5a00;background:#fff8e1;border-bottom:1px solid #ffe0a0}
+      main{flex:1;min-height:0;display:flex;overflow:auto}
+      .stage{margin:auto;padding:16px;text-align:center}.stage img{max-width:calc(100vw - 32px);max-height:calc(100vh - 110px);cursor:zoom-in;background:#fff;
+        background-image:linear-gradient(45deg,#eee 25%,transparent 25%,transparent 75%,#eee 75%),linear-gradient(45deg,#eee 25%,transparent 25%,transparent 75%,#eee 75%);
+        background-size:16px 16px;background-position:0 0,8px 8px;box-shadow:0 1px 6px #0002}
+      .stage img.full{max-width:none;max-height:none;cursor:zoom-out}
+      .stage video{max-width:calc(100vw - 32px);max-height:calc(100vh - 110px);background:#000}.stage audio{width:min(640px,calc(100vw - 32px))}
+      pre{margin:0;padding:16px;white-space:pre-wrap;word-break:break-word;font:12.5px Consolas,monospace;background:#fff;flex:1}
+      iframe{flex:1;border:0;background:#fff;width:100%}
+      .err{margin:auto;padding:24px;max-width:560px;text-align:center;color:#555}</style></head><body>
+      <header><h1></h1><span class="sz"></span><button data-a="dl">⬇ Herunterladen</button></header><main></main></body></html>`);
+    d.close();
+    d.title = name;
+    d.querySelector('h1').textContent = `${icon} ${name}`;
+    d.querySelector('.sz').textContent = bytes.length >= 1048576 ? (bytes.length / 1048576).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(bytes.length / 1024)) + ' KB';
+    d.querySelector('[data-a=dl]').addEventListener('click', () => {
+      const a = d.createElement('a'); a.href = win.URL.createObjectURL(new win.Blob([bytes], { type: 'application/octet-stream' })); a.download = name;
+      d.body.appendChild(a); a.click(); a.remove();
+    });
+    return { d, main: d.querySelector('main'), header: d.querySelector('header') };
+  }
+  const previewFail = (main, text) => { const e = main.ownerDocument.createElement('div'); e.className = 'err'; e.textContent = text; main.replaceChildren(e); };
+  // Abgeschottete Ansicht für Dokumentinhalte (keine Skripte, nur eingebettete Bilder/Schriften, Links in neuem Tab)
+  const sandboxDoc = (css, body) => `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:">
+    <style>${css}</style></head><body>${body}</body></html>`;
+  function sandboxFrame(d, html) {
+    const f = d.createElement('iframe');
+    f.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
+    f.srcdoc = html; return f;
+  }
+
+  async function renderPreview(win, bytes, name, kind = previewKind(fileExt(name))) {
+    const ext = fileExt(name);
+    const icon = { image: '🖼', video: '🎬', audio: '🎵', text: '📄', word: '📝', sheet: '📊' }[kind] || '📄';
+    const { d, main, header } = previewShell(win, name, bytes, icon);
+    const blobUrl = type => win.URL.createObjectURL(new win.Blob([bytes], { type }));
+    if (kind === 'image') {
+      const st = d.createElement('div'); st.className = 'stage';
+      const img = d.createElement('img'); img.alt = name; img.src = blobUrl(MEDIA_MIME[ext] || 'image/*');
+      img.title = 'Klick: Originalgröße / einpassen';
+      img.addEventListener('click', () => img.classList.toggle('full'));
+      img.addEventListener('error', () => previewFail(main, 'Dieses Bild kann der Browser nicht anzeigen. Bitte herunterladen.'));
+      st.appendChild(img); main.appendChild(st);
+    } else if (kind === 'video' || kind === 'audio') {
+      const st = d.createElement('div'); st.className = 'stage';
+      const m = d.createElement(kind); m.controls = true; m.preload = 'metadata'; m.src = blobUrl(MEDIA_MIME[ext] || kind + '/*');
+      m.addEventListener('error', () => previewFail(main, `Dieses ${kind === 'video' ? 'Video' : 'Audio'}format (.${ext}) kann der Browser nicht abspielen. Bitte herunterladen.`));
+      st.appendChild(m); main.appendChild(st);
+    } else if (kind === 'text') {
+      let t = decodeCharset(bytes.subarray(0, PREVIEW_MAX_TEXT), 'utf-8');
+      if (t.includes('�')) t = decodeCharset(bytes.subarray(0, PREVIEW_MAX_TEXT), 'windows-1252');
+      const pre = d.createElement('pre'); pre.textContent = t + (bytes.length > PREVIEW_MAX_TEXT ? '\n\n… (gekürzt – vollständig über „Herunterladen“)' : '');
+      main.appendChild(pre);
+    } else if (kind === 'word') {
+      if (!LIBS.docx?.renderAsync) return previewFail(main, 'Word-Vorschau nicht verfügbar (Bibliothek nicht geladen). Bitte „In Office öffnen“.');
+      previewFail(main, 'Dokument wird aufbereitet …');
+      const body = document.createElement('div'), style = document.createElement('div');
+      try {
+        await LIBS.docx.renderAsync(new Blob([bytes]), body, style, { className: 'docx', inWrapper: true, useBase64URL: true, breakPages: true,
+          ignoreLastRenderedPageBreak: true, renderHeaders: true, renderFooters: true, renderFootnotes: true, renderEndnotes: true, experimental: false });
+      } catch (e) { return previewFail(main, 'Dieses Word-Dokument lässt sich nicht als Vorschau anzeigen (' + (e.message || e) + '). Bitte „In Office öffnen“.'); }
+      const css = 'body{margin:0;background:#f4f6f6}.docx-wrapper{background:#f4f6f6 !important;padding:16px !important}.docx-wrapper>section.docx{box-shadow:0 1px 6px #0002 !important;margin-bottom:16px !important}';
+      main.replaceChildren(sandboxFrame(d, sandboxDoc(css, style.innerHTML + body.innerHTML)));
+    } else if (kind === 'sheet') {
+      const X = LIBS.XLSX;
+      if (!X?.read) return previewFail(main, 'Excel-Vorschau nicht verfügbar (Bibliothek nicht geladen). Bitte „In Office öffnen“.');
+      let wb;
+      const opts = { sheetRows: PREVIEW_MAX_ROWS + 1, cellDates: true, cellStyles: false, cellFormula: false, dense: true };
+      try {
+        if (ext === 'csv') { // Zeichensatz selbst erkennen (UTF-8, sonst Windows-1252 wie aus Excel)
+          let txt = decodeCharset(bytes, 'utf-8'); if (txt.includes('\uFFFD')) txt = decodeCharset(bytes, 'windows-1252');
+          wb = X.read(txt.replace(/^\uFEFF/, ''), { ...opts, type: 'string' });
+        } else wb = X.read(bytes, { ...opts, type: 'array' });
+      }
+      catch (e) { return previewFail(main, 'Diese Tabelle lässt sich nicht als Vorschau anzeigen (' + (e.message || e) + '). Bitte „In Office öffnen“.'); }
+      const names = (wb.SheetNames || []).filter(n => !wb.Workbook?.Sheets?.find(s => s.name === n && s.Hidden));
+      if (!names.length) return previewFail(main, 'Die Tabelle enthält keine sichtbaren Blätter.');
+      const css = `body{margin:0;font:12.5px Calibri,Segoe UI,Arial,sans-serif;color:#222}table{border-collapse:collapse}
+        td,th{border:1px solid #d4d4d4;padding:2px 6px;white-space:pre-wrap;vertical-align:top;max-width:480px}
+        tr:first-child td{background:#f3f6f6;font-weight:600;position:sticky;top:0}`;
+      const tabs = d.createElement('div'); tabs.className = 'tabs';
+      const note = d.createElement('div'); note.className = 'note'; note.style.display = 'none';
+      const show = n => {
+        const ws = wb.Sheets[n];
+        tabs.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.n === n));
+        const full = ws['!fullref'] && ws['!ref'] && ws['!fullref'] !== ws['!ref'];
+        const total = full ? X.utils.decode_range(ws['!fullref']).e.r + 1 : 0;
+        note.textContent = full ? `Vorschau zeigt die ersten ${PREVIEW_MAX_ROWS.toLocaleString('de-DE')} von ${total.toLocaleString('de-DE')} Zeilen. Vollständig: „In Office öffnen“.` : '';
+        note.style.display = full ? '' : 'none';
+        const html = ws['!ref'] ? X.utils.sheet_to_html(ws, { header: '', footer: '' }) : '<p style="padding:16px;color:#777">(leeres Blatt)</p>';
+        main.replaceChildren(sandboxFrame(d, sandboxDoc(css, html)));
+      };
+      for (const n of names) {
+        const b = d.createElement('button'); b.textContent = n; b.dataset.n = n;
+        b.addEventListener('click', () => show(n)); tabs.appendChild(b);
+      }
+      if (names.length > 1 || ext !== 'csv') header.after(tabs);
+      (names.length > 1 || ext !== 'csv' ? tabs : header).after(note);
+      show(names[0]);
+    } else {
+      previewFail(main, `Für .${ext}-Dateien gibt es keine Vorschau. Bitte herunterladen bzw. in Office öffnen.`);
+    }
+  }
+  async function openPreview(doc, win) {
+    winMessage(win, `„${doc.DOCUMENT_NAME}“ wird geladen …`);
+    const f = await docAsFile(doc);
+    await renderPreview(win, new Uint8Array(await f.arrayBuffer()), doc.DOCUMENT_NAME || f.name);
   }
 
   const exec = (workItem, commandName, action, data, extra = {}) =>
@@ -1973,15 +2127,21 @@
     persistDetails(dd, 'ticket.anhaenge', true);
     for (const d of docs) {
       const row = el('div', { className: 'doc' });
-      const ext = fileExt(d.DOCUMENT_NAME), isOffice = OFFICE_EXT.has(ext);
-      const btns = ext === 'eml' ? '<button class="btn sm sec" data-a="open">✉ Anzeigen</button><button class="btn sm sec" data-a="dl">⬇ Herunterladen</button>'
-        : isOffice ? '<button class="btn sm sec" data-a="office" title="Originaldatei herunterladen und im installierten Office öffnen">🖥 In Office öffnen</button><button class="btn sm sec" data-a="open" title="Schnellansicht als PDF im Browser">👁 Vorschau</button>'
-        : '<button class="btn sm sec" data-a="open">Öffnen</button><button class="btn sm sec" data-a="dl">⬇ Herunterladen</button>';
+      const ext = fileExt(d.DOCUMENT_NAME), isOffice = OFFICE_EXT.has(ext), kind = previewKind(ext);
+      const B = (a, label, title = '') => `<button class="btn sm sec" data-a="${a}"${title ? ` title="${title}"` : ''}>${label}</button>`;
+      const btns = ext === 'eml' ? B('open', '✉ Anzeigen') + B('dl', '⬇ Herunterladen')
+        : isOffice ? (kind ? B('preview', '👁 Vorschau', 'Im Browser ansehen, ohne Download') : '') + B('office', '🖥 In Office öffnen', 'Originaldatei herunterladen und im installierten Office öffnen')
+        : kind ? B('preview', '👁 Anzeigen', 'Im Browser ansehen, ohne Download') + B('dl', '⬇ Herunterladen')
+        : B('open', 'Öffnen') + B('dl', '⬇ Herunterladen');
       row.innerHTML = `<span class="nm"></span><span class="hint">${fmtDateTime(d.DATUM)} · ${esc(d.CREATED_BY || '')}${d.TITEL && d.TITEL !== t.TITEL ? ' · ' + esc(d.TITEL) : ''}</span>${btns}`;
       row.querySelector('.nm').textContent = '📄 ' + (d.DOCUMENT_NAME || '(ohne Namen)');
       for (const b of row.querySelectorAll('button')) b.addEventListener('click', async () => {
-        const win = b.dataset.a === 'open' ? window.open('about:blank', '_blank') : null; // synchron öffnen → kein Popup-Blocker
+        const win = b.dataset.a === 'open' || b.dataset.a === 'preview' ? window.open('about:blank', '_blank') : null; // synchron öffnen → kein Popup-Blocker
         try {
+          if (b.dataset.a === 'preview') {
+            if (!win) throw new Error('Das Vorschaufenster wurde vom Browser blockiert – Pop-ups für diese Seite erlauben.');
+            await openPreview(d, win); log('Anhang angezeigt', `#${t.SID}: ${d.DOCUMENT_NAME}`); return;
+          }
           if (b.dataset.a === 'office') {
             await busy(b, () => openLocal(d)); log('Anhang in Office geöffnet', `#${t.SID}: ${d.DOCUMENT_NAME}`);
             if (officeHintNeeded(ext)) showOfficeHint(dd, ext);
@@ -1989,7 +2149,7 @@
           else if (win && ext === 'eml') { await openEml(d, win); log('Anhang angezeigt', `#${t.SID}: ${d.DOCUMENT_NAME}`); }
           else { await openDocument(d, b.dataset.a === 'dl', win); log(b.dataset.a === 'dl' ? 'Anhang heruntergeladen' : 'Anhang geöffnet', `#${t.SID}: ${d.DOCUMENT_NAME}`); }
         } catch (e) {
-          if (win && ext === 'eml') { if (!e.quiet && !win.closed) winMessage(win, '✖ ' + e.message); } else if (win) win.close();
+          if (win && (ext === 'eml' || b.dataset.a === 'preview')) { if (!e.quiet && !win.closed) winMessage(win, '✖ ' + e.message); } else if (win) win.close();
           if (!e.quiet) msg('dMsg', '✖ ' + e.message, 'err');
         }
       });
