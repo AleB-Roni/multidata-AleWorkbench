@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.6.0.1
+// @version      1.6.1.1
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -996,6 +996,13 @@
   #mdqt-panel .btn:disabled{opacity:.5;cursor:default}
   #mdqt-panel .msg{margin:8px 0;font-size:12px;white-space:pre-wrap}
   #mdqt-panel .msg.err{color:#c62828}#mdqt-panel .msg.ok{color:#2e7d32}
+  #mdqt-panel .toasts{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;display:flex;flex-direction:column;align-items:center;gap:6px;
+    width:max-content;max-width:min(560px,calc(100% - 32px));pointer-events:none}
+  #mdqt-panel .toast{pointer-events:auto;display:flex;align-items:flex-start;gap:12px;padding:9px 12px;border-radius:6px;font-size:13px;line-height:1.35;
+    white-space:pre-wrap;color:#fff;background:#c62828;box-shadow:0 4px 16px rgba(0,0,0,.35);cursor:pointer;animation:mqToastIn .15s ease-out}
+  #mdqt-panel .toast.warn{background:#e65100}
+  #mdqt-panel .toast b{font-size:16px;line-height:1;opacity:.85}
+  @keyframes mqToastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   #mdqt-panel .hint{color:var(--mq-muted);font-size:12px}
   #mdqt-panel table{width:100%;border-collapse:collapse;margin-top:8px}
   #mdqt-panel th{text-align:left;font-size:12px;color:var(--mq-muted2);border-bottom:2px solid var(--mq-border);padding:4px 6px;cursor:pointer;white-space:nowrap;position:sticky;top:-12px;background:var(--mq-bg)}
@@ -1310,7 +1317,28 @@
 
   const $ = (ref, root = panel) => root.querySelector(`[data-ref="${ref}"]`);
   const el = (tag, attrs = {}, html = '') => { const e = document.createElement(tag); Object.assign(e, attrs); if (html) e.innerHTML = html; return e; };
-  const msg = (ref, text, kind = '') => { const m = $(ref); m.textContent = text; m.className = 'msg ' + kind; };
+  // Pop-up-Meldungen unten im Panel: bleiben sichtbar, egal wie weit man im Ticket gescrollt hat.
+  // Klick schließt; gleiche Meldung erneut → Zeit wird verlängert statt doppelt angezeigt.
+  const toastBox = el('div', { className: 'toasts' });
+  panel.appendChild(toastBox);
+  function toast(text, kind = 'err', ms = kind === 'err' ? 9000 : 6000) {
+    const t = String(text || '').replace(/^\s*[✖⚠]\s*/, '').trim();
+    if (!t) return;
+    let n = [...toastBox.children].find(x => x.dataset.t === t);
+    if (!n) {
+      n = el('div', { className: 'toast ' + kind, role: 'alert', title: 'Klicken zum Schließen' });
+      n.dataset.t = t;
+      n.append(el('span', { textContent: (kind === 'err' ? '✖ ' : '⚠ ') + t }), el('b', { textContent: '×' }));
+      n.addEventListener('click', () => n.remove());
+      toastBox.appendChild(n);
+      while (toastBox.children.length > 3) toastBox.firstChild.remove();
+    }
+    clearTimeout(n._timer); n._timer = setTimeout(() => n.remove(), ms);
+  }
+  const msg = (ref, text, kind = '') => {
+    const m = $(ref); m.textContent = text; m.className = 'msg ' + kind;
+    if (kind === 'err') toast(text, 'err');
+  };
   const ui = { tab: 'search', ticket: null, comments: [], firm: null, editing: new Set(), sort: { key: 'SID', desc: true }, lastResult: null };
 
   // Zweistufige Bestätigung (statt Browser-Dialog, der MultiData blockieren würde)
@@ -2017,13 +2045,13 @@
               const b = el('button', { className: 'btn sm warn', textContent: 'Firma ändern' }); m.appendChild(b);
               confirmBtn(b, 'Wirklich ändern?', async () => {
                 try { await changeFirm(t, a); await reloadTicket(); msg('tMsg', `✔ Firma geändert auf ${a.MATCH}. Bitte abrechenbare Stunden prüfen.`, 'ok'); }
-                catch (e) { m.textContent = '✖ ' + e.message; m.className = 'msg err'; }
+                catch (e) { m.textContent = '✖ ' + e.message; m.className = 'msg err'; toast(e.message); }
               });
             });
             box.appendChild(d);
           }
           if (!res.length) box.innerHTML = '<div><small>Keine Treffer</small></div>';
-        } catch (e) { $('hFirmMsg', head).textContent = '✖ ' + e.message; }
+        } catch (e) { $('hFirmMsg', head).textContent = '✖ ' + e.message; toast(e.message); }
       }, 300);
     });
 
@@ -2487,7 +2515,7 @@
       const b = src === 'own' ? (settings().blocks || [])[+i] : (await mdTextBlocks())[+i];
       if (b) cmd('insertHTML', sanitize(b.html));
     });
-    const alertMsg = t => { const m = el('div', { className: 'warnbox', textContent: t }); w.prepend(m); setTimeout(() => m.remove(), 4000); };
+    const alertMsg = t => toast(t, /^\s*✖/.test(t) ? 'err' : 'warn');
 
     // Anhänge
     let files = [];
@@ -2608,7 +2636,7 @@
       $('fMailOn', w).addEventListener('change', toggleMail);
       $('fSuppBtn', w).addEventListener('click', async ev => busy(ev.target, async () => {
         try { await onRemoveSuppress(); suppressNotify = false; $('fSupp', w).style.display = 'none'; }
-        catch (e) { $('fSupp', w).textContent = '✖ ' + e.message; }
+        catch (e) { $('fSupp', w).textContent = '✖ ' + e.message; toast(e.message); }
       }));
     }
     return api_;
