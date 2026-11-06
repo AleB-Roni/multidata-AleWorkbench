@@ -13,6 +13,16 @@ Das Skript nutzt die gleiche interne Schnittstelle wie die MultiData-Weboberflä
 4. MultiData neu laden. Unten rechts erscheint **⚡ Werkbank** (oder Alt+Q).
 5. Beim ersten Start unter **⚙ → Team-Konfiguration** die Datei importieren, die im Team geteilt wird. Alternativ selbst festlegen, welche Kunden nicht abrechenbar bzw. intern sind.
 
+## Neu in 1.7
+
+- **Personio mit einem Klick:** „⟳ Aus Personio holen“ im Zeiten-Tab übernimmt die Arbeitszeiten direkt aus Personio, ohne CSV-Download (siehe [Personio-Abgleich](#personio-abgleich)). Der CSV-Import versteht jetzt auch den aktuellen Export „Stundenzettel exportieren“.
+- **Texteditor überarbeitet:** Listen und Einzüge verhalten sich wie in Word. Eingefügte Texte lassen sich normal weiterbearbeiten. Strg+Z/Strg+Y funktionieren, das Textfeld ist in der Höhe ziehbar, und die Rechtschreibprüfung des Browsers ist aktiv.
+- **Ticket:** *🕘 Verlauf* mit dem MultiData-Protokoll, **🔗 Teilen** (MultiData-Link), Ersteller im Kopf, Haken *🚗 Vor-Ort-Termin*. Große Tickets laden schneller und bleiben nicht mehr bei „Lade …“ hängen.
+- **Internes Zeiten-Ticket** je Monat; Restzeiten bucht man im Zeiten-Tab mit einem Klick darauf.
+- **Anhänge:** Vorschau im Browser ohne Download (Word, Excel, Bilder, Video, Text); Office-Dateien öffnen im lokalen Office.
+- **Fehlermeldungen** erscheinen als Pop-up unten im sichtbaren Bereich, auch wenn man weit unten im Ticket arbeitet.
+- **Protokoll:** Ticketnummern sind anklickbar, Filter nach Text oder Ticket-Nr.
+
 Updates: Tampermonkey prüft regelmäßig (standardmäßig täglich) und installiert neue Versionen automatisch. Sofort prüfen geht über das Tampermonkey-Menü → „Nach Userscript-Updates suchen“.
 
 ## Kanäle
@@ -41,10 +51,13 @@ Kundenspezifisches (welche Kunden nicht abrechenbar bzw. intern sind) steht **ni
 
 ## Arbeiten im Ticket
 
+- **Meldungen:** Fehler und Warnungen (z. B. „keine Zeit eingetragen“) erscheinen zusätzlich als Pop-up unten in der Werkbank, egal wie weit man gescrollt hat. Ein Klick schließt sie; nach einigen Sekunden verschwinden sie von selbst.
+- **Kopfzeile:** Angelegt am … von *Ersteller* (MultiData-Feld „Ersteller“), Stunden und abrechenbare Stunden.
 - **Kopf:** Betreff, Status, Priorität, Queue, Bearbeiter, Firma, Parent-Ticket und „Keine Benachrichtigungen“ werden nur vorgemerkt (gelb markiert) und gemeinsam mit **Speichern** übernommen; **Verwerfen** stellt den alten Stand wieder her. Bearbeiter und Firma sucht man direkt im Feld. Beim Firmenwechsel kann MultiData abrechenbare Stunden zurücksetzen – die Werkbank weist darauf hin.
 - **🚗 Vor-Ort-Termin:** Haken beim Buchen (oder beim Bearbeiten eines Kommentars) setzt im Kommentar *Wegzeit* und *Wegstrecke* auf 1 – das Kennzeichen für die Buchhaltung. Solche Kommentare tragen das Etikett „🚗 vor Ort“.
 - **Reiter unten:** *💬 Kommentare* und *🕘 Verlauf*. Der Verlauf zeigt Anlage, Kommentare, Mails, Anhänge und alle Feldänderungen aus dem MultiData-Protokoll (Tabelle `MDERRDA_MDERRDAP`: wer, wann, Feld, alt → neu – dasselbe wie der Reiter „Protokoll“ in MultiData). Ist das Protokoll nicht abrufbar, zeigt die Werkbank ersatzweise die Änderungen, die sie selbst erkannt hat.
 - **Texteditor** (Kommentar, Kommentar bearbeiten, Signatur, Textbausteine):
+  - Die **Rechtschreibprüfung** des Browsers ist in allen Textfeldern aktiv (Deutsch; Korrekturvorschläge per Rechtsklick).
   - **Tab** / **Umschalt+Tab** rücken Listenpunkte und Absätze ein bzw. aus, ebenso die Knöpfe ⇥ / ⇤. Eine neue Unterebene ist eine Aufzählung (•), außer die Liste hat schon nummerierte Unterebenen. In Tabellen springt Tab zur nächsten Zelle.
   - **Enter** in einem leeren Punkt und **Rücktaste** am Anfang eines Punkts rücken ihn eine Ebene aus. Auf oberster Ebene wird er ein normaler Absatz direkt unter der Liste; die Einfügemarke bleibt dort. Folgen noch Punkte, läuft die Nummerierung weiter.
   - „• Liste“ / „1. Liste“ schalten die Liste aus oder wechseln die Art.
