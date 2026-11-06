@@ -61,6 +61,18 @@ Unter ⚙ → *Internes Zeiten-Ticket* wird das monatliche interne Ticket festge
 - **＋ Neues Ticket für <Monat>** legt es an: Priorität *Niedrig*, Status *Warten intern*, keine Benachrichtigungen. Das Ticket des Vormonats wird dabei per QuickClose geschlossen. Gibt es für den Monat schon eins, wird keins doppelt angelegt.
 - Im **Zeiten-Tab** hat jeder Tag (bei den eigenen Zeiten) den Knopf **＋ intern**: Stunden eintragen, *Buchen* – der Rest wird als Kommentar ohne Text auf das interne Ticket **des jeweiligen Monats** gebucht. Mit Personio-Abgleich ist die Differenz schon vorausgefüllt („+1,25 h intern“), „Alle Fehlzeiten intern buchen“ erledigt alle Tage auf einmal.
 
+## Personio-Abgleich
+
+Im Zeiten-Tab unter *⚖ Personio-Abgleich*:
+
+- **⟳ Aus Personio holen** übernimmt die Arbeitszeiten für den oben gewählten Zeitraum (höchstens bis heute) mit einem Klick. Die Werkbank öffnet dazu kurz ein kleines Personio-Fenster. Darin liest sie mit der eigenen Personio-Anmeldung den Stundenzettel (dieselben Daten wie „Stundenzettel exportieren“), gibt die Minuten je Tag zurück, und das Fenster schließt sich wieder.
+  - Voraussetzung: Personio ist im selben Browser angemeldet, und Pop-ups für `csp.synaforce.com` sind erlaubt. Verlangt Personio eine Anmeldung, dort anmelden und danach erneut klicken.
+  - Das Skript läuft dafür zusätzlich auf `*.app.personio.com/my-desk`, tut dort aber nur etwas, wenn die Werkbank das Fenster geöffnet hat (Adresse mit `?mdqt-import=…`). Es liest nur die eigenen Zeiten und schickt sie ausschließlich an die Werkbank.
+  - Die Personio-Adresse steht unter ⚙ → Personio (Standard: `https://synaforce-gmbh.app.personio.com`).
+- Alternativ die CSV aus Personio (*Anwesenheiten → ⚙ → Stundenzettel exportieren*) in das Feld ziehen. Ältere Exporte im Format `TT.MM.JJJJ;Minuten` funktionieren weiterhin.
+- Künftige Tage werden nicht übernommen. Der heutige Tag kommt erst dazu, wenn die Stempeluhr nicht mehr läuft (beim CSV-Import immer erst am nächsten Tag).
+- Feiertage und Abwesenheiten aus Personio erscheinen als Etikett am Tag (Homeoffice nicht).
+
 ## Protokoll
 
 Alle Aktionen der Werkbank (nur in diesem Browser). Ticketnummern sind Links (Klick: öffnen, Mittelklick: neuer Tab); oben kann man nach Text oder Ticket-Nr. filtern.
@@ -84,9 +96,9 @@ Damit sich die Datei nach dem Download sofort in Office öffnet, braucht der Bro
 
 ## Datenschutz
 
-- Lokal im Browser (localStorage) liegen: Signatur, Textbausteine, Entwürfe, Filter und Vorlagen, Personio-Zeiten (falls importiert), Posteingangs-Vorschau, Protokoll, Ticket-Verlauf (zuletzt gesehener Stand der letzten 400 Tickets) und die Nummern der internen Zeiten-Tickets.
+- Lokal im Browser (localStorage) liegen: Signatur, Textbausteine, Entwürfe, Filter und Vorlagen, Personio-Zeiten und -Abwesenheiten (falls übernommen), Posteingangs-Vorschau, Protokoll, Ticket-Verlauf (zuletzt gesehener Stand der letzten 400 Tickets) und die Nummern der internen Zeiten-Tickets.
 - Diese Daten werden nirgendwohin übertragen. Unter ⚙ → „Alle Werkbank-Daten in diesem Browser löschen“ lassen sie sich entfernen.
-- Das Skript spricht im Betrieb ausschließlich mit `csp.synaforce.com`. Vorschauen entstehen im Browser; „In Office öffnen“ lädt in den Downloads-Ordner. Nichts wird in eine Cloud hochgeladen.
+- Das Skript spricht im Betrieb nur mit `csp.synaforce.com` und – bei „⟳ Aus Personio holen“ – im Personio-Fenster mit der eigenen Personio-Instanz. Vorschauen entstehen im Browser; „In Office öffnen“ lädt in den Downloads-Ordner. Nichts wird in eine Cloud hochgeladen.
 - Tampermonkey lädt beim Installieren/Aktualisieren zusätzlich die Vorschau-Bibliotheken von `cdn.jsdelivr.net` und `cdn.sheetjs.com` (fest versioniert, mit Prüfsumme).
 
 ## Hinweise

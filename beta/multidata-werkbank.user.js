@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.6.1.10
+// @version      1.6.1.11
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
+// @match        https://*.app.personio.com/my-desk*
 // @homepageURL  https://github.com/lukasebner1998-ship-it/multidata-werkbank
 // @updateURL    https://raw.githubusercontent.com/lukasebner1998-ship-it/multidata-werkbank/main/beta/multidata-werkbank.user.js
 // @downloadURL  https://raw.githubusercontent.com/lukasebner1998-ship-it/multidata-werkbank/main/beta/multidata-werkbank.user.js
@@ -39,9 +40,93 @@
   for (const k of ['JSZip', 'docx', 'XLSX']) { try { delete window[k]; } catch { /* nicht löschbar */ } }
   if (window.__mdqtLoaded || location.protocol === 'about:') return;
   window.__mdqtLoaded = true;
+  const WB_ORIGIN = 'https://csp.synaforce.com';
+  // In Personio läuft nur der Helfer für „Aus Personio holen“ – und nur, wenn die Werkbank das Fenster dafür geöffnet hat.
+  if (/\.personio\.(com|de)$/.test(location.hostname)) { personioHelper(); return; }
   // Läuft schon beim Seitenstart: Adresse sichern (#werkbank/… bzw. #mdopen/…), bevor MultiData sie umschreibt.
   const START_HASH = location.hash;
+  // Personio-Rückgabe über die Adresse (falls das Personio-Fenster die Verbindung zur Werkbank verloren hat, z. B. nach SSO-Anmeldung)
+  if (START_HASH.startsWith('#mdqt-personio=')) {
+    try {
+      const m = JSON.parse(decodeURIComponent(START_HASH.slice(15)));
+      const pend = JSON.parse(localStorage.getItem('mdqt.personioPending') || 'null');
+      if (pend && m && m.nonce === pend.nonce) localStorage.setItem('mdqt.personioResult', JSON.stringify({ ...m, at: Date.now() })); // offene Werkbank-Tabs übernehmen es (storage-Ereignis)
+    } catch { /* ungültig */ }
+    history.replaceState(null, '', location.pathname + location.search);
+    window.close(); // vom Werkbank-Klick geöffnetes Fenster; bleibt es offen, lädt hier einfach MultiData
+  }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', main, { once: true }); else main();
+
+  // ---------------------------------------------------------------------------
+  // Personio-Helfer (läuft im kleinen Personio-Fenster, das „⟳ Aus Personio holen“ öffnet)
+  // Personio erlaubt der Werkbank keinen direkten Zugriff (kein CORS, kein Einbetten). Deshalb liest dieses Fenster mit der
+  // eigenen Personio-Anmeldung den Stundenzettel (dieselbe Schnittstelle wie „Stundenzettel exportieren“), schickt die
+  // Arbeitsminuten je Tag an die Werkbank zurück und schließt sich. Ohne ?mdqt-import=… in der Adresse passiert nichts.
+  // ---------------------------------------------------------------------------
+  function personioHelper() {
+    let req;
+    try { req = JSON.parse(new URLSearchParams(location.search).get('mdqt-import') || 'null'); } catch { req = null; }
+    if (!req || !/^[\w-]{8,64}$/.test(req.nonce || '') || !/^\d{4}-\d{2}-\d{2}$/.test(req.from || '') || !/^\d{4}-\d{2}-\d{2}$/.test(req.to || '')) return;
+    const pad2 = n => String(n).padStart(2, '0');
+    const iso = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    let box = null;
+    const show = (text, kind) => {
+      const put = () => {
+        if (!box) { box = document.createElement('div'); box.style.cssText = 'position:fixed;left:16px;right:16px;top:16px;z-index:2147483647;padding:14px 16px;border-radius:8px;font:14px/1.4 Arial,sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.25)'; document.body.appendChild(box); }
+        box.style.background = kind === 'err' ? '#ffebee' : kind === 'ok' ? '#e8f5e9' : '#fff';
+        box.style.border = '2px solid ' + (kind === 'err' ? '#c62828' : '#00897b');
+        box.textContent = '⚡ Werkbank: ' + text;
+      };
+      if (document.body) put(); else document.addEventListener('DOMContentLoaded', put, { once: true });
+    };
+    const send = data => {
+      const m = { type: 'mdqt-personio', nonce: req.nonce, ...data };
+      let viaOpener = false;
+      try { if (window.opener && !window.opener.closed) { window.opener.postMessage(m, WB_ORIGIN); viaOpener = true; } } catch { /* Verbindung getrennt */ }
+      if (viaOpener) { setTimeout(() => window.close(), data.error ? 6000 : 900); return; }
+      // Verbindung zur Werkbank verloren (z. B. nach Anmeldung über Microsoft): über die Adresse zurückgeben
+      location.replace(WB_ORIGIN + '/mdweb/rwi/HOME/0#mdqt-personio=' + encodeURIComponent(JSON.stringify(m)));
+    };
+    const getJson = async url => {
+      const r = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } });
+      if (r.status === 401 || r.status === 403) throw Object.assign(new Error('Nicht bei Personio angemeldet.'), { login: true });
+      if (!r.ok) throw new Error(`Personio antwortet mit HTTP ${r.status}.`);
+      return r.json();
+    };
+    (async () => {
+      show('Hole Arbeitszeiten aus Personio …');
+      // eigene Mitarbeiter-ID steht im Dashboard; alternativ in der laufenden Stempeluhr
+      const html = await (await fetch('/my-desk', { credentials: 'include' })).text();
+      let id = (html.match(/"employeeId"\s*:\s*"?(\d+)/) || [])[1];
+      if (!id) { try { id = String((await getJson('/svc/attendance-bff/time-tracking-widget'))?.data?.current_active_time_clock_session?.employee_id || ''); } catch { /* ignore */ } }
+      if (!id) throw Object.assign(new Error('Mitarbeiter-ID nicht gefunden – bitte bei Personio anmelden.'), { login: true });
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Berlin';
+      const today = iso(new Date()), to = req.to > today ? today : req.to;
+      const days = [];
+      // monatsweise abfragen (wie die Monatsansicht in Personio)
+      for (let a = req.from; a <= to;) {
+        const d = new Date(a + 'T12:00:00'), endOfMonth = iso(new Date(d.getFullYear(), d.getMonth() + 1, 0)), b = endOfMonth < to ? endOfMonth : to;
+        const j = await getJson(`/svc/attendance-bff/v1/timesheet/${id}?start_date=${a}&end_date=${b}&timezone=${encodeURIComponent(tz)}`);
+        for (const t of j.timecards || []) {
+          if (!t.date || t.date < req.from || t.date > to) continue;
+          const work = (t.periods || []).filter(p => p.type !== 'break');
+          days.push({
+            d: t.date,
+            min: work.reduce((s, p) => s + (Number(p.duration_in_minutes) || 0), 0), // wie der CSV-Export: laufende Zeit zählt noch nicht
+            run: work.some(p => !p.end),                                            // Stempeluhr läuft noch
+            soll: t.target_hours?.effective_work_duration_minutes ?? null,
+            abs: [...new Set((t.time_off?.items || []).map(i => i.name).filter(Boolean))].join(', '),
+          });
+        }
+        a = iso(new Date(d.getFullYear(), d.getMonth() + 1, 1));
+      }
+      show(`✔ ${days.length} Tage übertragen – Fenster schließt sich.`, 'ok');
+      send({ days, from: req.from, to, employeeId: id });
+    })().catch(e => {
+      show((e.login ? 'Bitte zuerst bei Personio anmelden und danach in der Werkbank erneut auf „Aus Personio holen“ klicken. ' : '') + '(' + e.message + ')', 'err');
+      send({ error: e.message, login: !!e.login });
+    });
+  }
 
   function main() {
 
@@ -55,7 +140,7 @@
       recent: 'mdqt.recentCustomers', filters: 'mdqt.filters', log: 'mdqt.log', drafts: 'mdqt.drafts', size: 'mdqt.size',
       settings: 'mdqt.settings', inbox: 'mdqt.inbox', sections: 'mdqt.sections', comments: 'mdqt.comments', personio: 'mdqt.personio',
       timesView: 'mdqt.timesView', templates: 'mdqt.searchTemplates', team: 'mdqt.team', facetSort: 'mdqt.facetSort',
-      history: 'mdqt.ticketHistory',
+      history: 'mdqt.ticketHistory', personioInfo: 'mdqt.personioInfo', personioPending: 'mdqt.personioPending', personioResult: 'mdqt.personioResult',
     },
     legacyKeys: ['mdqt.myCustomers', 'mdqt.lastText', 'mdqt.graph', 'mdqt.authResult'], // Reste älterer Versionen, werden beim Start entfernt
     pollTicketSec: 45,           // offenes Ticket auf Änderungen von außen prüfen
@@ -83,6 +168,7 @@
     // Farbcodierung Arbeitstage im Zeiten-Tab
     dayColors: { low: 6 },       // 0 h = rot, < 6 h = gelb, ≥ 6 h = grün
     personioRoundMin: 7,         // Personio: ab 7 Restminuten auf die nächste Viertelstunde aufrunden
+    personioUrl: 'https://synaforce-gmbh.app.personio.com', // Vorgabe; änderbar unter ⚙ → Personio
     statuses: [
       ['N', 'Neu', '#e53935'], ['NR', 'Wieder neu', '#e53935'], ['NK', 'Kontaktaufnahme', '#f9a825'],
       ['W', 'In Arbeit', '#1e3fff'], ['WE', 'Warten auf Antwort', '#455a64'], ['WF', 'Warten auf Freigabe', '#757575'],
@@ -1473,7 +1559,11 @@
           <button class="btn sm sec" data-ref="zCsv">⬇ CSV-Export</button>
         </div>
         <details class="card" data-ref="zPDet"><summary>⚖ Personio-Abgleich <span class="hint" data-ref="zPInfo"></span></summary>
-          <div class="drop" data-ref="zDrop">Personio-CSV („Arbeitszeit pro Tag“, Minuten) hierher ziehen oder <u>auswählen</u><input type="file" accept=".csv,text/csv" data-ref="zFile" style="display:none"></div>
+          <div class="row" style="align-items:center;margin-bottom:6px">
+            <button class="btn" data-ref="zPGet" title="Öffnet kurz ein Personio-Fenster (eigene Anmeldung), liest den Stundenzettel für den gewählten Zeitraum und schließt es wieder">⟳ Aus Personio holen</button>
+            <span class="hint" style="flex:1">für den Zeitraum oben (von – bis, höchstens bis heute). Personio muss im Browser angemeldet sein; Pop-ups für MultiData erlauben.</span>
+          </div>
+          <div class="drop" data-ref="zDrop">oder die Personio-CSV („Stundenzettel exportieren“) hierher ziehen bzw. <u>auswählen</u><input type="file" accept=".csv,text/csv" data-ref="zFile" style="display:none"></div>
           <div class="row" style="margin-top:6px;align-items:center">
             <span class="hint" style="flex:1">Fehlzeiten werden auf das interne Zeiten-Ticket des jeweiligen Monats gebucht (⚙ Einstellungen). Gerundet wird pro Tag ab ${CFG.personioRoundMin} Restminuten auf die nächste Viertelstunde. Der Abgleich gilt nur, wenn nur „Ich“ gewählt ist.</span>
             <button class="btn sm sec" data-ref="zPClear">Personio-Daten entfernen</button>
@@ -1537,6 +1627,12 @@
         </div>
         <div class="hint" style="margin-top:4px">Neues Ticket: Firma wie oben, Priorität „Niedrig“, Status „Warten intern“, keine Benachrichtigungen, Bearbeiter = ich. Das Ticket des Vormonats wird dabei per QuickClose geschlossen.</div>
         <div class="msg" data-ref="itMsg"></div>
+
+        <h3 style="margin:18px 0 6px">Personio</h3>
+        <div class="row" style="align-items:flex-end">
+          <div class="c" style="flex-basis:340px"><label class="l">Personio-Adresse <span class="hint">für „⟳ Aus Personio holen“ im Zeiten-Tab</span></label><input type="text" data-ref="stPUrl" placeholder="${CFG.personioUrl}"></div>
+        </div>
+        <div class="msg" data-ref="stPMsg"></div>
 
         <h3 style="margin:18px 0 6px">Team-Konfiguration (Abrechenbarkeit)</h3>
         <div class="hint">Steuert nur den Vorschlag für die Checkbox „abrechenbar“ und die Gruppierung im Zeiten-Tab. Änderungen werden sofort gespeichert.</div>
@@ -3634,6 +3730,14 @@
     renderTeam(); renderIntern();
   }
 
+  // --- Personio-Adresse ---
+  $('stPUrl').value = settings().personioUrl || '';
+  $('stPUrl').addEventListener('change', () => {
+    const v = $('stPUrl').value.trim().replace(/\/+$/, '').replace(/\/my-desk.*$/, '');
+    if (v && !/^https:\/\/[\w-]+\.app\.personio\.(com|de)$/.test(v)) { msg('stPMsg', '✖ Bitte die Adresse in der Form https://firma.app.personio.com eingeben.', 'err'); return; }
+    saveSettings({ ...settings(), personioUrl: v }); $('stPUrl').value = v;
+    msg('stPMsg', v ? '✔ Gespeichert.' : `✔ Zurückgesetzt auf ${CFG.personioUrl}.`, 'ok');
+  });
   // --- Internes Zeiten-Ticket ---
   async function renderIntern() {
     const c = internCfg(), k = monthKey(todayStr());
@@ -3796,6 +3900,7 @@
   const isWorkday = d => { const w = weekday(d); return w >= 1 && w <= 5; };
   const personioRound = min => { const q = Math.floor(min / 15), r = min % 15; return (q + (r >= CFG.personioRoundMin ? 1 : 0)) * 0.25; };
   const personioStore = () => store.get(CFG.store.personio, {});
+  const personioInfo = () => store.get(CFG.store.personioInfo, {});       // Abwesenheit/Feiertag je Tag (Anzeige)
 
   async function loadTimes({ users, from, to }) {
     const meId = await me();
@@ -3879,19 +3984,94 @@
   }
   $('zGo').addEventListener('click', ev => busy(ev.target, runTimes));
 
-  // Personio-CSV (Export „Arbeitszeit pro Tag“, Minuten) – per Drag & Drop oder Auswahl
-  async function importPersonio(file) {
-    const text = await file.text();
-    const p = personioStore(); let n = 0;
-    for (const line of text.split(/\r?\n/)) {
-      const m = line.match(/(\d{2})\.(\d{2})\.(\d{4})\s*[;,\t]\s*(\d+)/);
-      if (m) { p[`${m[3]}-${m[2]}-${m[1]}`] = +m[4]; n++; }
+  // --- Personio: Arbeitsminuten je Tag (aus „⟳ Aus Personio holen“ oder der CSV „Stundenzettel exportieren“) ---
+  const personioBase = () => {
+    const u = String(settings().personioUrl || '').trim().replace(/\/+$/, '');
+    return /^https:\/\/[\w-]+\.app\.personio\.(com|de)$/.test(u) ? u : CFG.personioUrl;
+  };
+  // days = [{ d: 'JJJJ-MM-TT', min, abs, run }]. Künftige Tage bleiben weg (sonst gälten sie als „frei“),
+  // ebenso heute, solange die Stempeluhr läuft bzw. aus der CSV (dort ist der Tag noch nicht abgeschlossen).
+  function mergePersonio(days, source) {
+    const p = personioStore(), info = personioInfo(), today = todayStr(), got = [];
+    let skippedToday = false;
+    for (const x of (Array.isArray(days) ? days : []).slice(0, 800)) {
+      if (!x || !/^\d{4}-\d{2}-\d{2}$/.test(x.d) || !Number.isFinite(+x.min) || x.d > today) continue;
+      if (x.d === today && x.run) { skippedToday = true; continue; }
+      p[x.d] = Math.max(0, Math.round(+x.min));
+      const abs = String(x.abs || '').trim().slice(0, 120);
+      if (abs && !/^(keine|none)$/i.test(abs)) info[x.d] = abs; else delete info[x.d];
+      got.push(x.d);
     }
-    if (!n) throw new Error('Keine Zeilen im Format „TT.MM.JJJJ;Minuten“ gefunden.');
-    store.set(CFG.store.personio, p);
-    msg('zMsg', `✔ Personio: ${n} Tage übernommen.`, 'ok');
+    if (!got.length) throw new Error(skippedToday ? 'Nur der heutige Tag gefunden – der wird erst nach dem Ausstempeln übernommen.' : 'Keine vergangenen Tage in den Personio-Daten gefunden.');
+    got.sort();
+    store.set(CFG.store.personio, p); store.set(CFG.store.personioInfo, info);
+    const range = `${fmtDate(got[0])} – ${fmtDate(got[got.length - 1])}`;
+    msg('zMsg', `✔ Personio: ${got.length} Tage übernommen (${range})${skippedToday ? '; heute folgt nach dem Ausstempeln' : ''}.`, 'ok');
+    log('Personio übernommen', `${source}: ${got.length} Tage, ${range}`);
     renderTimes();
   }
+  // CSV aus Personio: „Datum,Arbeit,Pause,Abwesenheit/Feiertage,…“ (Minuten); ältere Exporte „TT.MM.JJJJ;Minuten“
+  function parsePersonioCsv(text) {
+    const lines = String(text).replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim());
+    if (!lines.length) return [];
+    const count = (l, c) => l.split(c).length;
+    const sep = [';', ',', '\t'].reduce((best, c) => count(lines[0], c) > count(lines[0], best) ? c : best, ';');
+    const split = line => {
+      const out = []; let cur = '', q = false;
+      for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+        else if (c === '"') q = true; else if (c === sep) { out.push(cur); cur = ''; } else cur += c;
+      }
+      out.push(cur); return out.map(v => v.trim());
+    };
+    const head = split(lines[0]).map(h => h.toLowerCase());
+    let iD = head.findIndex(h => /^(datum|date|tag|day)$/.test(h)), iW = head.findIndex(h => /^(arbeit|arbeitszeit|work|worked|working time)/.test(h));
+    const iA = head.findIndex(h => /abwesenheit|absence|feiertag|holiday/.test(h));
+    const hasHead = iD >= 0 && iW >= 0;
+    if (!hasHead) { iD = 0; iW = 1; }
+    const toDate = v => {
+      let m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+      m = String(v || '').match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/); return m ? `${m[3]}-${pad(m[2])}-${pad(m[1])}` : null;
+    };
+    const raw = [];
+    for (const l of hasHead ? lines.slice(1) : lines) {
+      const c = split(l), d = toDate(c[iD]);
+      const v = String(c[iW] ?? '').replace(',', '.'), hm = v.match(/^(\d+):(\d{2})$/);
+      const n = hm ? +hm[1] * 60 + +hm[2] : /^\d+(\.\d+)?$/.test(v) ? +v : NaN;
+      if (d && Number.isFinite(n)) raw.push({ d, n, hm: !!hm, abs: iA >= 0 ? c[iA] : '' });
+    }
+    // Export in Stunden (z. B. 7.62) statt Minuten erkennen
+    const hours = (hasHead && /stunde|hour/.test(head[iW])) || (raw.some(r => !r.hm && r.n % 1) && raw.every(r => r.hm || r.n <= 24));
+    const today = todayStr();
+    return raw.map(r => ({ d: r.d, min: r.hm ? r.n : Math.round(hours ? r.n * 60 : r.n), abs: r.abs, run: r.d === today }));
+  }
+  async function importPersonio(file) {
+    const days = parsePersonioCsv(await file.text());
+    if (!days.length) throw new Error('Keine Tage erkannt – erwartet wird der Personio-Export „Stundenzettel exportieren“ (CSV).');
+    mergePersonio(days, 'CSV ' + (file.name || ''));
+  }
+  // „⟳ Aus Personio holen“: kleines Personio-Fenster öffnen; dort liest der Personio-Helfer (oben) den Stundenzettel
+  // mit der eigenen Personio-Anmeldung und schickt die Tage per postMessage zurück.
+  function fetchPersonio() {
+    const today = todayStr(), from = $('zFrom').value, to = $('zTo').value > today ? today : $('zTo').value;
+    if (!from || !to || to < from) { msg('zMsg', 'Bitte oben einen Zeitraum wählen, der vor heute beginnt.', 'err'); return; }
+    if ((new Date(to) - new Date(from)) / 864e5 > 186) { msg('zMsg', 'Zeitraum bitte auf max. 6 Monate begrenzen.', 'err'); return; }
+    const nonce = crypto.randomUUID();
+    store.set(CFG.store.personioPending, { nonce, at: Date.now() });
+    const url = personioBase() + '/my-desk?mdqt-import=' + encodeURIComponent(JSON.stringify({ nonce, from, to }));
+    const w = window.open(url, 'mdqtPersonio', 'popup,width=560,height=420');
+    if (!w) { msg('zMsg', '✖ Das Personio-Fenster wurde blockiert. Bitte Pop-ups für csp.synaforce.com erlauben (Symbol rechts in der Adresszeile) und erneut klicken.', 'err'); return; }
+    msg('zMsg', `Hole Zeiten ${fmtDate(from)} – ${fmtDate(to)} aus Personio … Verlangt Personio eine Anmeldung: dort anmelden, dann hier erneut klicken.`);
+  }
+  function personioResult(m) {
+    const pend = store.get(CFG.store.personioPending, null);
+    if (!m || m.type !== 'mdqt-personio' || !pend || m.nonce !== pend.nonce) return;
+    store.set(CFG.store.personioPending, null);
+    if (m.error) { msg('zMsg', '✖ Personio: ' + m.error + (m.login ? ' Bitte in Personio anmelden und danach erneut „⟳ Aus Personio holen“ klicken.' : ''), 'err'); return; }
+    try { mergePersonio(m.days, 'Personio'); } catch (e) { msg('zMsg', '✖ ' + e.message, 'err'); }
+  }
+  window.addEventListener('message', e => { if (e.origin === personioBase() && e.data && e.data.type === 'mdqt-personio') personioResult(e.data); });
   {
     const drop = $('zDrop'), inp = $('zFile');
     drop.addEventListener('click', () => inp.click());
@@ -3899,7 +4079,8 @@
     ['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
     ['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
     drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) importPersonio(f).catch(er => msg('zMsg', '✖ ' + er.message, 'err')); });
-    $('zPClear').addEventListener('click', () => { store.set(CFG.store.personio, {}); renderTimes(); });
+    $('zPGet').addEventListener('click', fetchPersonio);
+    $('zPClear').addEventListener('click', () => { store.set(CFG.store.personio, {}); store.set(CFG.store.personioInfo, {}); renderTimes(); });
   }
 
   // Rest/Fehlzeit als Kommentar ohne Text auf das interne Ticket des jeweiligen Monats buchen. days = [{ date, diff (h) }]
@@ -3917,7 +4098,7 @@
 
   function renderTimes() {
     const box = $('zView'); box.innerHTML = '';
-    const pStore = personioStore();
+    const pStore = personioStore(), pInfo = personioInfo();
     const pDays = Object.keys(pStore).sort();
     $('zPInfo').textContent = pDays.length ? `Personio-Daten: ${fmtDate(pDays[0])} – ${fmtDate(pDays[pDays.length - 1])} (${pDays.length} Tage)` : 'keine Personio-Daten';
     $('zPClear').style.display = pDays.length ? '' : 'none';
@@ -4008,13 +4189,13 @@
     for (const d of dayList) {
       const day = days[d], wd = isWorkday(d);
       if (!day && !wd && $('zWeekend').checked) continue;
-      const pMin = pStore[d], soll = hasP && pMin != null ? personioRound(pMin) : null;
+      const pMin = pStore[d], soll = hasP && pMin != null ? personioRound(pMin) : null, pAbs = hasP ? pInfo[d] || '' : '';
       const std = day?.std || 0, diff = soll != null ? Math.round((soll - std) * 100) / 100 : null;
       let cls = 'zday';
       if ($('zColor').checked && wd && d <= todayStr()) cls += soll === 0 ? ' z-free' : std <= 0 ? ' z-red' : std < low ? ' z-yellow' : ' z-green';
       if (!wd) cls += ' z-we';
       const tr = el('tr', { className: cls });
-      tr.innerHTML = `<td><b>${WD[weekday(d)]} ${fmtDate(d)}</b>${!wd && day ? ' <span class="tag">Wochenende</span>' : ''}${std > 10 ? ' <span class="tag abr">über 10 h</span>' : ''}${soll === 0 ? ' <span class="tag">frei laut Personio</span>' : ''}</td><td></td>
+      tr.innerHTML = `<td><b>${WD[weekday(d)]} ${fmtDate(d)}</b>${!wd && day ? ' <span class="tag">Wochenende</span>' : ''}${std > 10 ? ' <span class="tag abr">über 10 h</span>' : ''}${pAbs && !/home\s*office|mobil/i.test(pAbs) ? ` <span class="tag">${esc(pAbs)}</span>` : soll === 0 ? ' <span class="tag">frei laut Personio</span>' : ''}</td><td></td>
         <td class="n"><b>${fmtH(std)}</b></td><td class="n">${fmtH(day?.abr || 0)}</td>` +
         (hasP ? `<td class="n">${soll == null ? '–' : fmtH(soll)}</td><td class="n ${diff > 0 ? 'neg' : diff < 0 ? 'pos' : ''}">${diff == null || diff === 0 ? (diff === 0 ? '✓' : '') : (diff > 0 ? '−' : '+') + fmtH(Math.abs(diff))}</td>` : '') +
         (act ? '<td style="white-space:nowrap"></td>' : '');
@@ -4123,6 +4304,8 @@
   });
   // Gemeinsam gespeicherte Daten wurden in einem anderen Tab geändert
   bus.on('store', key => {
+    if (key === CFG.store.personioResult) { personioResult(store.get(key, null)); return; }
+    if ((key === CFG.store.personio || key === CFG.store.personioInfo) && ui.tab === 'times') { renderTimes(); return; }
     if (key === CFG.store.inbox) { updateBadges(); if (ui.tab === 'inbox') renderInbox(); }
     else if (key === CFG.store.drafts) {
       updateBadges(); if (ui.tab === 'drafts') renderDrafts();
