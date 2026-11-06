@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.6.1.11
+// @version      1.7.0.1
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
