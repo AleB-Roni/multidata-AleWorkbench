@@ -1,13 +1,17 @@
 // ==UserScript==
 // @name         MultiData Werkbank
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.6.0
+// @version      1.7.0
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
+// @match        https://*.app.personio.com/my-desk*
 // @homepageURL  https://github.com/lukasebner1998-ship-it/multidata-werkbank
 // @updateURL    https://raw.githubusercontent.com/lukasebner1998-ship-it/multidata-werkbank/main/stable/multidata-werkbank.user.js
 // @downloadURL  https://raw.githubusercontent.com/lukasebner1998-ship-it/multidata-werkbank/main/stable/multidata-werkbank.user.js
+// @require      https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js#sha256-rMfkFFWoB2W1/Zx+4bgHim0WC7vKRVrq6FTeZclH1Z4=
+// @require      https://cdn.jsdelivr.net/npm/docx-preview@0.4.1/dist/docx-preview.min.js#sha256-xKEzxloRJ5njWxQ8Vy3/+ekjo785tf07B6BqoPj1MMI=
+// @require      https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js#sha256-zAFRMKqFIefwiPiImOupSczcv7ON8L0Sm0S3Jzw6b0E=
 // @grant        none
 // @run-at       document-start
 // ==/UserScript==
@@ -26,30 +30,103 @@
  */
 (function () {
   'use strict';
+  // Bibliotheken für die Datei-Vorschau (per @require geladen, mit Prüfsumme): sofort übernehmen und aus dem
+  // Seitenkontext entfernen, damit MultiData eigene Versionen (z. B. JSZip für den Excel-Export) ungestört nutzt.
+  /* global XLSX, docx */
+  const LIBS = {
+    XLSX: typeof XLSX !== 'undefined' ? XLSX : window.XLSX,
+    docx: typeof docx !== 'undefined' ? docx : window.docx,
+  };
+  for (const k of ['JSZip', 'docx', 'XLSX']) { try { delete window[k]; } catch { /* nicht löschbar */ } }
   if (window.__mdqtLoaded || location.protocol === 'about:') return;
   window.__mdqtLoaded = true;
+  const WB_ORIGIN = 'https://csp.synaforce.com';
+  // In Personio läuft nur der Helfer für „Aus Personio holen“ – und nur, wenn die Werkbank das Fenster dafür geöffnet hat.
+  if (/\.personio\.(com|de)$/.test(location.hostname)) { personioHelper(); return; }
   // Läuft schon beim Seitenstart: Adresse sichern (#werkbank/… bzw. #mdopen/…), bevor MultiData sie umschreibt.
   const START_HASH = location.hash;
-  // Rückkehr von der Microsoft-Anmeldung (Fenster für „In Office öffnen“): MultiData nicht laden,
-  // Ergebnis an die Werkbank melden und auf die Office-Adresse warten.
-  if (/^\/mdweb\/werkbank-auth/.test(location.pathname) || /[#&]state=mdqt/.test(START_HASH)) {
-    try { window.stop(); } catch { /* ignore */ }
-    const p = new URLSearchParams(START_HASH.slice(1));
-    const ch = 'BroadcastChannel' in window ? new BroadcastChannel('mdqt-auth') : null;
-    const show = t => { if (!document.documentElement) document.appendChild(document.createElement('html')); document.documentElement.innerHTML = `<head><meta charset="utf-8"><title>Werkbank – Microsoft 365</title></head><body style="font:15px Segoe UI,Arial,sans-serif;padding:40px;color:#333"><h2 style="color:#00796b">⚡ Werkbank</h2><p id="t"></p></body>`; document.getElementById('t').textContent = t; };
-    let done = false;
-    const go = () => {
-      if (done) return; done = true;
-      show(p.get('error') ? 'Anmeldung fehlgeschlagen: ' + (p.get('error_description') || p.get('error')) : 'Angemeldet – Datei wird nach OneDrive hochgeladen und gleich geöffnet …');
-      const res = { type: 'auth', state: p.get('state'), code: p.get('code'), error: p.get('error'), errorText: p.get('error_description') };
-      if (ch) { ch.postMessage(res); ch.onmessage = ev => { const m = ev.data || {}; if (m.state !== res.state) return; if (m.type === 'nav') location.replace(m.url); if (m.type === 'close') window.close(); if (m.type === 'msg') show(m.text); }; }
-      try { localStorage.setItem('mdqt.authResult', JSON.stringify({ ...res, t: Date.now() })); } catch { /* ignore */ }
-    };
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true }); else go();
-    setTimeout(go, 0);
-    return;
+  // Personio-Rückgabe über die Adresse (falls das Personio-Fenster die Verbindung zur Werkbank verloren hat, z. B. nach SSO-Anmeldung)
+  if (START_HASH.startsWith('#mdqt-personio=')) {
+    try {
+      const m = JSON.parse(decodeURIComponent(START_HASH.slice(15)));
+      const pend = JSON.parse(localStorage.getItem('mdqt.personioPending') || 'null');
+      if (pend && m && m.nonce === pend.nonce) localStorage.setItem('mdqt.personioResult', JSON.stringify({ ...m, at: Date.now() })); // offene Werkbank-Tabs übernehmen es (storage-Ereignis)
+    } catch { /* ungültig */ }
+    history.replaceState(null, '', location.pathname + location.search);
+    window.close(); // vom Werkbank-Klick geöffnetes Fenster; bleibt es offen, lädt hier einfach MultiData
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', main, { once: true }); else main();
+
+  // ---------------------------------------------------------------------------
+  // Personio-Helfer (läuft im kleinen Personio-Fenster, das „⟳ Aus Personio holen“ öffnet)
+  // Personio erlaubt der Werkbank keinen direkten Zugriff (kein CORS, kein Einbetten). Deshalb liest dieses Fenster mit der
+  // eigenen Personio-Anmeldung den Stundenzettel (dieselbe Schnittstelle wie „Stundenzettel exportieren“), schickt die
+  // Arbeitsminuten je Tag an die Werkbank zurück und schließt sich. Ohne ?mdqt-import=… in der Adresse passiert nichts.
+  // ---------------------------------------------------------------------------
+  function personioHelper() {
+    let req;
+    try { req = JSON.parse(new URLSearchParams(location.search).get('mdqt-import') || 'null'); } catch { req = null; }
+    if (!req || !/^[\w-]{8,64}$/.test(req.nonce || '') || !/^\d{4}-\d{2}-\d{2}$/.test(req.from || '') || !/^\d{4}-\d{2}-\d{2}$/.test(req.to || '')) return;
+    const pad2 = n => String(n).padStart(2, '0');
+    const iso = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    let box = null;
+    const show = (text, kind) => {
+      const put = () => {
+        if (!box) { box = document.createElement('div'); box.style.cssText = 'position:fixed;left:16px;right:16px;top:16px;z-index:2147483647;padding:14px 16px;border-radius:8px;font:14px/1.4 Arial,sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.25)'; document.body.appendChild(box); }
+        box.style.background = kind === 'err' ? '#ffebee' : kind === 'ok' ? '#e8f5e9' : '#fff';
+        box.style.border = '2px solid ' + (kind === 'err' ? '#c62828' : '#00897b');
+        box.textContent = '⚡ Werkbank: ' + text;
+      };
+      if (document.body) put(); else document.addEventListener('DOMContentLoaded', put, { once: true });
+    };
+    const send = data => {
+      const m = { type: 'mdqt-personio', nonce: req.nonce, ...data };
+      let viaOpener = false;
+      try { if (window.opener && !window.opener.closed) { window.opener.postMessage(m, WB_ORIGIN); viaOpener = true; } } catch { /* Verbindung getrennt */ }
+      if (viaOpener) { setTimeout(() => window.close(), data.error ? 6000 : 900); return; }
+      // Verbindung zur Werkbank verloren (z. B. nach Anmeldung über Microsoft): über die Adresse zurückgeben
+      location.replace(WB_ORIGIN + '/mdweb/rwi/HOME/0#mdqt-personio=' + encodeURIComponent(JSON.stringify(m)));
+    };
+    const getJson = async url => {
+      const r = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } });
+      if (r.status === 401 || r.status === 403) throw Object.assign(new Error('Nicht bei Personio angemeldet.'), { login: true });
+      if (!r.ok) throw new Error(`Personio antwortet mit HTTP ${r.status}.`);
+      return r.json();
+    };
+    (async () => {
+      show('Hole Arbeitszeiten aus Personio …');
+      // eigene Mitarbeiter-ID steht im Dashboard; alternativ in der laufenden Stempeluhr
+      const html = await (await fetch('/my-desk', { credentials: 'include' })).text();
+      let id = (html.match(/"employeeId"\s*:\s*"?(\d+)/) || [])[1];
+      if (!id) { try { id = String((await getJson('/svc/attendance-bff/time-tracking-widget'))?.data?.current_active_time_clock_session?.employee_id || ''); } catch { /* ignore */ } }
+      if (!id) throw Object.assign(new Error('Mitarbeiter-ID nicht gefunden – bitte bei Personio anmelden.'), { login: true });
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Berlin';
+      const today = iso(new Date()), to = req.to > today ? today : req.to;
+      const days = [];
+      // monatsweise abfragen (wie die Monatsansicht in Personio)
+      for (let a = req.from; a <= to;) {
+        const d = new Date(a + 'T12:00:00'), endOfMonth = iso(new Date(d.getFullYear(), d.getMonth() + 1, 0)), b = endOfMonth < to ? endOfMonth : to;
+        const j = await getJson(`/svc/attendance-bff/v1/timesheet/${id}?start_date=${a}&end_date=${b}&timezone=${encodeURIComponent(tz)}`);
+        for (const t of j.timecards || []) {
+          if (!t.date || t.date < req.from || t.date > to) continue;
+          const work = (t.periods || []).filter(p => p.type !== 'break');
+          days.push({
+            d: t.date,
+            min: work.reduce((s, p) => s + (Number(p.duration_in_minutes) || 0), 0), // wie der CSV-Export: laufende Zeit zählt noch nicht
+            run: work.some(p => !p.end),                                            // Stempeluhr läuft noch
+            soll: t.target_hours?.effective_work_duration_minutes ?? null,
+            abs: [...new Set((t.time_off?.items || []).map(i => i.name).filter(Boolean))].join(', '),
+          });
+        }
+        a = iso(new Date(d.getFullYear(), d.getMonth() + 1, 1));
+      }
+      show(`✔ ${days.length} Tage übertragen – Fenster schließt sich.`, 'ok');
+      send({ days, from: req.from, to, employeeId: id });
+    })().catch(e => {
+      show((e.login ? 'Bitte zuerst bei Personio anmelden und danach in der Werkbank erneut auf „Aus Personio holen“ klicken. ' : '') + '(' + e.message + ')', 'err');
+      send({ error: e.message, login: !!e.login });
+    });
+  }
 
   function main() {
 
@@ -63,8 +140,9 @@
       recent: 'mdqt.recentCustomers', filters: 'mdqt.filters', log: 'mdqt.log', drafts: 'mdqt.drafts', size: 'mdqt.size',
       settings: 'mdqt.settings', inbox: 'mdqt.inbox', sections: 'mdqt.sections', comments: 'mdqt.comments', personio: 'mdqt.personio',
       timesView: 'mdqt.timesView', templates: 'mdqt.searchTemplates', team: 'mdqt.team', facetSort: 'mdqt.facetSort',
+      history: 'mdqt.ticketHistory', personioInfo: 'mdqt.personioInfo', personioPending: 'mdqt.personioPending', personioResult: 'mdqt.personioResult',
     },
-    legacyKeys: ['mdqt.myCustomers', 'mdqt.lastText'], // Reste älterer Versionen, werden beim Start entfernt
+    legacyKeys: ['mdqt.myCustomers', 'mdqt.lastText', 'mdqt.graph', 'mdqt.authResult'], // Reste älterer Versionen, werden beim Start entfernt
     pollTicketSec: 45,           // offenes Ticket auf Änderungen von außen prüfen
     pollSearchSec: 120,          // offene Suchergebnisse auffrischen
     inboxIntervalMin: 5,        // Inbox automatisch alle n Minuten aktualisieren
@@ -80,11 +158,17 @@
     defaultStartIfPast: 9 * 60, // Startzeit (Minuten) bei Buchung auf vergangene Tage
     defaultKontaktart: 'SUPPORT',
     searchLimit: 300,
+    apiTimeoutSec: 30,           // Lesezugriffe: danach einmal wiederholen, dann Fehlermeldung statt endlosem „Lade …“
+    writeTimeoutSec: 120,        // Schreibzugriffe (Speichern, Mail senden)
+    commentBatch: 15,            // Kommentare in Portionen aufbauen, damit der Tab sofort reagiert
+    bigHtmlMB: 3,                // größere Kommentare (z. B. viele eingebettete Bilder) erst auf Klick anzeigen
+    intern: { pattern: 'Zeiten {K} {MON} {YY}', priority: 4, status: 'WI' }, // monatliches internes Zeiten-Ticket
     // Priorität (MultiData-Feld PRIORITY; 3 = normal)
     priorities: [[1, 'Kritisch', '#b71c1c'], [2, 'Hoch', '#ef6c00'], [3, 'Normal', '#fbc02d'], [4, 'Niedrig', '#4fc3f7'], [5, 'Sehr niedrig', '#90a4ae']],
     // Farbcodierung Arbeitstage im Zeiten-Tab
     dayColors: { low: 6 },       // 0 h = rot, < 6 h = gelb, ≥ 6 h = grün
     personioRoundMin: 7,         // Personio: ab 7 Restminuten auf die nächste Viertelstunde aufrunden
+    personioUrl: 'https://synaforce-gmbh.app.personio.com', // Vorgabe; änderbar unter ⚙ → Personio
     statuses: [
       ['N', 'Neu', '#e53935'], ['NR', 'Wieder neu', '#e53935'], ['NK', 'Kontaktaufnahme', '#f9a825'],
       ['W', 'In Arbeit', '#1e3fff'], ['WE', 'Warten auf Antwort', '#455a64'], ['WF', 'Warten auf Freigabe', '#757575'],
@@ -94,10 +178,16 @@
   };
   const TICKET_COLS = ['ROW_ID', 'SID', 'TITEL', 'STATUS', 'PRIORITY', 'KND_ID', 'MATCHCODE', 'ANLAGE_DATUM', 'BEARBEITER_USER_ID',
     'SUM_STD', 'MEMO_SUM_ABRSTD', 'SUPPRESS_NOTIFY', 'DATE_MODIFIED'];
-  const TICKET_DETAIL_COLS = [...TICKET_COLS, 'EMAIL_TO', 'EMAIL_CC', 'ANLAGE_NOTIZ', 'MDERRDA_SID', 'ERRQ_ID', 'MDERRQ_FK__NAME_KB', 'TERMIN'];
+  const TICKET_DETAIL_COLS = [...TICKET_COLS, 'ANLAGE_USER_ID', 'EMAIL_TO', 'EMAIL_CC', 'ANLAGE_NOTIZ', 'MDERRDA_SID', 'ERRQ_ID', 'MDERRQ_FK__NAME_KB', 'TERMIN'];
   // MEMO_IA = '1' → eingehende Mail (Absender steht dann in EMAIL_TO)
   const COMMENT_COLS = ['ROW_ID', 'SID', 'MDERRDA_SID', 'STATUS', 'BEARBEITER_USER_ID', 'LST_TITEL', 'LST_ID', 'LST_DATUM',
     'LFZ_VON', 'LFZ_BIS', 'LFZ_STD', 'INABR_STD', 'LFZ_STD_MAN', 'NOTIZ', 'MEMO_MIN', 'EMAIL_TO', 'EMAIL_CC', 'EMAIL_BCC', 'EMAIL_DATUM', 'MEMO_IA'];
+  // Vor-Ort-Kennzeichen für die Buchhaltung: Wegzeit und Wegstrecke = 1. Liefert MultiData die Felder nicht,
+  // arbeitet die Werkbank ohne sie weiter (WEG_OK = false).
+  const WEG_COLS = ['WEGZEIT', 'WEGSTRECKE'];
+  let WEG_OK = true;
+  const commentCols = () => WEG_OK ? [...COMMENT_COLS, ...WEG_COLS] : COMMENT_COLS;
+  const isOnsite = c => Number(c.WEGZEIT) > 0 || Number(c.WEGSTRECKE) > 0;
   const DOC_COLS = ['ROW_ID', 'IND_ARCHIV_DATUM', 'CREATED_BY', 'SID', 'MDERRDA_SID', 'DATUM', 'DOCTY_ID', 'IS_IDX', 'TITEL', 'DOCUMENT', 'DOCUMENT_NAME', 'ATT_KZ', 'MEMO_DMS_URL'];
 
   const statusInfo = id => CFG.statuses.find(s => s[0] === id) || [id, id || '–', '#999'];
@@ -149,21 +239,38 @@
     }
     return html + (inList ? '</ul>' : '') || '<p></p>';
   }
-  // HTML aus MultiData zum Anzeigen/Bearbeiten entschärfen (keine Skripte, keine Event-Handler)
-  function sanitize(html) {
+  // HTML aus MultiData zum Anzeigen/Bearbeiten entschärfen (keine Skripte, keine Event-Handler).
+  // display = true: nur zum Anzeigen – Bilder laden erst beim Hinscrollen, Links öffnen einen neuen Tab.
+  // <base> wird immer entfernt: ein <base href> aus einer Mail würde sonst alle Adressen der Seite umbiegen.
+  function sanitize(html, display = false) {
     const doc = new DOMParser().parseFromString(`<div>${html || ''}</div>`, 'text/html');
-    doc.querySelectorAll('script,style,iframe,object,embed,link,meta,form,input,button').forEach(n => n.remove());
-    doc.querySelectorAll('*').forEach(n => [...n.attributes].forEach(a => {
-      if (/^on/i.test(a.name) || (/^(href|src)$/i.test(a.name) && /^\s*javascript:/i.test(a.value))) n.removeAttribute(a.name);
-    }));
-    return doc.body.firstChild.innerHTML;
+    doc.querySelectorAll('script,style,iframe,frame,frameset,object,embed,applet,link,meta,base,title,form,input,button,select,textarea,noscript,template,portal').forEach(n => n.remove());
+    doc.querySelectorAll('*').forEach(n => {
+      for (const a of [...n.attributes]) {
+        if (/^on/i.test(a.name) || /^(srcdoc|formaction|ping)$/i.test(a.name) || (/^(href|src|xlink:href|action)$/i.test(a.name) && /^\s*(javascript|vbscript):/i.test(a.value))) n.removeAttribute(a.name);
+      }
+      if (!display) return;
+      if (n.tagName === 'IMG') { n.setAttribute('loading', 'lazy'); n.setAttribute('decoding', 'async'); }
+      else if (n.tagName === 'A' && n.getAttribute('href') && !/^\s*#/.test(n.getAttribute('href'))) { n.setAttribute('target', '_blank'); n.setAttribute('rel', 'noopener noreferrer'); }
+    });
+    return doc.body.firstChild ? doc.body.firstChild.innerHTML : '';
   }
-  // Blöcke/Zeilenumbrüche als Leerzeichen, damit Wörter nicht zusammenkleben („WerkbankTest“)
+  const showHtml = html => sanitize(html, true);
+  // Reiner Text für Vorschauen/Protokoll. Eingebettete Bilder werden vorher entfernt und sehr lange Inhalte gekürzt,
+  // damit große Mails die Seite nicht ausbremsen; geparst wird in einem inaktiven Dokument (lädt keine Bilder).
   const htmlToText = html => {
-    const d = document.createElement('div');
-    d.innerHTML = sanitize(String(html || '').replace(/<(br|\/p|\/div|\/li|\/tr|\/td|\/th|\/h\d)[^>]*>/gi, ' $&'));
-    return d.textContent.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    let s = String(html || '');
+    if (!s) return '';
+    if (s.length > 20000) s = s.replace(/data:[^"'\s)>]{100,}/gi, '');
+    if (s.length > 80000) s = s.slice(0, 80000);
+    s = s.replace(/<(br|\/p|\/div|\/li|\/tr|\/td|\/th|\/h\d)[^>]*>/gi, ' $&');
+    const d = new DOMParser().parseFromString(s, 'text/html');
+    d.querySelectorAll('script,style,title,noscript,template').forEach(n => n.remove());
+    return (d.body ? d.body.textContent : '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
   };
+  // Ortszeit im Format der MultiData-Datumsfelder (ohne Zeitzone), für eigene Zeitstempel
+  const localISO = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   const store = {
     get(k, def) { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } },
@@ -188,10 +295,7 @@
   //   intern:      eigene Firmen (Zeiten-Tab „Intern“, nie abrechenbar)
   //   othersBillable: Vorschlag für alle übrigen Kunden
   const team = () => ({ nonBillable: [], intern: [], othersBillable: true, ...store.get(CFG.store.team, {}) });
-  //   m365: { tenant, clientId, folder } – „Office-Dateien in Office Online öffnen“ (App-Registrierung in Entra)
-  const m365Cfg = () => ({ tenant: '', clientId: '', folder: 'Werkbank-Anhänge', ...(team().m365 || {}) });
-  const m365Ready = () => { const c = m365Cfg(); return !!(c.tenant && c.clientId); };
-  const teamConfigured = () => store.get(CFG.store.team, null) !== null;
+  const teamConfigured = () => { const t = store.get(CFG.store.team, null); return !!t && ('nonBillable' in t || 'intern' in t); };
   const normName = s => String(s || '').replace(/^\d+\s*-\s*/, '').toUpperCase().replace(/[^A-ZÄÖÜ0-9]+/g, ' ').trim();
   const inList = (list, kndId, name) => kndId ? list.some(c => String(c.id) === String(kndId))
     : !!name && list.some(c => { const a = normName(c.name), b = normName(name); return a && b && (a.includes(b) || b.includes(a)); });
@@ -237,28 +341,47 @@
     try { return JSON.parse(raw); } catch { return raw; }
   }
   // Token läuft nach wenigen Minuten ab; MultiData erneuert es nur bei eigener Aktivität → Aktualisierung anstoßen.
-  async function renewToken() {
+  // Laufen mehrere Anfragen gleichzeitig in den Ablauf, wird nur einmal erneuert.
+  let renewing = null;
+  const renewToken = () => renewing ||= doRenewToken().finally(() => { renewing = null; });
+  async function doRenewToken() {
     const old = localStorage.getItem(CFG.tokenKey);
     const btn = [...document.querySelectorAll('[aria-label="refresh"]')].find(b => b.offsetParent !== null && !b.closest('#mdqt-panel'));
     if (btn) btn.click();
     for (let i = 0; i < 40 && localStorage.getItem(CFG.tokenKey) === old; i++) await new Promise(r => setTimeout(r, 250));
     return localStorage.getItem(CFG.tokenKey) !== old;
   }
-  async function api(path, body, method = 'POST', retry = true) {
-    const res = await fetch('/mdapi/' + path, {
-      method,
-      headers: { 'Accept': 'application/json, text/plain, */*', 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token() },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const text = await res.text();
+  // Jede Anfrage hat ein Zeitlimit: Lesezugriffe werden bei Zeitüberschreitung/Netzfehler einmal wiederholt,
+  // danach gibt es eine Fehlermeldung (statt endlos „Lade …“). Schreibzugriffe werden nie automatisch wiederholt.
+  async function api(path, body, method = 'POST', retry = true, attempt = 0) {
+    const read = method === 'GET' || path.startsWith('data/load/') || path.startsWith('data/InitNewRow/');
+    const ms = (read ? CFG.apiTimeoutSec : CFG.writeTimeoutSec) * 1000;
+    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
+    let res, text;
+    try {
+      res = await fetch('/mdapi/' + path, {
+        method, signal: ac.signal,
+        headers: { 'Accept': 'application/json, text/plain, */*', 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token() },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      text = await res.text();
+    } catch (e) {
+      const timeout = e.name === 'AbortError';
+      if (read && attempt === 0) { await sleep(timeout ? 0 : 1000); return api(path, body, method, retry, 1); }
+      throw new Error(timeout
+        ? (read ? `MultiData antwortet nicht (keine Antwort nach ${ms / 1000} s, auch nicht beim zweiten Versuch). Bitte „↻ Neu laden“.`
+          : `MultiData hat nach ${ms / 1000} s nicht geantwortet – bitte neu laden und prüfen, ob die Aktion ausgeführt wurde.`)
+        : `Keine Verbindung zu MultiData (${e.message}).`);
+    } finally { clearTimeout(timer); }
     if (res.status === 401) {
-      if (retry && await renewToken()) return api(path, body, method, false);
+      if (retry && await renewToken()) return api(path, body, method, false, attempt);
       throw new Error('Sitzung abgelaufen – in MultiData einmal „Aktualisieren“ klicken oder F5.');
     }
     if (!res.ok) {
       let msg = text.slice(0, 300);
       try { msg = JSON.parse(text).message || msg; } catch { /* ignore */ }
-      throw new Error(`MultiData-Fehler (${res.status}): ${msg}`);
+      const err = new Error(`MultiData-Fehler (${res.status}): ${msg}`); err.status = res.status;
+      throw err;
     }
     try { return text ? JSON.parse(text) : {}; } catch { return text; }
   }
@@ -307,117 +430,26 @@
     const blob = await r.blob();
     return new File([blob], doc.DOCUMENT_NAME || fi.filename, { type: blob.type || fi.mimeType || 'application/octet-stream' });
   }
-  // --- Microsoft 365: Office-Dateien über OneDrive in Office Online öffnen ---
-  // Anmeldung: OAuth 2.0 Authorization Code + PKCE (SPA-App-Registrierung, delegiert Files.ReadWrite).
-  // Tokens liegen nur in diesem Browser (localStorage „mdqt.graph“); die Datei landet als Kopie im eigenen OneDrive.
+  // --- Office-Dateien lokal öffnen ---
+  // Die Originaldatei wird heruntergeladen; der Browser öffnet sie im installierten Office (Word, Excel, PowerPoint, Visio).
+  // Ohne Rückfrage geht das, wenn im Browser „Dateien dieses Typs immer öffnen“ gesetzt ist (einmal je Dateityp).
   const OFFICE_EXT = new Set(['doc', 'docx', 'docm', 'dot', 'dotx', 'dotm', 'odt', 'xls', 'xlsx', 'xlsm', 'xlsb', 'ods', 'ppt', 'pptx', 'pptm', 'pps', 'ppsx', 'pot', 'potx', 'odp', 'vsd', 'vsdx']);
   const fileExt = n => (String(n || '').toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
-  const M365_SCOPES = 'openid profile offline_access User.Read Files.ReadWrite';
-  const m365Redirect = () => location.origin + '/mdweb/werkbank-auth';
-  const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  const graphStore = { get: () => store.get('mdqt.graph', null), set: v => store.set('mdqt.graph', v), clear: () => { try { localStorage.removeItem('mdqt.graph'); } catch { /* ignore */ } } };
-  async function tokenRequest(params) {
-    const c = m365Cfg();
-    let r;
-    try {
-      r = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(c.tenant)}/oauth2/v2.0/token`, {
-        method: 'POST', body: new URLSearchParams({ client_id: c.clientId, scope: M365_SCOPES, ...params }),
-      });
-    } catch (e) { throw new Error('Microsoft-Anmeldung nicht erreichbar (' + e.message + ').'); }
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw Object.assign(new Error('Microsoft-Anmeldung: ' + (j.error_description || j.error || r.status).toString().split('\r')[0]), { code: j.error });
-    const prev = graphStore.get() || {};
-    const v = { access: j.access_token, exp: Date.now() + (j.expires_in - 120) * 1000, refresh: j.refresh_token || prev.refresh, user: prev.user || null, tenant: c.tenant, clientId: c.clientId };
-    graphStore.set(v);
-    return v;
+  async function openLocal(doc) {
+    const { url, fi } = await docUrl(doc, true, { pdf: false });
+    const a = document.createElement('a'); a.href = url; a.download = doc.DOCUMENT_NAME || fi.filename || 'Datei'; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
   }
-  // Gültiges Token ohne Benutzerinteraktion (oder null)
-  async function graphTokenSilent() {
-    const g = graphStore.get(), c = m365Cfg();
-    if (!g || g.tenant !== c.tenant || g.clientId !== c.clientId) return null;
-    if (g.access && g.exp > Date.now()) return g.access;
-    if (!g.refresh) return null;
-    try { return (await tokenRequest({ grant_type: 'refresh_token', refresh_token: g.refresh })).access; }
-    catch { graphStore.clear(); return null; }
-  }
+  const OFFICE_ACK = 'mdqt.officeAck'; // Dateitypen, für die „immer öffnen“ eingerichtet wurde (bzw. Hinweis aus)
+  const officeAck = () => store.get(OFFICE_ACK, { all: false, ext: [] });
+  const officeHintNeeded = ext => !officeAck().all && !officeAck().ext.includes(ext);
+  const isEdge = () => /\bEdg\//.test(navigator.userAgent);
+  const officeHowTo = ext => isEdge()
+    ? `Edge: oben rechts erscheint der Download. Dort bei der .${ext}-Datei auf „…“ klicken → „Dateien dieses Typs immer öffnen“.`
+    : `Chrome: oben rechts auf das Download-Symbol, dann mit der rechten Maustaste auf die .${ext}-Datei → „Dateien dieses Typs immer öffnen“.`;
   // Fenster-Hilfen für das vorab geöffnete Fenster (Popup-Blocker)
   function winMessage(win, text) {
     try { win.document.open(); win.document.write(`<!doctype html><meta charset="utf-8"><title>Werkbank</title><body style="font:15px Segoe UI,Arial,sans-serif;padding:40px;color:#333"><h2 style="color:#00796b">⚡ Werkbank</h2><p>${esc(text)}</p></body>`); win.document.close(); } catch { /* fremde Seite */ }
-  }
-  // Interaktive Anmeldung im übergebenen Fenster; liefert ein Access-Token
-  async function graphLogin(win) {
-    const c = m365Cfg();
-    const verifier = b64url(crypto.getRandomValues(new Uint8Array(48)));
-    const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
-    const state = 'mdqt' + b64url(crypto.getRandomValues(new Uint8Array(12)));
-    const g = graphStore.get();
-    const q = new URLSearchParams({ client_id: c.clientId, response_type: 'code', response_mode: 'fragment', redirect_uri: m365Redirect(), scope: M365_SCOPES,
-      state, code_challenge: challenge, code_challenge_method: 'S256', ...(g?.user?.upn ? { login_hint: g.user.upn } : { prompt: 'select_account' }) });
-    const result = new Promise((resolve, reject) => {
-      const ch = 'BroadcastChannel' in window ? new BroadcastChannel('mdqt-auth') : null;
-      const t0 = Date.now();
-      const finish = (fn, v) => { clearInterval(iv); if (ch) ch.close(); window.removeEventListener('storage', onSt); fn(v); };
-      const handle = m => { if (m && m.type === 'auth' && m.state === state) finish(m.error ? reject : resolve, m.error ? new Error('Microsoft-Anmeldung: ' + (m.errorText || m.error)) : m.code); };
-      if (ch) ch.onmessage = ev => handle(ev.data);
-      const onSt = ev => { if (ev.key === 'mdqt.authResult') { try { handle(JSON.parse(ev.newValue)); } catch { /* ignore */ } } };
-      window.addEventListener('storage', onSt);
-      const iv = setInterval(() => {
-        if (win.closed) return finish(reject, Object.assign(new Error('Anmeldefenster wurde geschlossen.'), { quiet: true }));
-        if (Date.now() - t0 > 300000) return finish(reject, new Error('Zeitüberschreitung bei der Microsoft-Anmeldung.'));
-        try { const h = win.location.hash; if (/[#&]state=mdqt/.test(h)) { const p = new URLSearchParams(h.slice(1)); handle({ type: 'auth', state: p.get('state'), code: p.get('code'), error: p.get('error'), errorText: p.get('error_description') }); } } catch { /* noch bei Microsoft */ }
-      }, 300);
-    });
-    win.location.href = `https://login.microsoftonline.com/${encodeURIComponent(c.tenant)}/oauth2/v2.0/authorize?` + q;
-    const code = await result;
-    const v = await tokenRequest({ grant_type: 'authorization_code', code, redirect_uri: m365Redirect(), code_verifier: verifier });
-    try { const me = await graphFetch('/me?$select=displayName,userPrincipalName', {}, v.access); graphStore.set({ ...graphStore.get(), user: { name: me.displayName, upn: me.userPrincipalName } }); } catch { /* optional */ }
-    return { access: v.access, state };
-  }
-  async function graphFetch(path, opts = {}, tok) {
-    const r = await fetch(path.startsWith('https://') ? path : 'https://graph.microsoft.com/v1.0' + path, { ...opts, headers: { Authorization: 'Bearer ' + tok, ...(opts.headers || {}) } });
-    const j = r.status === 204 ? null : await r.json().catch(() => null);
-    if (!r.ok) throw Object.assign(new Error('OneDrive: ' + (j?.error?.message || r.status)), { status: r.status });
-    return j;
-  }
-  // Datei in OneDrive ablegen (Ordner/Ticket <Nr>/Name, ersetzt vorhandene Kopie) → driveItem
-  async function oneDriveUpload(file, folderPath, tok) {
-    const clean = n => String(n).replace(/["*:<>?/\\|]/g, '_').replace(/^[\s.]+|[\s.]+$/g, '') || 'Datei';
-    const path = [...folderPath.split('/').filter(Boolean).map(clean), clean(file.name)].map(encodeURIComponent).join('/');
-    if (file.size <= 4 * 1024 * 1024) {
-      return graphFetch(`/me/drive/root:/${path}:/content?@microsoft.graph.conflictBehavior=replace`, { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } }, tok);
-    }
-    const ses = await graphFetch(`/me/drive/root:/${path}:/createUploadSession`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item: { '@microsoft.graph.conflictBehavior': 'replace' } }) }, tok);
-    const CH = 320 * 1024 * 12;
-    let res = null;
-    for (let i = 0; i < file.size; i += CH) {
-      const part = file.slice(i, Math.min(i + CH, file.size));
-      const r = await fetch(ses.uploadUrl, { method: 'PUT', body: part, headers: { 'Content-Range': `bytes ${i}-${i + part.size - 1}/${file.size}` } });
-      if (!r.ok && r.status !== 202) throw new Error('OneDrive-Upload fehlgeschlagen (' + r.status + ').');
-      if (r.status === 200 || r.status === 201) res = await r.json();
-    }
-    return res;
-  }
-  // Anhang → OneDrive → Office Online im vorab geöffneten Fenster
-  async function openInOffice(doc, sid, win) {
-    winMessage(win, `„${doc.DOCUMENT_NAME}“ wird für Office Online vorbereitet …`);
-    let tok = await graphTokenSilent(), state = null;
-    const filePromise = docAsFile(doc); // parallel zur Anmeldung laden
-    filePromise.catch(() => null);
-    if (!tok) ({ access: tok, state } = await graphLogin(win));
-    const ch = state && 'BroadcastChannel' in window ? new BroadcastChannel('mdqt-auth') : null;
-    try {
-      const file = await filePromise;
-      const item = await oneDriveUpload(file, `${m365Cfg().folder || 'Werkbank-Anhänge'}/Ticket ${sid}`, tok);
-      if (!item?.webUrl) throw new Error('OneDrive hat keine Adresse geliefert.');
-      let navigated = false;
-      try { win.location.href = item.webUrl; navigated = true; } catch { /* Fenster nicht mehr erreichbar */ }
-      if (!navigated) { if (ch) ch.postMessage({ type: 'nav', state, url: item.webUrl }); else window.open(item.webUrl, '_blank'); }
-      return item;
-    } catch (e) {
-      if (ch) ch.postMessage({ type: 'msg', state, text: '✖ ' + e.message });
-      else winMessage(win, '✖ ' + e.message);
-      throw e;
-    } finally { if (ch) setTimeout(() => ch.close(), 2000); }
   }
 
   // --- .eml-Vorschau (lokal im Browser, nichts wird hochgeladen) ---
@@ -523,7 +555,12 @@
       const a = d.createElement('a'); a.textContent = '📎 ' + name + ` (${Math.max(1, Math.round(p.bytes.length / 1024))} KB)`;
       const blob = new Blob([p.bytes], { type: p.type || 'application/octet-stream' });
       a.href = win.URL.createObjectURL(blob);
-      if (/^(application\/pdf|image\/|text\/plain)/.test(p.type) || /\.(pdf|png|jpe?g|gif|txt)$/i.test(name)) { a.target = '_blank'; a.title = 'Klick: im Browser öffnen'; } else a.download = name;
+      const kind = previewKind(fileExt(name)) || (/^image\//.test(p.type) ? 'image' : /^video\//.test(p.type) ? 'video' : null);
+      if (/^application\/pdf/.test(p.type) || /\.pdf$/i.test(name)) { a.target = '_blank'; a.title = 'Klick: im Browser öffnen'; } else a.download = name;
+      if (kind) {
+        a.title = 'Klick: Vorschau · Rechtsklick: speichern';
+        a.addEventListener('click', ev => { ev.preventDefault(); const w2 = win.open('about:blank', '_blank'); if (w2) renderPreview(w2, p.bytes, name, kind).catch(e => winMessage(w2, '✖ ' + (e.message || e))); });
+      }
       if (p.type === 'message/rfc822' || fileExt(name) === 'eml') {
         a.title = 'Klick: Vorschau · Rechtsklick: speichern';
         a.addEventListener('click', ev => { ev.preventDefault(); const w2 = win.open('about:blank', '_blank'); if (w2) renderEml(w2, p.bytes, name); });
@@ -536,6 +573,144 @@
     winMessage(win, `„${doc.DOCUMENT_NAME}“ wird geladen …`);
     const f = await docAsFile(doc);
     renderEml(win, new Uint8Array(await f.arrayBuffer()), doc.DOCUMENT_NAME);
+  }
+
+  // --- Vorschau im Browser: Bilder, Video, Audio, Text, Word (.docx), Excel (.xlsx/.xls/.ods/.csv) ---
+  // Die Datei wird nur in den Arbeitsspeicher geladen und im Fenster angezeigt – kein Download, kein Upload.
+  // Dokumentinhalte laufen wie bei .eml in einer abgeschotteten Ansicht ohne Skripte.
+  const PREVIEW = {
+    image: ['png', 'jpg', 'jpeg', 'jfif', 'gif', 'webp', 'bmp', 'svg', 'avif', 'ico'],
+    video: ['mp4', 'm4v', 'webm', 'mov', 'ogv', 'mkv'],
+    audio: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'flac'],
+    text: ['txt', 'log', 'json', 'xml', 'ini', 'cfg', 'conf', 'md', 'ps1', 'psm1', 'bat', 'cmd', 'sh', 'yml', 'yaml', 'reg'],
+    word: ['docx', 'docm', 'dotx'],
+    sheet: ['xlsx', 'xlsm', 'xlsb', 'xls', 'ods', 'csv'],
+  };
+  const previewKind = ext => Object.keys(PREVIEW).find(k => PREVIEW[k].includes(ext)) || null;
+  const MEDIA_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+    svg: 'image/svg+xml', avif: 'image/avif', ico: 'image/x-icon', mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/mp4', webm: 'video/webm', ogv: 'video/ogg',
+    mkv: 'video/webm', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', flac: 'audio/flac' };
+  const PREVIEW_MAX_ROWS = 2000; // Excel: je Blatt höchstens so viele Zeilen anzeigen
+  const PREVIEW_MAX_TEXT = 2 * 1024 * 1024;
+
+  // Grundgerüst des Vorschaufensters: Kopfzeile mit Name, Größe, Herunterladen; darunter der Inhalt
+  function previewShell(win, name, bytes, icon) {
+    const d = win.document;
+    d.open(); d.write(`<!doctype html><html><head><meta charset="utf-8"><title></title><style>
+      body{margin:0;font:13px Segoe UI,Arial,sans-serif;color:#222;background:#f4f6f6;display:flex;flex-direction:column;height:100vh}
+      header{background:#fff;border-bottom:1px solid #ddd;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+      h1{font-size:17px;margin:0;color:#00695c;flex:1;min-width:200px;word-break:break-all}.sz{color:#777}
+      header button,.tabs button{border:1px solid #00897b;background:#e0f2f1;color:#00695c;border-radius:4px;padding:4px 10px;cursor:pointer;font:inherit}
+      .tabs{display:flex;gap:4px;flex-wrap:wrap;padding:6px 16px 0;background:#fff;border-bottom:1px solid #ddd}
+      .tabs button{border-radius:4px 4px 0 0;border-bottom:none;background:#f4f6f6}.tabs button.on{background:#00897b;color:#fff}
+      .note{padding:6px 16px;color:#8a5a00;background:#fff8e1;border-bottom:1px solid #ffe0a0}
+      main{flex:1;min-height:0;display:flex;overflow:auto}
+      .stage{margin:auto;padding:16px;text-align:center}.stage img{max-width:calc(100vw - 32px);max-height:calc(100vh - 110px);cursor:zoom-in;background:#fff;
+        background-image:linear-gradient(45deg,#eee 25%,transparent 25%,transparent 75%,#eee 75%),linear-gradient(45deg,#eee 25%,transparent 25%,transparent 75%,#eee 75%);
+        background-size:16px 16px;background-position:0 0,8px 8px;box-shadow:0 1px 6px #0002}
+      .stage img.full{max-width:none;max-height:none;cursor:zoom-out}
+      .stage video{max-width:calc(100vw - 32px);max-height:calc(100vh - 110px);background:#000}.stage audio{width:min(640px,calc(100vw - 32px))}
+      pre{margin:0;padding:16px;white-space:pre-wrap;word-break:break-word;font:12.5px Consolas,monospace;background:#fff;flex:1}
+      iframe{flex:1;border:0;background:#fff;width:100%}
+      .err{margin:auto;padding:24px;max-width:560px;text-align:center;color:#555}</style></head><body>
+      <header><h1></h1><span class="sz"></span><button data-a="dl">⬇ Herunterladen</button></header><main></main></body></html>`);
+    d.close();
+    d.title = name;
+    d.querySelector('h1').textContent = `${icon} ${name}`;
+    d.querySelector('.sz').textContent = bytes.length >= 1048576 ? (bytes.length / 1048576).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(bytes.length / 1024)) + ' KB';
+    d.querySelector('[data-a=dl]').addEventListener('click', () => {
+      const a = d.createElement('a'); a.href = win.URL.createObjectURL(new win.Blob([bytes], { type: 'application/octet-stream' })); a.download = name;
+      d.body.appendChild(a); a.click(); a.remove();
+    });
+    return { d, main: d.querySelector('main'), header: d.querySelector('header') };
+  }
+  const previewFail = (main, text) => { const e = main.ownerDocument.createElement('div'); e.className = 'err'; e.textContent = text; main.replaceChildren(e); };
+  // Abgeschottete Ansicht für Dokumentinhalte (keine Skripte, nur eingebettete Bilder/Schriften, Links in neuem Tab)
+  const sandboxDoc = (css, body) => `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:">
+    <style>${css}</style></head><body>${body}</body></html>`;
+  function sandboxFrame(d, html) {
+    const f = d.createElement('iframe');
+    f.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
+    f.srcdoc = html; return f;
+  }
+
+  async function renderPreview(win, bytes, name, kind = previewKind(fileExt(name))) {
+    const ext = fileExt(name);
+    const icon = { image: '🖼', video: '🎬', audio: '🎵', text: '📄', word: '📝', sheet: '📊' }[kind] || '📄';
+    const { d, main, header } = previewShell(win, name, bytes, icon);
+    const blobUrl = type => win.URL.createObjectURL(new win.Blob([bytes], { type }));
+    if (kind === 'image') {
+      const st = d.createElement('div'); st.className = 'stage';
+      const img = d.createElement('img'); img.alt = name; img.src = blobUrl(MEDIA_MIME[ext] || 'image/*');
+      img.title = 'Klick: Originalgröße / einpassen';
+      img.addEventListener('click', () => img.classList.toggle('full'));
+      img.addEventListener('error', () => previewFail(main, 'Dieses Bild kann der Browser nicht anzeigen. Bitte herunterladen.'));
+      st.appendChild(img); main.appendChild(st);
+    } else if (kind === 'video' || kind === 'audio') {
+      const st = d.createElement('div'); st.className = 'stage';
+      const m = d.createElement(kind); m.controls = true; m.preload = 'metadata'; m.src = blobUrl(MEDIA_MIME[ext] || kind + '/*');
+      m.addEventListener('error', () => previewFail(main, `Dieses ${kind === 'video' ? 'Video' : 'Audio'}format (.${ext}) kann der Browser nicht abspielen. Bitte herunterladen.`));
+      st.appendChild(m); main.appendChild(st);
+    } else if (kind === 'text') {
+      let t = decodeCharset(bytes.subarray(0, PREVIEW_MAX_TEXT), 'utf-8');
+      if (t.includes('�')) t = decodeCharset(bytes.subarray(0, PREVIEW_MAX_TEXT), 'windows-1252');
+      const pre = d.createElement('pre'); pre.textContent = t + (bytes.length > PREVIEW_MAX_TEXT ? '\n\n… (gekürzt – vollständig über „Herunterladen“)' : '');
+      main.appendChild(pre);
+    } else if (kind === 'word') {
+      if (!LIBS.docx?.renderAsync) return previewFail(main, 'Word-Vorschau nicht verfügbar (Bibliothek nicht geladen). Bitte „In Office öffnen“.');
+      previewFail(main, 'Dokument wird aufbereitet …');
+      const body = document.createElement('div'), style = document.createElement('div');
+      try {
+        await LIBS.docx.renderAsync(new Blob([bytes]), body, style, { className: 'docx', inWrapper: true, useBase64URL: true, breakPages: true,
+          ignoreLastRenderedPageBreak: true, renderHeaders: true, renderFooters: true, renderFootnotes: true, renderEndnotes: true, experimental: false });
+      } catch (e) { return previewFail(main, 'Dieses Word-Dokument lässt sich nicht als Vorschau anzeigen (' + (e.message || e) + '). Bitte „In Office öffnen“.'); }
+      const css = 'body{margin:0;background:#f4f6f6}.docx-wrapper{background:#f4f6f6 !important;padding:16px !important}.docx-wrapper>section.docx{box-shadow:0 1px 6px #0002 !important;margin-bottom:16px !important}';
+      main.replaceChildren(sandboxFrame(d, sandboxDoc(css, style.innerHTML + body.innerHTML)));
+    } else if (kind === 'sheet') {
+      const X = LIBS.XLSX;
+      if (!X?.read) return previewFail(main, 'Excel-Vorschau nicht verfügbar (Bibliothek nicht geladen). Bitte „In Office öffnen“.');
+      let wb;
+      const opts = { sheetRows: PREVIEW_MAX_ROWS + 1, cellDates: true, cellStyles: false, cellFormula: false, dense: true };
+      try {
+        if (ext === 'csv') { // Zeichensatz selbst erkennen (UTF-8, sonst Windows-1252 wie aus Excel)
+          let txt = decodeCharset(bytes, 'utf-8'); if (txt.includes('\uFFFD')) txt = decodeCharset(bytes, 'windows-1252');
+          wb = X.read(txt.replace(/^\uFEFF/, ''), { ...opts, type: 'string' });
+        } else wb = X.read(bytes, { ...opts, type: 'array' });
+      }
+      catch (e) { return previewFail(main, 'Diese Tabelle lässt sich nicht als Vorschau anzeigen (' + (e.message || e) + '). Bitte „In Office öffnen“.'); }
+      const names = (wb.SheetNames || []).filter(n => !wb.Workbook?.Sheets?.find(s => s.name === n && s.Hidden));
+      if (!names.length) return previewFail(main, 'Die Tabelle enthält keine sichtbaren Blätter.');
+      const css = `body{margin:0;font:12.5px Calibri,Segoe UI,Arial,sans-serif;color:#222}table{border-collapse:collapse}
+        td,th{border:1px solid #d4d4d4;padding:2px 6px;white-space:pre-wrap;vertical-align:top;max-width:480px}
+        tr:first-child td{background:#f3f6f6;font-weight:600;position:sticky;top:0}`;
+      const tabs = d.createElement('div'); tabs.className = 'tabs';
+      const note = d.createElement('div'); note.className = 'note'; note.style.display = 'none';
+      const show = n => {
+        const ws = wb.Sheets[n];
+        tabs.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.n === n));
+        const full = ws['!fullref'] && ws['!ref'] && ws['!fullref'] !== ws['!ref'];
+        const total = full ? X.utils.decode_range(ws['!fullref']).e.r + 1 : 0;
+        note.textContent = full ? `Vorschau zeigt die ersten ${PREVIEW_MAX_ROWS.toLocaleString('de-DE')} von ${total.toLocaleString('de-DE')} Zeilen. Vollständig: „In Office öffnen“.` : '';
+        note.style.display = full ? '' : 'none';
+        const html = ws['!ref'] ? X.utils.sheet_to_html(ws, { header: '', footer: '' }) : '<p style="padding:16px;color:#777">(leeres Blatt)</p>';
+        main.replaceChildren(sandboxFrame(d, sandboxDoc(css, html)));
+      };
+      for (const n of names) {
+        const b = d.createElement('button'); b.textContent = n; b.dataset.n = n;
+        b.addEventListener('click', () => show(n)); tabs.appendChild(b);
+      }
+      if (names.length > 1 || ext !== 'csv') header.after(tabs);
+      (names.length > 1 || ext !== 'csv' ? tabs : header).after(note);
+      show(names[0]);
+    } else {
+      previewFail(main, `Für .${ext}-Dateien gibt es keine Vorschau. Bitte herunterladen bzw. in Office öffnen.`);
+    }
+  }
+  async function openPreview(doc, win) {
+    winMessage(win, `„${doc.DOCUMENT_NAME}“ wird geladen …`);
+    const f = await docAsFile(doc);
+    await renderPreview(win, new Uint8Array(await f.arrayBuffer()), doc.DOCUMENT_NAME || f.name);
   }
 
   const exec = (workItem, commandName, action, data, extra = {}) =>
@@ -561,13 +736,11 @@
   // ===========================================================================
   // 5. Fachfunktionen
   // ===========================================================================
+  // Stammdaten werden einmal pro Tab geladen; gleichzeitige Aufrufe teilen sich dieselbe Anfrage.
+  const once = (get, set, fn) => { let p = null; return () => get() != null ? Promise.resolve(get()) : (p ||= fn().then(v => { set(v); return v; }).finally(() => { p = null; })); };
   let ME = null;
-  async function me() {
-    if (ME) return ME;
-    const d = await api('data/InitNewRow/DLG_TICKET_CREATE', { tableName: 'DLG_TICKET_CREATE', values: { MEMO_BATCH: 'true' }, copy: false });
-    ME = d.BEARBEITER_USER_ID;
-    return ME;
-  }
+  const me = once(() => ME, v => { ME = v; }, async () =>
+    (await api('data/InitNewRow/DLG_TICKET_CREATE', { tableName: 'DLG_TICKET_CREATE', values: { MEMO_BATCH: 'true' }, copy: false })).BEARBEITER_USER_ID);
 
   // --- Tickets ---
   const ticketBy = async filter => (await load('MDERRDA', { filter, sqlColumns: TICKET_DETAIL_COLS }))[0] || null;
@@ -693,19 +866,17 @@
 
   // Bearbeiter-Liste (MultiData-Benutzer) – einmal pro Sitzung geladen
   let USERS = null;
-  async function loadUsers() {
-    if (USERS) return USERS;
-    const r = await load('MDERRDA', { lookupColumnName: 'BEARBEITER_USER_ID', skip: 0, take: 2000, options: [] });
-    USERS = r.filter(u => u.USER_ID).map(u => ({ id: u.USER_ID, name: `${u.VORNAME || ''} ${u.ZUNAME || ''}`.trim(), abt: u.ABT_ID || '', email: u.EMAIL || '' }))
-      .sort((a, b) => a.name.localeCompare(b.name, 'de'));
-    return USERS;
-  }
+  const loadUsers = once(() => USERS, v => { USERS = v; }, async () =>
+    (await load('MDERRDA', { lookupColumnName: 'BEARBEITER_USER_ID', skip: 0, take: 2000, options: [] }))
+      .filter(u => u.USER_ID).map(u => ({ id: u.USER_ID, name: `${u.VORNAME || ''} ${u.ZUNAME || ''}`.trim(), abt: u.ABT_ID || '', email: u.EMAIL || '' }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'de')));
   const userLabel = id => { const u = (USERS || []).find(x => x.id === id); return u ? `${u.name} (${u.id})` : (id || '–'); };
 
   // Ticket in Zielticket zusammenführen (wie „Zusätze → Tickets zusammenführen…“)
   async function mergeTickets(src, target) {
     if (Number(src.SID) === Number(target.SID)) throw new Error('Quelle und Ziel sind dasselbe Ticket.');
     await exec('MDERRDA', 'Cmd.Ticket.Merge', 'Md_Crm.TicketMerge', { destSID: Number(target.SID), retType: 'JSON', cmdName: 'Cmd.Ticket.Merge' }, { rowIds: [src.ROW_ID] });
+    histOwn(src, {}, { k: '_', label: 'Zusammengeführt', to: `in #${target.SID}` });
     log('Tickets zusammengeführt', `#${src.SID} „${src.TITEL}“ → #${target.SID} „${target.TITEL}“`);
     ticketsChanged(src.SID, target.SID);
   }
@@ -719,32 +890,102 @@
   }
 
   let QUEUES = null;
-  async function loadQueues() {
-    if (QUEUES) return QUEUES;
-    QUEUES = (await load('MDERRDA', { lookupColumnName: 'ERRQ_ID', skip: 0, take: 200, options: [] })).map(q => ({ id: q.ERRQ_ID, name: q.MEMO_FK_DISPLAY || String(q.ERRQ_ID) }));
-    return QUEUES;
-  }
+  const loadQueues = once(() => QUEUES, v => { QUEUES = v; }, async () =>
+    (await load('MDERRDA', { lookupColumnName: 'ERRQ_ID', skip: 0, take: 200, options: [] })).map(q => ({ id: q.ERRQ_ID, name: q.MEMO_FK_DISPLAY || String(q.ERRQ_ID) })));
   const loadChildren = sid => load('MDERRDA', { take: 200, filter: [['MDERRDA_SID', '=', Number(sid)]], sort: [{ selector: 'SID', desc: true }], sqlColumns: TICKET_COLS });
 
   async function updateTicket(t, changes) {
     const saved = await updateRow('MDERRDA', t, changes, TICKET_DETAIL_COLS);
-    if (saved) { log('Ticket geändert', `#${t.SID}: ` + Object.entries(changes).map(([k, v]) => `${k}=${k === 'STATUS' ? statusInfo(v)[1] : v}`).join(', ')); ticketsChanged(t.SID); }
+    if (saved) {
+      histOwn(t, changes);
+      log('Ticket geändert', `#${t.SID}: ` + Object.entries(changes).map(([k, v]) => `${k}=${k === 'STATUS' ? statusInfo(v)[1] : v}`).join(', '));
+      ticketsChanged(t.SID);
+    }
     return saved;
   }
   async function changeFirm(t, adr) {
     await exec('MDERRDA', 'Cmd.Ticket.ChangeAdr', 'Md_WebUser.ChangeTicketAdr', { SID: Number(t.SID), rowId: adr.ROW_ID });
+    histOwn(t, {}, { k: 'MATCHCODE', label: 'Firma', from: histFmt('MATCHCODE', t.MATCHCODE), to: adr.MATCH });
     log('Firma geändert', `#${t.SID}: ${t.MATCHCODE} → ${adr.MATCH}`);
     ticketsChanged(t.SID);
   }
   async function quickClose(t) {
     await exec('MDERRDA', 'IND_TICKET.QuickClose', 'IND_TICKET.QuickClose', { cmdName: 'IND_TICKET.QuickClose' }, { rowIds: [t.ROW_ID] });
+    histOwn(t, {}, { k: '_', label: 'QuickClose' });
     log('QuickClose', `#${t.SID} ${t.TITEL}`);
     ticketsChanged(t.SID);
   }
-  async function createTicket({ adrRowId, title, html, suppressNotify }) {
+
+  // --- MultiData-Protokoll (Reiter „Protokoll“ im Ticket): wer hat wann welches Feld geändert ---
+  // FIELDS/INFO sind HTML mit einer Zeile je Feld („Bearbeiter<br>Abteilung“ ↔ „A -> B<br>C -> D“)
+  async function loadProtocol(sid) {
+    const rows = await load('MDERRDA_MDERRDAP', { take: 500, sort: [{ selector: 'LOG_TIME', desc: true }], filter: [['MDERRDA_SID', '=', Number(sid)]],
+      sqlColumns: ['ROW_ID', 'MDERRDA_SID', 'LOG_TIME', 'USER_ID', 'FIELDS', 'INFO'] });
+    const lines = h => String(h || '').split(/<br\s*\/?>/i).map(htmlToText);
+    const out = [];
+    for (const r of rows) {
+      const f = lines(r.FIELDS), i = lines(r.INFO);
+      for (let k = 0; k < Math.max(f.length, i.length); k++) {
+        if (!f[k] && !i[k]) continue;
+        const [from, to] = String(i[k] || '').split(/\s*->\s*/), v = x => (x === 'Undefined' ? '' : x); // „Undefined“ = leer
+        out.push({ at: String(r.LOG_TIME || '').slice(0, 19), user: r.USER_ID || '', label: f[k] || 'Änderung', from: to === undefined ? '' : v(from), to: v(to === undefined ? (i[k] || '') : to) });
+      }
+    }
+    return out;
+  }
+
+  // --- Ticket-Verlauf: Änderungen an Status, Bearbeiter, Queue … ---
+  // Änderungen über die Werkbank werden direkt eingetragen. Änderungen in MultiData oder durch Kolleg:innen erkennt die
+  // Werkbank beim Öffnen/Aktualisieren des Tickets durch Vergleich mit dem zuletzt gesehenen Stand (nur in diesem Browser).
+  const HIST_FIELDS = [['STATUS', 'Status'], ['BEARBEITER_USER_ID', 'Bearbeiter'], ['ERRQ_ID', 'Queue'], ['PRIORITY', 'Priorität'],
+    ['MATCHCODE', 'Firma'], ['TITEL', 'Betreff'], ['MDERRDA_SID', 'Parent-Ticket'], ['SUPPRESS_NOTIFY', 'Keine Benachrichtigungen']];
+  const histAll = () => store.get(CFG.store.history, {});
+  const histGet = sid => histAll()[sid] || null;
+  function histSave(sid, h) {
+    const a = histAll(); a[sid] = h;
+    const keys = Object.keys(a);
+    if (keys.length > 400) keys.sort((x, y) => String(a[x].seen || '').localeCompare(String(a[y].seen || ''))).slice(0, keys.length - 400).forEach(k => delete a[k]);
+    store.set(CFG.store.history, a);
+  }
+  const histSnap = t => ({ ...Object.fromEntries(HIST_FIELDS.map(([k]) => [k, t[k] ?? null])), _QUEUE: t.MDERRQ_FK__NAME_KB ?? null });
+  function histFmt(k, v, snap = {}) {
+    if (v == null || v === '') return '–';
+    if (k === 'STATUS') return statusInfo(v)[1];
+    if (k === 'PRIORITY') return prioInfo(v)[1];
+    if (k === 'ERRQ_ID') return snap._QUEUE || ((QUEUES || []).find(q => String(q.id) === String(v)) || {}).name || String(v);
+    if (k === 'BEARBEITER_USER_ID') return userLabel(v);
+    if (k === 'SUPPRESS_NOTIFY') return v == 1 ? 'ja' : 'nein';
+    if (k === 'MATCHCODE') return String(v).replace(/^\d+\s*-\s*/, '');
+    if (k === 'MDERRDA_SID') return '#' + v;
+    return String(v);
+  }
+  function histOwn(t, ch, note = null) {
+    const now = localISO();
+    const h = histGet(t.SID) || { since: now, seen: now, snap: histSnap(t), ch: [] };
+    const next = { ...h.snap, ...ch, ...(ch.MDERRQ_FK__NAME_KB ? { _QUEUE: ch.MDERRQ_FK__NAME_KB } : {}) };
+    for (const [k, label] of HIST_FIELDS) if (k in ch) h.ch.unshift({ at: now, k, label, from: histFmt(k, h.snap[k], h.snap), to: histFmt(k, ch[k], next), src: 'wb', by: ME || '' });
+    if (note) h.ch.unshift({ at: now, src: 'wb', by: ME || '', from: '', to: '', ...note });
+    h.own = Date.now(); h.ch = h.ch.slice(0, 150);
+    histSave(t.SID, h);
+  }
+  // Beim Laden: Unterschiede zum zuletzt gesehenen Stand eintragen
+  function histDetect(t) {
+    const now = localISO(), snap = histSnap(t), h = histGet(t.SID);
+    if (!h) { histSave(t.SID, { since: now, seen: now, snap, ch: [] }); return; }
+    const own = Date.now() - (h.own || 0) < 120000; // eben über die Werkbank geändert
+    for (const [k, label] of HIST_FIELDS) {
+      if (String(h.snap[k] ?? '') === String(snap[k] ?? '')) continue;
+      if (own && h.ch.some(c => c.k === k && c.src === 'wb' && Date.now() - Date.parse(c.at) < 180000)) continue; // schon eingetragen
+      h.ch.unshift({ at: own ? now : (t.DATE_MODIFIED || now), k, label, from: histFmt(k, h.snap[k], h.snap), to: histFmt(k, snap[k], snap),
+        src: own ? 'wb' : 'ext', by: own ? (ME || '') : '', after: own ? null : h.seen });
+    }
+    h.snap = snap; h.seen = now; h.ch = h.ch.slice(0, 150);
+    histSave(t.SID, h);
+  }
+  async function createTicket({ adrRowId, title, html, suppressNotify, priority = null, status = null }) {
     const d = await api('data/InitNewRow/DLG_TICKET_CREATE', { tableName: 'DLG_TICKET_CREATE', values: { MEMO_BATCH: 'true' }, copy: false });
     const r = await exec('DLG_TICKET_CREATE', 'Cmd.CreateTicket', 'Md_WebUser.CreateTicket', {
-      adrRowId, title, theNotiz: html, priority: d.PRIORITY ?? 3, status: d.STATUS ?? 'N', errId: d.ERR_ID ?? 'REQUEST',
+      adrRowId, title, theNotiz: html, priority: priority ?? d.PRIORITY ?? 3, status: status ?? d.STATUS ?? 'N', errId: d.ERR_ID ?? 'REQUEST',
       errqId: d.ERRQ_ID ?? 1, userId: d.BEARBEITER_USER_ID, abtId: null, termin: null, vDate: null,
       supNotify: !!suppressNotify, noSla: false, ticketIdExt: null, prjId: null, Mt_Document: null,
     });
@@ -757,8 +998,15 @@
   }
 
   // --- Kommentare ---
-  const loadComments = sid => load('MDERRDA_MDERRDAC', { take: 1000, filter: [['MDERRDA_SID', '=', Number(sid)]], sort: [{ selector: 'LST_DATUM', desc: true }], sqlColumns: COMMENT_COLS });
-  const commentBySid = async sid => (await load('MDERRDA_MDERRDAC', { filter: [['SID', '=', Number(sid)]], sqlColumns: COMMENT_COLS }))[0];
+  async function loadCommentRows(opts) {
+    if (WEG_OK) {
+      try { return await load('MDERRDA_MDERRDAC', { ...opts, sqlColumns: commentCols() }); }
+      catch (e) { if (!e.status) throw e; WEG_OK = false; console.warn('[Werkbank] Wegzeit/Wegstrecke nicht verfügbar – Vor-Ort-Kennzeichen deaktiviert.', e.message); }
+    }
+    return load('MDERRDA_MDERRDAC', { ...opts, sqlColumns: COMMENT_COLS });
+  }
+  const loadComments = sid => loadCommentRows({ take: 1000, filter: [['MDERRDA_SID', '=', Number(sid)]], sort: [{ selector: 'LST_DATUM', desc: true }] });
+  const commentBySid = async sid => (await loadCommentRows({ filter: [['SID', '=', Number(sid)]] }))[0];
 
   const loadDocs = sid => load('MDERRDA_MDDOC', { take: 500, filter: [['MDERRDA_SID', '=', Number(sid)]], sort: [{ selector: 'DATUM', desc: true }], sqlColumns: DOC_COLS });
 
@@ -775,7 +1023,8 @@
 
   // Neuer Kommentar inkl. Zeit. minutes = 0 → reiner Kommentar ohne Zeit.
   // mail = { to[], cc[], bcc[] } → wird als Mail versendet (emailKz). files = File[] → Anhänge.
-  async function addComment(t, { date, minutes, html, kontaktart, billable, abrHours, mail = null, files = [] }) {
+  async function addComment(t, { date, minutes, html, kontaktart, billable, abrHours, mail = null, files = [], onsite = false }) {
+    if (onsite && !WEG_OK) throw new Error('Vor-Ort-Kennzeichen nicht möglich: MultiData liefert die Felder Wegzeit/Wegstrecke nicht. Nichts gespeichert.');
     if (mail) {
       const fresh = await load('MDERRDA', { filter: [['SID', '=', Number(t.SID)]], sqlColumns: ['ROW_ID', 'SID', 'SUPPRESS_NOTIFY'] }).then(r => r[0]);
       if (!fresh) throw new Error(`Ticket #${t.SID} nicht gefunden – Mail nicht gesendet.`);
@@ -811,21 +1060,27 @@
       // Beim Anlegen übernimmt MultiData „abrechenbar“ i. d. R. direkt; abweichende Stunden bzw. Fallback über „Manuell“
       c = await commentBySid(cid);
       const want = abrHours ?? c.LFZ_STD;
-      if (Number(c.INABR_STD) !== Number(want)) await updateRow('MDERRDA_MDERRDAC', c, { INABR_STD: want, LFZ_STD_MAN: 1 }, COMMENT_COLS);
+      if (Number(c.INABR_STD) !== Number(want)) await updateRow('MDERRDA_MDERRDAC', c, { INABR_STD: want, LFZ_STD_MAN: 1 }, commentCols());
+    }
+    if (onsite) {
+      c = await commentBySid(cid);
+      if (!WEG_OK || !c) throw new Error('Kommentar angelegt, aber Wegzeit/Wegstrecke konnten nicht gesetzt werden – bitte in MultiData nachtragen.');
+      await updateRow('MDERRDA_MDERRDAC', c, { WEGZEIT: 1, WEGSTRECKE: 1 }, commentCols());
     }
     if (mail) {
       c = await commentBySid(cid);
       log('Mail gesendet', `#${t.SID}: An ${mail.to.join(', ')}${mail.cc.length ? ' · Cc ' + mail.cc.join(', ') : ''}${mail.bcc.length ? ' · Bcc ' + mail.bcc.join(', ') : ''}` +
         `${files.length ? ' · ' + files.length + ' Anhang/Anhänge' : ''} · ${c?.EMAIL_DATUM ? 'versendet ' + fmtDateTime(c.EMAIL_DATUM) : 'Versandzeit noch offen'}`);
     }
-    log('Kommentar angelegt', `#${t.SID}: ${fmtDate(date)} ${minutes} min${billable ? ', abrechenbar ' + fmtH(abrHours ?? minutes / 60) : ''}${files.length ? ', ' + files.length + ' Anhang/Anhänge' : ''}`);
+    log('Kommentar angelegt', `#${t.SID}: ${fmtDate(date)} ${minutes} min${billable ? ', abrechenbar ' + fmtH(abrHours ?? minutes / 60) : ''}${onsite ? ', vor Ort' : ''}${files.length ? ', ' + files.length + ' Anhang/Anhänge' : ''}`);
     ticketsChanged(t.SID);
     return { cid, emailDate: c?.EMAIL_DATUM || null };
   }
 
-  // Kommentar bearbeiten. changes: { html?, date?, from?, to?, manual?, std?, abr?, kontaktart? }
+  // Kommentar bearbeiten. changes: { html?, date?, from?, to?, manual?, std?, abr?, kontaktart?, onsite? }
   async function editComment(c, ch) {
     const v = {};
+    if (ch.onsite != null) { v.WEGZEIT = ch.onsite ? 1 : 0; v.WEGSTRECKE = ch.onsite ? 1 : 0; }
     if (ch.html != null) v.NOTIZ = ch.html;
     if (ch.kontaktart) v.LST_ID = ch.kontaktart;
     if (ch.date && ch.from != null && ch.to != null) {
@@ -833,7 +1088,7 @@
     }
     if (ch.manual) { v.LFZ_STD_MAN = 1; if (ch.std != null) v.LFZ_STD = ch.std; if (ch.abr != null) v.INABR_STD = ch.abr; }
     else if (ch.manual === false) { v.LFZ_STD_MAN = 0; }
-    const saved = await updateRow('MDERRDA_MDERRDAC', c, v, COMMENT_COLS);
+    const saved = await updateRow('MDERRDA_MDERRDAC', c, v, commentCols());
     if (!saved) return null;
     log('Kommentar geändert', `#${c.MDERRDA_SID} / K${c.SID}: ` + Object.keys(v).map(k => k === 'NOTIZ' ? 'Text' : `${k}=${v[k]}`).join(', '));
     ticketsChanged(c.MDERRDA_SID);
@@ -846,18 +1101,75 @@
   }
 
   let KONTAKTARTEN = null;
-  async function kontaktarten() {
-    if (KONTAKTARTEN) return KONTAKTARTEN;
-    try {
-      const r = await load('MDERRDA_MDERRDAC', { lookupColumnName: 'LST_ID', skip: 0, take: 100, options: [] });
-      KONTAKTARTEN = r.map(x => [x.LST_ID, x.BEZEICHNUNG1 || x.LST_ID]);
-    } catch { KONTAKTARTEN = [['SUPPORT', 'Support'], ['VORORT', 'vor Ort'], ['TELEFON', 'Telefonisch'], ['WARTUNG', 'Wartung'], ['INFO', 'interne Notiz']]; }
-    return KONTAKTARTEN;
-  }
+  const kontaktarten = once(() => KONTAKTARTEN, v => { KONTAKTARTEN = v; }, async () => {
+    try { return (await load('MDERRDA_MDERRDAC', { lookupColumnName: 'LST_ID', skip: 0, take: 100, options: [] })).map(x => [x.LST_ID, x.BEZEICHNUNG1 || x.LST_ID]); }
+    catch { return [['SUPPORT', 'Support'], ['VORORT', 'vor Ort'], ['TELEFON', 'Telefonisch'], ['WARTUNG', 'Wartung'], ['INFO', 'interne Notiz']]; }
+  });
 
   // --- Einstellungen (Signatur, eigene Textbausteine) – nur in diesem Browser ---
   const settings = () => ({ signature: '', autoSignature: true, blocks: [], showMdBlocks: true, ...store.get(CFG.store.settings, {}) });
   const saveSettings = s => store.set(CFG.store.settings, s);
+
+  // --- Internes Zeiten-Ticket (ein Ticket je Monat, z. B. „Zeiten LE NOV 26“) ---
+  const MONTHS_EN = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  const monthKey = d => String(d).slice(0, 7);                       // '2026-11'
+  const prevMonth = k => { let [y, m] = k.split('-').map(Number); if (--m < 1) { m = 12; y--; } return `${y}-${pad(m)}`; };
+  const monthTag = k => `${MONTHS_EN[+k.slice(5, 7) - 1]} ${k.slice(2, 4)}`; // 'NOV 26'
+  const internCfg = () => ({ k: '', pattern: CFG.intern.pattern, firm: null, tickets: {}, ...(settings().intern || {}) });
+  const saveIntern = patch => saveSettings({ ...settings(), intern: { ...internCfg(), ...patch } });
+  // ältere Version: „Fehlzeiten ausgleichen auf Ticket …“ → als Ticket des aktuellen Monats übernehmen
+  if (settings().timesTicket && !internCfg().tickets[monthKey(todayStr())]) {
+    saveIntern({ tickets: { ...internCfg().tickets, [monthKey(todayStr())]: Number(settings().timesTicket) } });
+    const s0 = settings(); delete s0.timesTicket; saveSettings(s0);
+  }
+  async function internKuerzel() {
+    const c = internCfg(); if (c.k) return c.k.trim();
+    const id = await me(), u = (await loadUsers().catch(() => [])).find(x => x.id === id);
+    return (u && u.name ? u.name.split(/\s+/).filter(Boolean).map(w => w[0]).join('') : String(id)).toUpperCase().slice(0, 4);
+  }
+  async function internTitle(k) {
+    return (internCfg().pattern || CFG.intern.pattern).replace('{K}', await internKuerzel()).replace('{MON}', MONTHS_EN[+k.slice(5, 7) - 1])
+      .replace('{YYYY}', k.slice(0, 4)).replace('{YY}', k.slice(2, 4)).replace(/\s+/g, ' ').trim();
+  }
+  // Ticket für einen Monat: zuerst das gemerkte, sonst per Betreff suchen (und merken)
+  async function findInternTicket(k) {
+    const c = internCfg();
+    if (c.tickets[k]) { const t = await ticketBySid(c.tickets[k]); if (t) return t; }
+    const title = await internTitle(k);
+    const rows = await load('MDERRDA', { take: 20, filter: [['TITEL', 'contains', title]], sort: [{ selector: 'SID', desc: true }], sqlColumns: TICKET_COLS });
+    const t = rows.find(r => String(r.TITEL || '').trim().toUpperCase() === title.toUpperCase()) || null;
+    if (t) saveIntern({ tickets: { ...internCfg().tickets, [k]: t.SID } });
+    return t;
+  }
+  async function internAddress() {
+    const c = internCfg(); if (c.firm && c.firm.ROW_ID) return c.firm;
+    const name = String((team().intern[0] || {}).name || '').replace(/^\d+\s*-\s*/, '');
+    if (!name) throw new Error('Bitte unter ⚙ → Internes Zeiten-Ticket die Firma wählen.');
+    const res = await searchAddresses(name);
+    const best = res.find(a => normName(a.MATCH) === normName(name)) || res.find(a => normName(a.MATCH).includes(normName(name)));
+    if (!best) throw new Error(`Firma „${name}“ nicht gefunden – bitte unter ⚙ → Internes Zeiten-Ticket wählen.`);
+    const firm = { ROW_ID: best.ROW_ID, MATCH: best.MATCH }; saveIntern({ firm });
+    return firm;
+  }
+  // Neues Monats-Ticket: Firma (Standard: erste interne Firma), Priorität Niedrig, Status Warten intern; Vormonat per QuickClose schließen
+  async function createInternTicket(k) {
+    const exists = await findInternTicket(k).catch(() => null);
+    if (exists) throw new Error(`Für ${monthTag(k)} gibt es schon #${exists.SID} „${exists.TITEL}“.`);
+    const title = await internTitle(k), firm = await internAddress();
+    const t = await createTicket({ adrRowId: firm.ROW_ID, title, html: `<p>Interne Zeiten ${monthTag(k)}</p>`, suppressNotify: true,
+      priority: CFG.intern.priority, status: CFG.intern.status });
+    const fix = {};
+    if (Number(t.PRIORITY) !== CFG.intern.priority) fix.PRIORITY = CFG.intern.priority;
+    if (t.STATUS !== CFG.intern.status) fix.STATUS = CFG.intern.status;
+    if (t.SUPPRESS_NOTIFY != 1) fix.SUPPRESS_NOTIFY = 1;
+    if (Object.keys(fix).length) await updateTicket(t, fix);
+    saveIntern({ tickets: { ...internCfg().tickets, [k]: t.SID } });
+    let closed = null;
+    const old = await findInternTicket(prevMonth(k)).catch(() => null);
+    if (old && old.STATUS !== 'Z') { await quickClose(old); closed = old; }
+    log('Internes Zeiten-Ticket angelegt', `#${t.SID} ${title}${closed ? ` · #${closed.SID} geschlossen` : ''}`);
+    return { t, closed };
+  }
 
   // Textbausteine aus MultiData (nur HTML-Bausteine; RTF-Bausteine sind für Berichte gedacht)
   let MD_BLOCKS = null;
@@ -971,7 +1283,8 @@
   #mdqt-panel input[type=text],#mdqt-panel input[type=date],#mdqt-panel input[type=time],#mdqt-panel select,#mdqt-panel textarea,#mdqt-panel .rte{
     width:100%;border:1px solid var(--mq-border);border-radius:4px;padding:5px 7px;font:13px inherit;font-family:inherit;background:var(--mq-input) !important;color:var(--mq-fg) !important}
   #mdqt-panel textarea{min-height:64px;resize:vertical}
-  #mdqt-panel .rte{min-height:70px;max-height:260px;overflow:auto}
+  #mdqt-panel .rte{min-height:70px;max-height:300px;overflow:auto;resize:vertical}
+  #mdqt-panel .tb button.on{background:var(--mq-accent-soft);border-color:#00897b}
   #mdqt-panel .rte:focus{outline:2px solid #80cbc4}
   #mdqt-panel input[type=checkbox]{appearance:auto !important;-webkit-appearance:checkbox !important;width:15px;height:15px;margin:0;accent-color:#00897b;flex:none}
   #mdqt-panel .row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
@@ -996,6 +1309,13 @@
   #mdqt-panel .btn:disabled{opacity:.5;cursor:default}
   #mdqt-panel .msg{margin:8px 0;font-size:12px;white-space:pre-wrap}
   #mdqt-panel .msg.err{color:#c62828}#mdqt-panel .msg.ok{color:#2e7d32}
+  #mdqt-panel .toasts{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;display:flex;flex-direction:column;align-items:center;gap:6px;
+    width:max-content;max-width:min(560px,calc(100% - 32px));pointer-events:none}
+  #mdqt-panel .toast{pointer-events:auto;display:flex;align-items:flex-start;gap:12px;padding:9px 12px;border-radius:6px;font-size:13px;line-height:1.35;
+    white-space:pre-wrap;color:#fff;background:#c62828;box-shadow:0 4px 16px rgba(0,0,0,.35);cursor:pointer;animation:mqToastIn .15s ease-out}
+  #mdqt-panel .toast.warn{background:#e65100}
+  #mdqt-panel .toast b{font-size:16px;line-height:1;opacity:.85}
+  @keyframes mqToastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   #mdqt-panel .hint{color:var(--mq-muted);font-size:12px}
   #mdqt-panel table{width:100%;border-collapse:collapse;margin-top:8px}
   #mdqt-panel th{text-align:left;font-size:12px;color:var(--mq-muted2);border-bottom:2px solid var(--mq-border);padding:4px 6px;cursor:pointer;white-space:nowrap;position:sticky;top:-12px;background:var(--mq-bg)}
@@ -1011,16 +1331,35 @@
   #mdqt-panel .card.edit{border-color:#00897b;background:var(--mq-edit)}
   #mdqt-panel .card .meta{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--mq-muted2);align-items:center}
   #mdqt-panel .card .meta b{color:var(--mq-fg)}
-  #mdqt-panel .card .txt{margin-top:4px}
-  #mdqt-panel .card .txt p{margin:2px 0}#mdqt-panel .card .txt ul{margin:2px 0 2px 18px;padding:0}
+  #mdqt-panel .card .txt{margin-top:4px;overflow-x:auto;contain:content}
+  #mdqt-panel .card .txt p,#mdqt-panel .rte p{margin:2px 0}
+  #mdqt-panel .card .txt ul,#mdqt-panel .card .txt ol,#mdqt-panel .rte ul,#mdqt-panel .rte ol{margin:2px 0;padding-left:26px}
+  #mdqt-panel .card .txt li,#mdqt-panel .rte li{margin:1px 0}
+  #mdqt-panel .tb .sep{display:inline-block;width:1px;height:18px;background:var(--mq-border);margin:0 3px;vertical-align:middle}
   #mdqt-panel .head{background:var(--mq-soft);border-radius:6px;padding:10px}
-  #mdqt-panel .head h3{margin:0 0 6px;font-size:15px}
+  #mdqt-panel .head h3{margin:0;font-size:15px;white-space:nowrap}
+  #mdqt-panel .head .hrow1{display:flex;gap:8px;align-items:center}
+  #mdqt-panel .head .hrow1 input{font-weight:600;font-size:14px}
+  #mdqt-panel .head .hgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:0 8px;margin-top:2px}
+  #mdqt-panel .head .hgrid .wide{grid-column:span 2}
+  #mdqt-panel .head .hbar{margin-top:8px;align-items:center}
+  #mdqt-panel .sug{position:relative}#mdqt-panel .sug .results{position:absolute;left:0;right:0;top:100%;z-index:6}
+  #mdqt-panel .chg{outline:2px solid #ffb300 !important;outline-offset:-1px}
+  #mdqt-panel label.chk.chg{outline-offset:2px;border-radius:3px}
+  #mdqt-panel .btabs{display:flex;align-items:center;gap:2px;margin-top:14px;border-bottom:2px solid var(--mq-border)}
+  #mdqt-panel .btabs button[data-b]{background:none;border:none;border-bottom:3px solid transparent;margin-bottom:-2px;padding:6px 12px;cursor:pointer;font:600 13px inherit;font-family:inherit;color:var(--mq-muted2)}
+  #mdqt-panel .btabs button[data-b].on{color:var(--mq-accent-fg);border-bottom-color:#00897b}
+  #mdqt-panel .hist td{font-size:12px}#mdqt-panel .hist td.w{white-space:nowrap;color:var(--mq-muted2)}
+  #mdqt-panel .hist .src{font-size:10px;padding:0 4px;border-radius:3px;background:var(--mq-tag);color:var(--mq-muted2);margin-left:4px}
+  #mdqt-panel .hist tr.chgrow td{background:var(--mq-soft)}
+  #mdqt-panel .inl{display:inline-flex;gap:4px;align-items:center}#mdqt-panel .inl input{width:64px !important}
   #mdqt-panel .sums{font-size:12px;color:var(--mq-muted2)}
   #mdqt-panel .results{border:1px solid var(--mq-border);border-radius:4px;max-height:180px;overflow:auto;margin-top:2px;background:var(--mq-bg)}
   #mdqt-panel .results div{padding:5px 8px;cursor:pointer;border-bottom:1px solid var(--mq-line)}
   #mdqt-panel .results div:hover{background:var(--mq-accent-soft)}
   #mdqt-panel .tag{display:inline-block;background:var(--mq-tag);border-radius:3px;padding:0 5px;font-size:11px;color:var(--mq-muted2)}
-  #mdqt-panel .tag.abr{background:var(--mq-bg)3e0;color:#e65100}
+  #mdqt-panel .tag.abr{background:var(--mq-warn-bg);color:#e65100}
+  #mdqt-panel .tag.onsite{background:#e3f2fd;color:#1565c0}#mdqt-panel.dark .tag.onsite{background:#1b2a3a;color:#90caf9}
   #mdqt-panel details summary{cursor:pointer;color:var(--mq-accent-fg);font-weight:600;margin-top:6px}
   #mdqt-panel a.ic{text-decoration:none;display:inline-block}
   #mdqt-panel tr.r td.l{padding:0}
@@ -1051,7 +1390,7 @@
   #mdqt-panel .file{background:var(--mq-tag);border-radius:3px;padding:1px 6px;font-size:12px}
   #mdqt-panel .file b{cursor:pointer;color:#c62828;margin-left:4px}
   #mdqt-panel .mailbox{border-left:3px solid #1e88e5;padding:4px 0 4px 10px;margin-top:8px;background:var(--mq-mail-bg)}
-  #mdqt-panel .warnbox{background:var(--mq-bg)3e0;border:1px solid #ffb74d;border-radius:4px;padding:6px 8px;margin-top:6px;font-size:12px}
+  #mdqt-panel .warnbox{background:var(--mq-warn-bg);border:1px solid #ffb74d;border-radius:4px;padding:6px 8px;margin-top:6px;font-size:12px}
   #mdqt-panel .doc{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--mq-line)}
   #mdqt-panel .doc .nm{flex:1;word-break:break-all}
   #mdqt-panel .mailinfo{font-size:12px;color:var(--mq-link2);margin-top:3px}
@@ -1074,7 +1413,7 @@
   #mdqt-fab .badge:empty{display:none}
   #mdqt-panel .ibx{display:flex;gap:10px;padding:7px 6px;border-bottom:1px solid var(--mq-line);cursor:pointer;align-items:flex-start}
   #mdqt-panel .ibx:hover{background:var(--mq-hover)}
-  #mdqt-panel .ibx.unread{background:var(--mq-bg)df4}
+  #mdqt-panel .ibx.unread{background:var(--mq-unread)}
   #mdqt-panel .ibx.unread .tt{font-weight:700}
   #mdqt-panel .ibx .ty{flex:0 0 150px;font-size:12px;color:var(--mq-muted2)}
   #mdqt-panel .ibx .bd{flex:1;min-width:0}
@@ -1192,8 +1531,8 @@
         <div class="results" data-ref="nResults" style="display:none"></div>
         <div class="chips" data-ref="nRecent"></div>
         <div class="msg" data-ref="nFirm"></div>
-        <label class="l">Betreff *</label><input type="text" data-ref="nTitle">
-        <label class="l">Beschreibung</label><textarea data-ref="nDesc"></textarea>
+        <label class="l">Betreff *</label><input type="text" data-ref="nTitle" spellcheck="true" lang="de">
+        <label class="l">Beschreibung</label><textarea data-ref="nDesc" spellcheck="true" lang="de"></textarea>
         <label class="chk"><input type="checkbox" data-ref="nNoNotify"> Keine Benachrichtigungen (dann gehen zu diesem Ticket keine Mails raus)</label>
         <label class="chk"><input type="checkbox" data-ref="nWithTime"> Direkt Zeit buchen</label>
         <div data-ref="nTimeBox" style="display:none"></div>
@@ -1220,13 +1559,17 @@
           <button class="btn sm sec" data-ref="zCsv">⬇ CSV-Export</button>
         </div>
         <details class="card" data-ref="zPDet"><summary>⚖ Personio-Abgleich <span class="hint" data-ref="zPInfo"></span></summary>
-          <div class="drop" data-ref="zDrop">Personio-CSV („Arbeitszeit pro Tag“, Minuten) hierher ziehen oder <u>auswählen</u><input type="file" accept=".csv,text/csv" data-ref="zFile" style="display:none"></div>
+          <div class="row" style="align-items:center;margin-bottom:6px">
+            <button class="btn" data-ref="zPGet" title="Öffnet kurz ein Personio-Fenster (eigene Anmeldung), liest den Stundenzettel für den gewählten Zeitraum und schließt es wieder">⟳ Aus Personio holen</button>
+            <span class="hint" style="flex:1">für den Zeitraum oben (von – bis, höchstens bis heute). Personio muss im Browser angemeldet sein; Pop-ups für MultiData erlauben.</span>
+          </div>
+          <div class="drop" data-ref="zDrop">oder die Personio-CSV („Stundenzettel exportieren“) hierher ziehen bzw. <u>auswählen</u><input type="file" accept=".csv,text/csv" data-ref="zFile" style="display:none"></div>
           <div class="row" style="margin-top:6px;align-items:center">
-            <label class="chk">Fehlzeiten ausgleichen auf Ticket <input type="text" data-ref="zTicket" style="width:110px" placeholder="Ticket-Nr."></label>
-            <span class="hint" style="flex:1">Gerundet wird pro Tag ab ${CFG.personioRoundMin} Restminuten auf die nächste Viertelstunde. Der Abgleich gilt nur, wenn nur „Ich“ gewählt ist.</span>
+            <span class="hint" style="flex:1">Fehlzeiten werden auf das interne Zeiten-Ticket des jeweiligen Monats gebucht (⚙ Einstellungen). Gerundet wird pro Tag ab ${CFG.personioRoundMin} Restminuten auf die nächste Viertelstunde. Der Abgleich gilt nur, wenn nur „Ich“ gewählt ist.</span>
             <button class="btn sm sec" data-ref="zPClear">Personio-Daten entfernen</button>
           </div>
         </details>
+        <div class="row" style="align-items:center;margin-top:4px"><span class="hint">Restzeit-Ticket:</span><span data-ref="zIntern" class="hint" style="flex:1"></span></div>
         <div class="msg" data-ref="zMsg"></div>
         <div data-ref="zView"></div>
       </section>
@@ -1260,7 +1603,7 @@
         <div class="row"><div class="c s" style="flex-basis:260px"><select data-ref="stTheme"><option value="auto">Automatisch (wie Windows/Browser)</option><option value="light">Hell</option><option value="dark">Dunkel</option></select></div></div>
         <h3 style="margin:14px 0 6px">Signatur</h3>
         <div class="hint">Wird bei „Als Mail senden“ automatisch angehängt (abschaltbar) und steht im Editor unter „✍ Signatur“ bereit. Einfügen aus Outlook inkl. Logo per Strg+V möglich.</div>
-        <div class="rte" contenteditable="true" data-ref="stSig" style="margin-top:6px;font-family:Arial;font-size:10pt"></div>
+        <div class="rte" contenteditable="true" spellcheck="true" lang="de" data-ref="stSig" style="margin-top:6px;font-family:Arial;font-size:10pt"></div>
         <label class="chk"><input type="checkbox" data-ref="stAuto"> Signatur bei neuen Mails automatisch anhängen</label>
         <h3 style="margin:14px 0 6px">Eigene Textbausteine</h3>
         <div data-ref="stBlocks"></div>
@@ -1268,6 +1611,28 @@
         <label class="chk" style="display:flex;margin-top:10px"><input type="checkbox" data-ref="stMd"> Textbausteine aus MultiData zusätzlich anbieten</label>
         <div style="margin-top:12px"><button class="btn" data-ref="stSave">Einstellungen speichern</button></div>
         <div class="msg" data-ref="stMsg"></div>
+
+        <h3 style="margin:18px 0 6px">Internes Zeiten-Ticket</h3>
+        <div class="hint">Monatliches internes Ticket für übrige Zeit (z. B. „Zeiten LE NOV 26“). Im Zeiten-Tab lässt sich der Rest eines Tages als Kommentar ohne Text darauf buchen – immer auf das Ticket des jeweiligen Monats.</div>
+        <div class="row" style="margin-top:4px">
+          <div class="c s" style="flex-basis:90px"><label class="l">Kürzel</label><input type="text" data-ref="itK" placeholder="z. B. LE"></div>
+          <div class="c" style="flex-basis:220px"><label class="l">Betreff-Muster <span class="hint">{K} Kürzel · {MON} Monat · {YY} Jahr</span></label><input type="text" data-ref="itPat"></div>
+          <div class="c sug" style="flex-basis:260px"><label class="l">Firma für neue Tickets</label><input type="text" data-ref="itFirm" autocomplete="off" placeholder="Firma suchen (mind. 3 Zeichen) …"><div class="results" data-ref="itFirmRes" style="display:none"></div></div>
+        </div>
+        <div class="row" style="margin-top:6px;align-items:flex-end">
+          <div class="c s" style="flex-basis:150px"><label class="l" data-ref="itCurL">Ticket aktueller Monat</label><input type="text" data-ref="itCur" placeholder="Ticket-Nr."></div>
+          <button class="btn sm sec" data-ref="itFind" title="Ticket mit passendem Betreff suchen">🔍 Suchen</button>
+          <button class="btn sm" data-ref="itNew">＋ Neues Ticket anlegen</button>
+          <span class="hint" data-ref="itInfo" style="flex:1"></span>
+        </div>
+        <div class="hint" style="margin-top:4px">Neues Ticket: Firma wie oben, Priorität „Niedrig“, Status „Warten intern“, keine Benachrichtigungen, Bearbeiter = ich. Das Ticket des Vormonats wird dabei per QuickClose geschlossen.</div>
+        <div class="msg" data-ref="itMsg"></div>
+
+        <h3 style="margin:18px 0 6px">Personio</h3>
+        <div class="row" style="align-items:flex-end">
+          <div class="c" style="flex-basis:340px"><label class="l">Personio-Adresse <span class="hint">für „⟳ Aus Personio holen“ im Zeiten-Tab</span></label><input type="text" data-ref="stPUrl" placeholder="${CFG.personioUrl}"></div>
+        </div>
+        <div class="msg" data-ref="stPMsg"></div>
 
         <h3 style="margin:18px 0 6px">Team-Konfiguration (Abrechenbarkeit)</h3>
         <div class="hint">Steuert nur den Vorschlag für die Checkbox „abrechenbar“ und die Gruppierung im Zeiten-Tab. Änderungen werden sofort gespeichert.</div>
@@ -1282,16 +1647,11 @@
           <label class="chk" style="margin:0"><input type="checkbox" data-ref="stExpTpl"> Suchvorlagen mit exportieren</label>
           <input type="file" data-ref="stImportFile" accept=".json,application/json" style="display:none">
         </div>
-        <h3 style="margin:14px 0 6px">Microsoft 365 – Office-Dateien in Office Online öffnen</h3>
-        <div class="hint">Word-, Excel- und PowerPoint-Anhänge werden als Kopie in deinen OneDrive-Ordner geladen (Unterordner je Ticket) und in Office Online geöffnet. Änderungen dort werden nicht nach MultiData zurückgeschrieben. Benötigt eine App-Registrierung in Entra (Typ „Single-Page-Anwendung“, Umleitungs-URI unten, delegiert Files.ReadWrite + User.Read).</div>
-        <div class="row" style="margin-top:6px">
-          <div class="c"><label class="l">Mandant (Tenant-ID oder Domäne)</label><input type="text" data-ref="mTenant" placeholder="z. B. firma.onmicrosoft.com"></div>
-          <div class="c"><label class="l">Anwendungs-ID (Client-ID)</label><input type="text" data-ref="mClient" placeholder="00000000-0000-0000-0000-000000000000"></div>
-          <div class="c"><label class="l">OneDrive-Ordner</label><input type="text" data-ref="mFolder" placeholder="Werkbank-Anhänge"></div>
-        </div>
-        <div class="hint">Umleitungs-URI für die App-Registrierung: <code data-ref="mRedirect"></code></div>
-        <div class="row" style="margin-top:6px;align-items:center"><button class="btn sm sec" data-ref="mSave">Übernehmen</button><button class="btn sm sec" data-ref="mLogout">Abmelden</button><span class="hint" data-ref="mStatus"></span></div>
-        <div class="hint" style="margin-top:8px">Die exportierte Team-Datei (JSON) enthält Kundenlisten und – falls eingerichtet – Mandant/Client-ID (keine Anmeldedaten) und kann an Kolleg:innen weitergegeben werden.</div>
+        <h3 style="margin:14px 0 6px">Office-Dateien (Word, Excel, PowerPoint, Visio)</h3>
+        <div class="hint">„🖥 In Office öffnen“ lädt die Originaldatei herunter, der Browser öffnet sie im installierten Office. Damit das ohne weiteren Klick passiert, einmal je Dateityp „Dateien dieses Typs immer öffnen“ wählen – die Werkbank zeigt dazu beim ersten Öffnen eine kurze Anleitung. Änderungen werden nicht nach MultiData zurückgeschrieben.</div>
+        <div class="row" style="margin-top:6px;align-items:center"><span class="hint" data-ref="oStatus" style="flex:1"></span>
+          <button class="btn sm sec" data-ref="oReset">Hinweise wieder anzeigen</button></div>
+        <div class="hint" style="margin-top:8px">Die exportierte Team-Datei (JSON) enthält die Kundenlisten und kann an Kolleg:innen weitergegeben werden.</div>
         <div class="msg" data-ref="stTeamMsg"></div>
 
         <h3 style="margin:18px 0 6px">Lokale Daten</h3>
@@ -1301,7 +1661,8 @@
 
       <!-- PROTOKOLL -->
       <section data-tab="log">
-        <div class="row"><span class="hint" style="flex:1">Alle Änderungen, die über die Werkbank gemacht wurden (nur in diesem Browser gespeichert).</span>
+        <div class="row" style="align-items:center"><span class="hint" style="flex:1">Alle Änderungen, die über die Werkbank gemacht wurden (nur in diesem Browser gespeichert). Ticketnummern sind anklickbar (Mittelklick: neuer Tab).</span>
+          <div class="c s" style="flex-basis:220px"><input type="text" data-ref="logFilter" placeholder="Filtern (Text oder Ticket-Nr.) …"></div>
           <button class="btn sm sec" data-ref="logClear">Protokoll leeren</button></div>
         <div data-ref="logView"></div>
       </section>
@@ -1310,7 +1671,28 @@
 
   const $ = (ref, root = panel) => root.querySelector(`[data-ref="${ref}"]`);
   const el = (tag, attrs = {}, html = '') => { const e = document.createElement(tag); Object.assign(e, attrs); if (html) e.innerHTML = html; return e; };
-  const msg = (ref, text, kind = '') => { const m = $(ref); m.textContent = text; m.className = 'msg ' + kind; };
+  // Pop-up-Meldungen unten im Panel: bleiben sichtbar, egal wie weit man im Ticket gescrollt hat.
+  // Klick schließt; gleiche Meldung erneut → Zeit wird verlängert statt doppelt angezeigt.
+  const toastBox = el('div', { className: 'toasts' });
+  panel.appendChild(toastBox);
+  function toast(text, kind = 'err', ms = kind === 'err' ? 9000 : 6000) {
+    const t = String(text || '').replace(/^\s*[✖⚠]\s*/, '').trim();
+    if (!t) return;
+    let n = [...toastBox.children].find(x => x.dataset.t === t);
+    if (!n) {
+      n = el('div', { className: 'toast ' + kind, role: 'alert', title: 'Klicken zum Schließen' });
+      n.dataset.t = t;
+      n.append(el('span', { textContent: (kind === 'err' ? '✖ ' : '⚠ ') + t }), el('b', { textContent: '×' }));
+      n.addEventListener('click', () => n.remove());
+      toastBox.appendChild(n);
+      while (toastBox.children.length > 3) toastBox.firstChild.remove();
+    }
+    clearTimeout(n._timer); n._timer = setTimeout(() => n.remove(), ms);
+  }
+  const msg = (ref, text, kind = '') => {
+    const m = $(ref); m.textContent = text; m.className = 'msg ' + kind;
+    if (kind === 'err') toast(text, 'err');
+  };
   const ui = { tab: 'search', ticket: null, comments: [], firm: null, editing: new Set(), sort: { key: 'SID', desc: true }, lastResult: null };
 
   // Zweistufige Bestätigung (statt Browser-Dialog, der MultiData blockieren würde)
@@ -1340,6 +1722,18 @@
     det.querySelector('summary').addEventListener('click', () => setTimeout(() => secSet(name, det.open), 0));
     return det;
   }
+  // Einmalige Anleitung je Dateityp: „Dateien dieses Typs immer öffnen“ im Browser einstellen
+  function showOfficeHint(card, ext) {
+    card.querySelector('.ohint')?.remove();
+    const box = el('div', { className: 'warnbox ohint' });
+    box.innerHTML = `<b>Einmalig einrichten:</b> Damit sich .${esc(ext)}-Dateien künftig direkt in Office öffnen, ohne Klick auf den Download: <span></span>
+      <div class="row" style="margin-top:6px;gap:6px"><button class="btn sm" data-o="done">Erledigt</button><button class="btn sm sec" data-o="all">Nicht mehr anzeigen</button></div>`;
+    box.querySelector('span').textContent = officeHowTo(ext);
+    box.querySelector('[data-o=done]').addEventListener('click', () => { const a = officeAck(); if (!a.ext.includes(ext)) a.ext.push(ext); store.set(OFFICE_ACK, a); box.remove(); });
+    box.querySelector('[data-o=all]').addEventListener('click', () => { store.set(OFFICE_ACK, { ...officeAck(), all: true }); box.remove(); });
+    card.open = true; card.appendChild(box);
+    box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
   // Kommentare: globaler Standard (alle auf/zu) + einzelne Abweichungen je Kommentar
   const COMMENTS = CFG.store.comments;
   const commentCollapsed = sid => { const c = store.get(COMMENTS, { all: false, ov: {} }); return c.ov[sid] ?? c.all; };
@@ -1355,7 +1749,7 @@
 
   // Vorschlagsliste unter einem Eingabefeld. source(q) → [{ value, label }].
   // token=true: mehrere Werte mit „;“ – ergänzt wird immer der letzte Eintrag (für Mail-Empfänger).
-  function attachSuggest(input, box, source, { onPick = null, token = false, max = 40 } = {}) {
+  function attachSuggest(input, box, source, { onPick = null, token = false, max = 40, delay = 150 } = {}) {
     let items = [], idx = -1, timer;
     // Ohne eigene Eingabe (Feld zeigt nur den gewählten Wert) → alle Vorschläge zeigen
     // token-Modus: ist der letzte Eintrag schon eine vollständige Adresse, wird ein weiterer Empfänger vorgeschlagen (nicht ersetzt)
@@ -1363,7 +1757,7 @@
     const complete = () => token && validMail(lastTok());
     const current = () => token ? (complete() ? '' : lastTok()) : (input.dataset.typed ? input.value.trim() : '');
     const hide = () => { box.style.display = 'none'; idx = -1; };
-    const mark = () => [...box.children].forEach((d, i) => d.style.background = i === idx ? '#e0f2f1' : '');
+    const mark = () => [...box.children].forEach((d, i) => d.style.background = i === idx ? 'var(--mq-accent-soft)' : '');
     async function show() {
       let list = [];
       try { list = (await source(current().toLowerCase())).slice(0, max); } catch { list = []; }
@@ -1381,7 +1775,7 @@
         input.focus(); show();
       } else { hide(); delete input.dataset.typed; if (onPick) onPick(it); }
     }
-    input.addEventListener('input', () => { input.dataset.typed = '1'; clearTimeout(timer); timer = setTimeout(show, 150); });
+    input.addEventListener('input', () => { input.dataset.typed = '1'; clearTimeout(timer); timer = setTimeout(show, delay); });
     input.addEventListener('focus', show);
     input.addEventListener('blur', () => setTimeout(() => { hide(); delete input.dataset.typed; }, 150));
     input.addEventListener('keydown', e => {
@@ -1391,6 +1785,13 @@
       else if (e.key === 'Enter' && idx >= 0) { pick(idx); e.preventDefault(); e.stopPropagation(); }
       else if (e.key === 'Escape') hide();
     });
+  }
+  // Feld, das einen gewählten Wert hält (Bearbeiter, Firma): Tippen sucht, Verlassen ohne Auswahl zeigt wieder den gewählten Wert
+  function pickField(input, box, source, { label, onPick, delay } = {}) {
+    attachSuggest(input, box, source, { delay, onPick: async it => { await onPick(it); input.value = label(); } });
+    input.value = label();
+    input.addEventListener('focus', () => input.select());
+    input.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== input) input.value = label(); }, 200));
   }
   const userSource = (extra = []) => async q => {
     const users = await loadUsers();
@@ -1409,8 +1810,9 @@
     if (tab === 'inbox') renderInbox();
     if (tab === 'drafts') renderDrafts();
     if (tab === 'settings') renderSettings();
-    if (tab === 'times') { renderTimes(); if (ui.timesStale && tm.data) { ui.timesStale = false; runTimes(); } }
+    if (tab === 'times') { renderTimes(); renderInternInfo(); if (ui.timesStale && tm.data) { ui.timesStale = false; runTimes(); } }
     if (tab === 'search' && ui.searchStale) { ui.searchStale = false; runSearch(true); }
+    if (tab === 'search' && ui.facetsStale) scheduleFacets();
     setRoute(); updateTitle();
   }
   panel.querySelectorAll('.hdr .tab').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
@@ -1418,6 +1820,7 @@
     if (panel.classList.contains('app')) return; // im App-Modus immer offen
     panel.classList.toggle('open');
     if (panel.classList.contains('open') && !ui.initDone) init();
+    else if (panel.classList.contains('open') && ui.tab === 'search' && ui.facetsStale) scheduleFacets();
   }
   fab.addEventListener('click', toggle);
   $('close').addEventListener('click', toggle);
@@ -1493,6 +1896,15 @@
   const ticketRoute = sid => ({ tab: 'ticket', sid: String(sid) });
   // „In MultiData öffnen“: neuer Tab mit MultiData, dort wird das Ticket über die MultiData-Navigation geöffnet
   const mdTicketUrl = sid => location.origin + '/mdweb/rwi/HOME/0#mdopen/' + Number(sid);
+  // Originale MultiData-Adresse eines Tickets (zum Weitergeben): …/mdweb/rwi/MDERRDA/%7B%22SID%22:808626%7D
+  const mdShareUrl = sid => location.origin + '/mdweb/rwi/MDERRDA/' + encodeURIComponent(JSON.stringify({ SID: Number(sid) })).replace(/%3A/gi, ':');
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return; } catch { /* Fallback unten */ }
+    const ta = Object.assign(document.createElement('textarea'), { value: text }); ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy'); ta.remove();
+    if (!ok) throw new Error('Zwischenablage nicht verfügbar');
+  }
   const mdOpen = (START_HASH.match(/^#mdopen\/(\d+)/) || [])[1];
   if (mdOpen) {
     try { history.replaceState(history.state, '', location.pathname + location.search); } catch { /* ignore */ }
@@ -1531,14 +1943,20 @@
   if (appMode) {
     panel.classList.add('app', 'open'); fab.style.display = 'none';
     // MultiData setzt den Seitentitel selbst neu – wir halten ihn auf dem Werkbank-Titel
-    new MutationObserver(() => { if (ui.title && document.title !== ui.title) document.title = ui.title; })
-      .observe(document.querySelector('title') || document.head, { childList: true, subtree: true, characterData: true });
+    let tFix = 0, tWin = 0;
+    new MutationObserver(() => {
+      if (!ui.title || document.title === ui.title) return;
+      const now = Date.now(); if (now - tWin > 1000) { tWin = now; tFix = 0; }
+      if (++tFix > 10) return; // MultiData setzt den Titel gerade ständig neu → nicht dagegen ankämpfen (sonst friert die Seite ein)
+      document.title = ui.title;
+    }).observe(document.querySelector('title') || document.head, { childList: true, subtree: true, characterData: true });
     setTimeout(() => init(), 0);
   }
 
   async function init() {
     ui.initDone = true;
-    await loadUsers().catch(() => null);
+    if (appMode) { const r0 = tabStore.get('route', null) || {}; if (TAB_NAMES[r0.tab]) ui.tab = r0.tab; }
+    loadUsers().catch(() => null); kontaktarten(); me().catch(() => null); // parallel vorladen, nicht darauf warten
     applyFilterState(tabStore.get('filters', null) || store.get(CFG.store.filters, null) || defaultFilterState());
     renderTemplates();
     if (appMode) {
@@ -1652,8 +2070,14 @@
 
   // Übersicht der Kunden, die in den aktuellen Filtern (Bearbeiter, Queues, Status, Zeitraum, Freitext) vorkommen
   let facetTimer, facetSeq = 0;
-  function scheduleFacets() { clearTimeout(facetTimer); facetTimer = setTimeout(loadFacets, 600); }
+  // Nur wenn die Suche sichtbar ist (die Übersicht wertet bis zu 5000 Tickets aus) – sonst beim nächsten Öffnen der Suche
+  function scheduleFacets() {
+    clearTimeout(facetTimer);
+    if (ui.tab !== 'search' || !panel.classList.contains('open')) { ui.facetsStale = true; return; }
+    ui.facetsStale = false; facetTimer = setTimeout(loadFacets, 600);
+  }
   async function loadFacets() {
+    if (ui.tab !== 'search') { ui.facetsStale = true; return; }
     const seq = ++facetSeq;
     $('sFacetHint').textContent = '(lädt …)';
     try {
@@ -1852,22 +2276,27 @@
   // ================= TICKET =================
   async function openTicket(sid, switchTab = true) {
     if (switchTab) showTab('ticket');
+    const seq = ui.openSeq = (ui.openSeq || 0) + 1;
     if (ui.editing.size && ui.ticket && String(ui.ticket.SID) !== String(sid)) msg('tMsg', 'Hinweis: ungespeicherte Kommentar-Änderungen wurden verworfen.');
     else msg('tMsg', 'Lade …');
-    $('tBanner').style.display = 'none'; ui.ticketSig = null;
+    $('tBanner').style.display = 'none'; ui.ticketSig = null; $('tSid').value = sid;
     try {
-      const t = await ticketBySid(sid);
+      // Alles gleichzeitig anfragen statt nacheinander – spart beim Öffnen mehrere Runden zu MultiData
+      const [t, comments, docs, children] = await Promise.all([ticketBySid(sid), loadComments(sid), loadDocs(sid).catch(() => []),
+        loadChildren(sid).catch(() => []), kontaktarten(), loadUsers().catch(() => null)]);
+      if (seq !== ui.openSeq) return; // inzwischen wurde ein anderes Ticket geöffnet
       if (!t) throw new Error(`Ticket ${sid} nicht gefunden.`);
       ui.ticket = t; ui.editing.clear();
+      [ui.comments, ui.docs, ui.children] = [comments, docs, children];
+      ui.ticketSig = sigOf(t, comments);
+      histDetect(t);
       setRoute(); updateTitle();
-      ticketSignature(t.SID).then(sig => { if (ui.ticket && ui.ticket.SID === t.SID) ui.ticketSig = sig; }).catch(() => null);
-      [ui.comments, ui.docs, ui.children] = await Promise.all([loadComments(sid), loadDocs(sid).catch(() => []), loadChildren(sid).catch(() => [])]);
-      $('tSid').value = t.SID;
       await renderTicket();
-      msg('tMsg', '');
-    } catch (e) { msg('tMsg', '✖ ' + e.message, 'err'); }
+      if (seq === ui.openSeq) msg('tMsg', '');
+    } catch (e) { if (seq === ui.openSeq) msg('tMsg', '✖ ' + e.message, 'err'); }
   }
-  const reloadTicket = () => ui.ticket && openTicket(ui.ticket.SID, false);
+  // Neu laden funktioniert auch, wenn das erste Laden fehlgeschlagen ist
+  const reloadTicket = () => { const sid = ui.ticket ? ui.ticket.SID : $('tSid').value.trim(); return sid ? openTicket(sid, false) : Promise.resolve(); };
   $('tLoad').addEventListener('click', () => { const v = $('tSid').value.trim(); if (v) openTicket(v); });
   $('tSid').addEventListener('keydown', e => { if (e.key === 'Enter') $('tLoad').click(); });
   $('tPage').addEventListener('click', async () => {
@@ -1878,160 +2307,161 @@
 
   async function renderTicket() {
     const t = ui.ticket, view = $('tView');
-    const ka = await kontaktarten();
+    const ka = KONTAKTARTEN || await kontaktarten();
     view.innerHTML = '';
 
-    // --- Kopf ---
+    // --- Kopf: alle Felder werden vorgemerkt (gelb markiert) und gemeinsam mit „Speichern“ übernommen ---
     const head = el('div', { className: 'head' });
     head.innerHTML = `
-      <h3>#${t.SID} <a href="#" data-ref="hOpen" target="_blank" style="font-size:12px;font-weight:400;margin-left:8px" title="Öffnet MultiData mit diesem Ticket in einem neuen Tab">in MultiData öffnen ↗</a>
-        <a href="#" data-ref="hNewTab" style="font-size:12px;font-weight:400;margin-left:8px" title="Dieses Ticket in einem weiteren Werkbank-Tab öffnen">in neuem Tab ⧉</a></h3>
-      <div class="row">
-        <div class="c" style="flex:3"><label class="l">Betreff</label><input type="text" data-ref="hTitle"></div>
-        <div class="c"><label class="l">Status</label><select data-ref="hStatus"></select></div>
-        <div class="c"><label class="l">Priorität</label><select data-ref="hPrio"></select></div>
-        <div class="c"><label class="l">Queue</label><select data-ref="hQueue"></select></div>
-        <div><button class="btn" data-ref="hSave">Speichern</button></div>
+      <div class="hrow1">
+        <h3>#${t.SID}</h3>
+        <input type="text" data-ref="hTitle" spellcheck="true" lang="de" title="Betreff">
+        <a href="#" data-ref="hOpen" target="_blank" class="btn sm sec" title="Öffnet MultiData mit diesem Ticket in einem neuen Tab">MultiData ↗</a>
+        <a href="#" data-ref="hNewTab" class="btn sm sec" title="Dieses Ticket in einem weiteren Werkbank-Tab öffnen">Neuer Tab ⧉</a>
+        <button class="btn sm sec" data-ref="hShare" title="MultiData-Link des Tickets kopieren (Umschalt+Klick: „#Nr. Betreff“ + Link)">🔗 Teilen</button>
       </div>
-      <div class="row" style="margin-top:6px;align-items:center">
-        <div class="c" style="flex:3"><label class="l">Firma</label><div><b data-ref="hFirm"></b> <button class="btn sm sec" data-ref="hFirmBtn">ändern …</button></div></div>
-        <div class="c sums" data-ref="hSums"></div>
-        <div><button class="btn warn" data-ref="hQC">QuickClose</button></div>
+      <div class="hgrid">
+        <div><label class="l">Status</label><select data-ref="hStatus"></select></div>
+        <div><label class="l">Priorität</label><select data-ref="hPrio"></select></div>
+        <div><label class="l">Queue</label><select data-ref="hQueue"></select></div>
+        <div class="sug"><label class="l">Bearbeiter</label><input type="text" data-ref="hUser" autocomplete="off" placeholder="Name oder Kürzel …"><div class="results" data-ref="hUserRes" style="display:none"></div></div>
+        <div class="sug wide"><label class="l">Firma</label><input type="text" data-ref="hFirm" autocomplete="off" placeholder="Firma suchen (mind. 3 Zeichen) …"><div class="results" data-ref="hFirmRes" style="display:none"></div></div>
+        <div><label class="l">Parent-Ticket</label><input type="text" data-ref="hParent" placeholder="Ticket-Nr. (leer = keins)"></div>
       </div>
-      <div class="row" style="margin-top:6px;align-items:flex-end">
-        <div class="c" style="max-width:300px;position:relative"><label class="l">Bearbeiter <span class="hint">(suchen, mit „Speichern“ übernehmen)</span></label>
-          <input type="text" data-ref="hUser" autocomplete="off"><div class="results" data-ref="hUserRes" style="display:none;position:absolute;left:0;right:0;z-index:5"></div></div>
-        <label class="chk"><input type="checkbox" data-ref="hNoNotify"> Keine Benachrichtigungen <span class="hint">(gesetzt = keine Mails)</span></label>
-        <div class="c sums" data-ref="hMail"></div>
-      </div>
-      <div class="row" style="margin-top:6px;align-items:flex-end">
-        <div class="c" style="max-width:300px"><label class="l">Parent-Ticket <span class="hint">(Ticket-ID, leer = keins; mit „Speichern“)</span></label>
-          <input type="text" data-ref="hParent" placeholder="Ticket-Nr."></div>
-        <div class="c sums" data-ref="hParentInfo"></div>
+      <div class="row hbar">
+        <label class="chk" style="margin:0" title="Gesetzt = zu diesem Ticket gehen keine Mails raus"><input type="checkbox" data-ref="hNoNotify"> Keine Benachrichtigungen</label>
+        <span class="hint" data-ref="hParentInfo"></span>
         <span style="flex:1"></span>
+        <button class="btn sec" data-ref="hReset" style="display:none" title="Vorgemerkte Änderungen verwerfen">Verwerfen</button>
+        <button class="btn" data-ref="hSave" title="Alle gelb markierten Änderungen übernehmen (Enter im Betreff)">Speichern</button>
+      </div>
+      <div class="warnbox" data-ref="hFirmWarn" style="display:none">Firmenwechsel: MultiData kann dabei abrechenbare Stunden zurücksetzen – bitte nach dem Speichern prüfen.</div>
+      <div class="row hbar">
+        <div class="sums" data-ref="hSums" style="flex:1;min-width:240px"></div>
         <button class="btn sm sec" data-ref="hKids" title="Child-Tickets anzeigen, zuordnen, erstellen">🌿 Child-Tickets</button>
         <button class="btn sm sec" data-ref="hMerge" title="Dieses Ticket in ein anderes zusammenführen">🔀 Zusammenführen</button>
+        <button class="btn sm warn" data-ref="hQC" title="Ticket per QuickClose schließen (erzeugt den Abschlusstext)">QuickClose</button>
       </div>
-      <div data-ref="hExtra"></div>
-      <div data-ref="hFirmBox" style="display:none;margin-top:6px">
-        <input type="text" data-ref="hFirmSearch" placeholder="Neue Firma suchen (mind. 3 Zeichen) …">
-        <div class="results" data-ref="hFirmRes" style="display:none"></div>
-        <div class="msg" data-ref="hFirmMsg"></div>
-      </div>`;
+      <div data-ref="hExtra"></div>`;
     view.appendChild(head);
-    $('hTitle', head).value = t.TITEL || '';
-    const sel = $('hStatus', head);
-    const known = CFG.statuses.some(s => s[0] === t.STATUS);
-    for (const [id, name] of (known ? CFG.statuses : [...CFG.statuses, [t.STATUS, t.STATUS]])) sel.appendChild(el('option', { value: id, textContent: name }));
-    sel.value = t.STATUS;
-    $('hFirm', head).textContent = t.MATCHCODE || t.KND_ID;
-    // Priorität
-    const pSel = $('hPrio', head);
+    const F = { title: $('hTitle', head), status: $('hStatus', head), prio: $('hPrio', head), queue: $('hQueue', head), user: $('hUser', head),
+      firm: $('hFirm', head), parent: $('hParent', head), nn: $('hNoNotify', head) };
+    const orig = { title: t.TITEL || '', status: t.STATUS, prio: String(t.PRIORITY ?? ''), queue: String(t.ERRQ_ID ?? ''), user: t.BEARBEITER_USER_ID || null,
+      parent: String(t.MDERRDA_SID || ''), nn: t.SUPPRESS_NOTIFY == 1 };
+    let newUser = orig.user, newFirm = null;
+    F.title.value = orig.title;
+    for (const [id, name] of (CFG.statuses.some(s => s[0] === t.STATUS) ? CFG.statuses : [...CFG.statuses, [t.STATUS, t.STATUS]])) F.status.appendChild(el('option', { value: id, textContent: name }));
+    F.status.value = t.STATUS;
     for (const [v, n] of (CFG.priorities.some(x => x[0] === Number(t.PRIORITY)) || t.PRIORITY == null ? CFG.priorities : [...CFG.priorities, [t.PRIORITY, String(t.PRIORITY)]]))
-      pSel.appendChild(el('option', { value: v, textContent: n }));
-    pSel.value = t.PRIORITY ?? '';
-    const syncPrio = () => { pSel.style.borderLeft = `6px solid ${prioInfo(pSel.value)[2]}`; };
-    pSel.addEventListener('change', syncPrio); syncPrio();
-    // Queue
-    const qSel = $('hQueue', head);
+      F.prio.appendChild(el('option', { value: v, textContent: n }));
+    F.prio.value = orig.prio;
+    const queueName = () => t.MDERRQ_FK__NAME_KB || String(t.ERRQ_ID ?? '–');
     loadQueues().then(qs => {
-      if (!qs.some(q => String(q.id) === String(t.ERRQ_ID))) qs = [...qs, { id: t.ERRQ_ID, name: String(t.ERRQ_ID ?? '–') }];
-      for (const q of qs) qSel.appendChild(el('option', { value: q.id, textContent: q.name }));
-      qSel.value = t.ERRQ_ID;
-    }).catch(() => qSel.appendChild(el('option', { value: t.ERRQ_ID, textContent: String(t.ERRQ_ID) })));
+      if (!qs.some(q => String(q.id) === orig.queue)) qs = [...qs, { id: t.ERRQ_ID ?? '', name: queueName() }];
+      for (const q of qs) F.queue.appendChild(el('option', { value: q.id, textContent: q.name }));
+    }).catch(() => F.queue.appendChild(el('option', { value: t.ERRQ_ID ?? '', textContent: queueName() })))
+      .finally(() => { F.queue.value = orig.queue; F.queue.dataset.ready = '1'; refreshDirty(); });
+    // Bearbeiter und Firma: suchen, auswählen, mit „Speichern“ übernehmen
+    pickField(F.user, $('hUserRes', head), userSource([{ value: '__ME__', label: '👤 Mir zuweisen' }]), {
+      label: () => newUser ? userLabel(newUser) : '',
+      onPick: async it => { newUser = it.value === '__ME__' ? await me() : it.value; setTimeout(refreshDirty, 0); },
+    });
+    const firmLabel = () => newFirm ? newFirm.MATCH : (t.MATCHCODE || String(t.KND_ID || ''));
+    pickField(F.firm, $('hFirmRes', head), async () => {
+      const q = F.firm.value.trim();
+      return q.length < 3 ? [] : (await searchAddresses(q)).map(a => ({ value: a, label: (a.IMAGE_NR === 36 ? '🏢 ' : '👤 ') + a.MATCH }));
+    }, { label: firmLabel, delay: 350, onPick: it => { newFirm = it.value; setTimeout(refreshDirty, 0); } });
+    loadUsers().then(() => {
+      if (document.activeElement !== F.user) F.user.value = newUser ? userLabel(newUser) : '';
+      const cr = $('hCreator', head); if (cr && t.ANLAGE_USER_ID) cr.textContent = userLabel(t.ANLAGE_USER_ID); // MultiData-Feld „Ersteller“
+    }).catch(() => null);
     // Parent
-    $('hParent', head).value = t.MDERRDA_SID || '';
+    F.parent.value = orig.parent;
     if (t.MDERRDA_SID) ticketBySid(t.MDERRDA_SID).then(p => {
       const info = $('hParentInfo', head); info.innerHTML = '';
       if (!p) { info.textContent = 'Parent nicht gefunden'; return; }
       const a = wbLink(el('a', { textContent: `↑ #${p.SID} ${p.TITEL}` }), ticketRoute(p.SID), () => openTicket(p.SID));
       info.appendChild(a); info.appendChild(document.createTextNode(` · ${statusInfo(p.STATUS)[1]}`));
     }).catch(() => null);
-    $('hNoNotify', head).checked = t.SUPPRESS_NOTIFY == 1;
-    let newUser = t.BEARBEITER_USER_ID || null;
-    wbLink($('hNewTab', head), ticketRoute(t.SID), () => openInNewTab(ticketRoute(t.SID)));
-    const hUser = $('hUser', head);
-    loadUsers().then(() => { hUser.value = t.BEARBEITER_USER_ID ? userLabel(t.BEARBEITER_USER_ID) : ''; }).catch(() => { hUser.value = t.BEARBEITER_USER_ID || ''; });
-    attachSuggest(hUser, $('hUserRes', head), userSource([{ value: '__ME__', label: '👤 Mir zuweisen' }]), {
-      onPick: async it => {
-        newUser = it.value === '__ME__' ? await me() : it.value;
-        hUser.value = userLabel(newUser);
-        hUser.style.outline = newUser !== t.BEARBEITER_USER_ID ? '2px solid #ffb300' : '';
-      },
+    F.nn.checked = orig.nn;
+    function refreshDirty() {
+      const d = {
+        title: F.title.value.trim() !== orig.title, status: F.status.value !== orig.status, prio: F.prio.value !== orig.prio,
+        queue: !!F.queue.dataset.ready && F.queue.value !== '' && F.queue.value !== orig.queue, user: (newUser || null) !== orig.user, firm: !!newFirm,
+        parent: F.parent.value.trim() !== orig.parent, nn: F.nn.checked !== orig.nn,
+      };
+      for (const [k, v] of Object.entries(d)) (k === 'nn' ? F.nn.closest('label') : F[k]).classList.toggle('chg', v);
+      const n = Object.values(d).filter(Boolean).length;
+      $('hSave', head).textContent = n ? `Speichern (${n})` : 'Speichern';
+      $('hReset', head).style.display = n ? '' : 'none';
+      $('hFirmWarn', head).style.display = d.firm ? '' : 'none';
+      F.prio.style.borderLeft = `6px solid ${prioInfo(F.prio.value)[2]}`;
+      return n;
+    }
+    for (const k of ['title', 'parent']) {
+      F[k].addEventListener('input', refreshDirty);
+      F[k].addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('hSave', head).click(); } });
+    }
+    for (const k of ['status', 'prio', 'queue', 'nn']) F[k].addEventListener('change', refreshDirty);
+    $('hReset', head).addEventListener('click', () => {
+      F.title.value = orig.title; F.status.value = orig.status; F.prio.value = orig.prio; if (F.queue.dataset.ready) F.queue.value = orig.queue;
+      newUser = orig.user; F.user.value = newUser ? userLabel(newUser) : ''; newFirm = null; F.firm.value = firmLabel();
+      F.parent.value = orig.parent; F.nn.checked = orig.nn; refreshDirty();
     });
-    hUser.addEventListener('focus', () => hUser.select());
-    $('hMail', head).textContent = `An: ${t.EMAIL_TO || '–'}${t.EMAIL_CC ? ' · Cc: ' + t.EMAIL_CC : ''}`;
-    $('hSums', head).innerHTML = `Angelegt ${fmtDate(t.ANLAGE_DATUM)} · Bearbeiter ${esc(t.BEARBEITER_USER_ID || '–')}<br>
-      Stunden <b>${fmtH(t.SUM_STD)}</b> · abrechenbar <b>${fmtH(t.MEMO_SUM_ABRSTD)}</b>`;
+    refreshDirty();
+    wbLink($('hNewTab', head), ticketRoute(t.SID), () => openInNewTab(ticketRoute(t.SID)));
+    $('hSums', head).innerHTML = `Angelegt ${fmtDateTime(t.ANLAGE_DATUM)} von <b data-ref="hCreator">${esc(t.ANLAGE_USER_ID || '–')}</b> · Stunden <b>${fmtH(t.SUM_STD)}</b> · abrechenbar <b>${fmtH(t.MEMO_SUM_ABRSTD)}</b><br>` +
+      `An: ${esc(t.EMAIL_TO || '–')}${t.EMAIL_CC ? ' · Cc: ' + esc(t.EMAIL_CC) : ''}`;
     $('hOpen', head).href = mdTicketUrl(t.SID); // immer neuer Tab (Linksklick: wechseln, Mittelklick: im Hintergrund)
+    $('hShare', head).addEventListener('click', async ev => {
+      const url = mdShareUrl(t.SID), text = ev.shiftKey ? `#${t.SID} ${t.TITEL || ''}\n${url}` : url;
+      try { await copyText(text); const b = ev.currentTarget || $('hShare', head); b.textContent = '✔ Kopiert'; setTimeout(() => { b.textContent = '🔗 Teilen'; }, 1800); msg('tMsg', `✔ In die Zwischenablage kopiert: ${text.replace('\n', ' · ')}`, 'ok'); }
+      catch (e) { msg('tMsg', '✖ Kopieren nicht möglich: ' + e.message + ' – Link: ' + url, 'err'); }
+    });
     $('hSave', head).addEventListener('click', ev => busy(ev.target, async () => {
+      const done = [];
       try {
         const ch = {};
-        const title = $('hTitle', head).value.trim();
+        const title = F.title.value.trim();
         if (!title) throw new Error('Betreff darf nicht leer sein.');
-        if (title !== t.TITEL) ch.TITEL = title;
-        if (sel.value !== t.STATUS) ch.STATUS = sel.value;
-        if (newUser && newUser !== t.BEARBEITER_USER_ID) ch.BEARBEITER_USER_ID = newUser;
-        if (pSel.value && Number(pSel.value) !== Number(t.PRIORITY)) ch.PRIORITY = Number(pSel.value);
-        if (qSel.value && String(qSel.value) !== String(t.ERRQ_ID)) {
-          ch.ERRQ_ID = Number(qSel.value);
-          const qn = (QUEUES || []).find(q => String(q.id) === String(qSel.value)); if (qn) ch.MDERRQ_FK__NAME_KB = qn.name;
+        if (title !== orig.title) ch.TITEL = title;
+        if (F.status.value !== orig.status) ch.STATUS = F.status.value;
+        if (newUser && newUser !== orig.user) ch.BEARBEITER_USER_ID = newUser;
+        if (F.prio.value && F.prio.value !== orig.prio) ch.PRIORITY = Number(F.prio.value);
+        if (F.queue.dataset.ready && F.queue.value && F.queue.value !== orig.queue) {
+          ch.ERRQ_ID = Number(F.queue.value);
+          const qn = (QUEUES || []).find(q => String(q.id) === F.queue.value); if (qn) ch.MDERRQ_FK__NAME_KB = qn.name;
         }
-        const par = $('hParent', head).value.trim();
-        if (par !== String(t.MDERRDA_SID || '')) {
+        const par = F.parent.value.trim();
+        if (par !== orig.parent) {
           if (par && !/^\d+$/.test(par)) throw new Error('Parent: bitte eine Ticket-ID eingeben.');
           if (par && Number(par) === Number(t.SID)) throw new Error('Ein Ticket kann nicht sein eigenes Parent sein.');
           if (par && !(await ticketBySid(par))) throw new Error(`Parent-Ticket ${par} nicht gefunden.`);
           ch.MDERRDA_SID = par ? Number(par) : null;
         }
-        const nn = $('hNoNotify', head).checked ? 1 : 0;
-        if (nn !== (t.SUPPRESS_NOTIFY == 1 ? 1 : 0)) ch.SUPPRESS_NOTIFY = nn;
-        if (!Object.keys(ch).length) { msg('tMsg', 'Keine Änderungen.'); return; }
-        await updateTicket(t, ch);
+        const nn = F.nn.checked ? 1 : 0;
+        if (nn !== (orig.nn ? 1 : 0)) ch.SUPPRESS_NOTIFY = nn;
+        if (!Object.keys(ch).length && !newFirm) { msg('tMsg', 'Keine Änderungen.'); return; }
+        if (Object.keys(ch).length) { await updateTicket(t, ch); done.push(...HIST_FIELDS.filter(([k]) => k in ch).map(([, l]) => l)); }
+        if (newFirm) { await changeFirm(t, newFirm); done.push('Firma'); }
         await reloadTicket();
-        msg('tMsg', '✔ Ticket gespeichert.', 'ok');
-      } catch (e) { msg('tMsg', '✖ ' + e.message, 'err'); }
+        msg('tMsg', `✔ Gespeichert: ${done.join(', ')}.${newFirm ? ' Bitte abrechenbare Stunden prüfen.' : ''}`, 'ok');
+      } catch (e) {
+        if (done.length) await reloadTicket().catch(() => null);
+        msg('tMsg', '✖ ' + (done.length ? `Gespeichert: ${done.join(', ')} – danach Fehler: ` : '') + e.message, 'err');
+      }
     }));
     confirmBtn($('hQC', head), 'Wirklich schließen?', async () => {
       try { await quickClose(t); await reloadTicket(); msg('tMsg', '✔ Per QuickClose geschlossen.', 'ok'); }
       catch (e) { msg('tMsg', '✖ ' + e.message, 'err'); }
     });
 
-    // Firma ändern
-    $('hFirmBtn', head).addEventListener('click', () => { const b = $('hFirmBox', head); b.style.display = b.style.display ? '' : 'none'; $('hFirmSearch', head).focus(); });
-    let ft;
-    $('hFirmSearch', head).addEventListener('input', () => {
-      clearTimeout(ft);
-      const q = $('hFirmSearch', head).value.trim(), box = $('hFirmRes', head);
-      if (q.length < 3) { box.style.display = 'none'; return; }
-      ft = setTimeout(async () => {
-        try {
-          const res = await searchAddresses(q);
-          box.innerHTML = ''; box.style.display = '';
-          for (const a of res) {
-            const d = el('div'); d.textContent = (a.IMAGE_NR === 36 ? '🏢 ' : '👤 ') + a.MATCH;
-            d.addEventListener('click', () => {
-              box.style.display = 'none';
-              const m = $('hFirmMsg', head); m.className = 'msg'; m.innerHTML = '';
-              m.appendChild(document.createTextNode(`Firma ändern auf „${a.MATCH}“? Abrechenbare Stunden können dabei zurückgesetzt werden. `));
-              const b = el('button', { className: 'btn sm warn', textContent: 'Firma ändern' }); m.appendChild(b);
-              confirmBtn(b, 'Wirklich ändern?', async () => {
-                try { await changeFirm(t, a); await reloadTicket(); msg('tMsg', `✔ Firma geändert auf ${a.MATCH}. Bitte abrechenbare Stunden prüfen.`, 'ok'); }
-                catch (e) { m.textContent = '✖ ' + e.message; m.className = 'msg err'; }
-              });
-            });
-            box.appendChild(d);
-          }
-          if (!res.length) box.innerHTML = '<div><small>Keine Treffer</small></div>';
-        } catch (e) { $('hFirmMsg', head).textContent = '✖ ' + e.message; }
-      }, 300);
-    });
-
-    // --- Anlagetext ---
     const anl = el('details', { className: 'card' });
     anl.innerHTML = `<summary>📄 Anlagetext</summary><div class="txt"></div>`;
     persistDetails(anl, 'ticket.anlagetext', true);
-    anl.querySelector('.txt').innerHTML = t.ANLAGE_NOTIZ ? sanitize(t.ANLAGE_NOTIZ) : '<span class="hint">– kein Anlagetext –</span>';
+    const fillAnl = () => { if (anl.dataset.filled) return; anl.dataset.filled = '1'; fillHtml(anl.querySelector('.txt'), t.ANLAGE_NOTIZ, '<span class="hint">– kein Anlagetext –</span>'); };
+    if (anl.open) fillAnl();
+    anl.addEventListener('toggle', () => { if (anl.open) fillAnl(); });
     if (t.ANLAGE_NOTIZ && t.EMAIL_TO) {
       const bar = el('div', { className: 'row' }); bar.style.marginTop = '6px';
       const srcA = { inbound: true, from: t.EMAIL_TO, cc: t.EMAIL_CC, date: t.ANLAGE_DATUM, subject: t.TITEL, html: t.ANLAGE_NOTIZ };
@@ -2049,18 +2479,29 @@
     persistDetails(dd, 'ticket.anhaenge', true);
     for (const d of docs) {
       const row = el('div', { className: 'doc' });
-      row.innerHTML = `<span class="nm"></span><span class="hint">${fmtDateTime(d.DATUM)} · ${esc(d.CREATED_BY || '')}${d.TITEL && d.TITEL !== t.TITEL ? ' · ' + esc(d.TITEL) : ''}</span>
-        <button class="btn sm sec" data-a="open">${fileExt(d.DOCUMENT_NAME) === 'eml' ? '✉ Anzeigen' : OFFICE_EXT.has(fileExt(d.DOCUMENT_NAME)) && m365Ready() ? '🌐 In Office öffnen' : 'Öffnen'}</button><button class="btn sm sec" data-a="dl">⬇ Herunterladen</button>`;
+      const ext = fileExt(d.DOCUMENT_NAME), isOffice = OFFICE_EXT.has(ext), kind = previewKind(ext);
+      const B = (a, label, title = '') => `<button class="btn sm sec" data-a="${a}"${title ? ` title="${title}"` : ''}>${label}</button>`;
+      const btns = ext === 'eml' ? B('open', '✉ Anzeigen') + B('dl', '⬇ Herunterladen')
+        : isOffice ? (kind ? B('preview', '👁 Vorschau', 'Im Browser ansehen, ohne Download') : '') + B('office', '🖥 In Office öffnen', 'Originaldatei herunterladen und im installierten Office öffnen')
+        : kind ? B('preview', '👁 Anzeigen', 'Im Browser ansehen, ohne Download') + B('dl', '⬇ Herunterladen')
+        : B('open', 'Öffnen') + B('dl', '⬇ Herunterladen');
+      row.innerHTML = `<span class="nm"></span><span class="hint">${fmtDateTime(d.DATUM)} · ${esc(d.CREATED_BY || '')}${d.TITEL && d.TITEL !== t.TITEL ? ' · ' + esc(d.TITEL) : ''}</span>${btns}`;
       row.querySelector('.nm').textContent = '📄 ' + (d.DOCUMENT_NAME || '(ohne Namen)');
       for (const b of row.querySelectorAll('button')) b.addEventListener('click', async () => {
-        const win = b.dataset.a === 'open' ? window.open('about:blank', '_blank') : null; // synchron öffnen → kein Popup-Blocker
-        const ext = fileExt(d.DOCUMENT_NAME);
+        const win = b.dataset.a === 'open' || b.dataset.a === 'preview' ? window.open('about:blank', '_blank') : null; // synchron öffnen → kein Popup-Blocker
         try {
-          if (win && ext === 'eml') { await openEml(d, win); log('Anhang angezeigt', `#${t.SID}: ${d.DOCUMENT_NAME}`); }
-          else if (win && OFFICE_EXT.has(ext) && m365Ready()) { await openInOffice(d, t.SID, win); log('Anhang in Office Online geöffnet', `#${t.SID}: ${d.DOCUMENT_NAME}`); }
+          if (b.dataset.a === 'preview') {
+            if (!win) throw new Error('Das Vorschaufenster wurde vom Browser blockiert – Pop-ups für diese Seite erlauben.');
+            await openPreview(d, win); log('Anhang angezeigt', `#${t.SID}: ${d.DOCUMENT_NAME}`); return;
+          }
+          if (b.dataset.a === 'office') {
+            await busy(b, () => openLocal(d)); log('Anhang in Office geöffnet', `#${t.SID}: ${d.DOCUMENT_NAME}`);
+            if (officeHintNeeded(ext)) showOfficeHint(dd, ext);
+          }
+          else if (win && ext === 'eml') { await openEml(d, win); log('Anhang angezeigt', `#${t.SID}: ${d.DOCUMENT_NAME}`); }
           else { await openDocument(d, b.dataset.a === 'dl', win); log(b.dataset.a === 'dl' ? 'Anhang heruntergeladen' : 'Anhang geöffnet', `#${t.SID}: ${d.DOCUMENT_NAME}`); }
         } catch (e) {
-          if (win && (ext === 'eml' || OFFICE_EXT.has(ext))) { if (!e.quiet && !win.closed) winMessage(win, '✖ ' + e.message); } else if (win) win.close();
+          if (win && (ext === 'eml' || b.dataset.a === 'preview')) { if (!e.quiet && !win.closed) winMessage(win, '✖ ' + e.message); } else if (win) win.close();
           if (!e.quiet) msg('dMsg', '✖ ' + e.message, 'err');
         }
       });
@@ -2145,7 +2586,7 @@
     persistDetails(add, 'ticket.neuerKommentar', false);
     const form = timeForm({
       billableDefault: billableDefault({ kndId: t.KND_ID, name: t.MATCHCODE }), allowZero: true, kontaktarten: ka,
-      allowMail: true, allowFiles: true, kndId: t.KND_ID,
+      allowMail: true, allowFiles: true, kndId: t.KND_ID, allowOnsite: true,
       mailDefaults: { to: t.EMAIL_TO, cc: t.EMAIL_CC, more: ui.comments.flatMap(c => [...splitMails(c.EMAIL_TO), ...splitMails(c.EMAIL_CC)]) }, suppressNotify: t.SUPPRESS_NOTIFY == 1,
       onRemoveSuppress: async () => { await updateTicket(t, { SUPPRESS_NOTIFY: 0 }); t.SUPPRESS_NOTIFY = 0; $('hNoNotify', head).checked = false; },
       ticketDocs: ui.docs || [],
@@ -2164,7 +2605,7 @@
     // Antworten / Allen antworten / Weiterleiten (aus Kommentar oder Anlagetext)
     // Ungespeicherte Eingaben? Dann bei Änderungen von außen nicht automatisch neu laden, sondern Hinweis zeigen.
     ui.form = form; ui.addBox = add; ui.draftSeen = (drafts.get('ticket:' + t.SID) || {}).savedAt || null;
-    ui.isDirty = () => ui.editing.size > 0 || !form.state().empty || $('hTitle', head).value.trim() !== (t.TITEL || '') || sel.value !== t.STATUS;
+    ui.isDirty = () => ui.editing.size > 0 || !form.state().empty || refreshDirty() > 0;
     ui.reply = (src, mode) => {
       const inbound = src.inbound;
       const from = inbound ? src.from : (src.fromLabel || userLabel(src.user));
@@ -2213,18 +2654,107 @@
     }, e => msg('tMsg', '✖ ' + e.message, 'err'), 6000);
     view.appendChild(add);
 
-    // --- Kommentare ---
-    const h = el('div', { className: 'row' }); h.style.marginTop = '12px';
-    h.innerHTML = `<b style="flex:1">Kommentare (${ui.comments.length})</b>
-      <button class="btn sm sec" data-ref="cAllOpen">▾ alle aufklappen</button><button class="btn sm sec" data-ref="cAllClose">▸ alle einklappen</button>`;
-    view.appendChild(h);
-    const setAll = open => { setAllComments(!open); view.querySelectorAll('.card[data-csid]').forEach(cd => cd.classList.toggle('collapsed', !open)); };
-    $('cAllOpen', h).addEventListener('click', () => setAll(true));
-    $('cAllClose', h).addEventListener('click', () => setAll(false));
-    for (const c of ui.comments) view.appendChild(commentCard(c, ka));
+    // --- Reiter unten: Kommentare | Verlauf ---
+    const bt = el('div', { className: 'btabs' });
+    bt.innerHTML = `<button data-b="c">💬 Kommentare (${ui.comments.length})</button><button data-b="h" title="Änderungen an Status, Bearbeiter, Queue … sowie Kommentare, Mails und Anhänge in zeitlicher Reihenfolge">🕘 Verlauf</button>
+      <span style="flex:1"></span><span data-ref="cTools"><button class="btn sm sec" data-ref="cAllOpen">▾ alle aufklappen</button> <button class="btn sm sec" data-ref="cAllClose">▸ alle einklappen</button></span>`;
+    view.appendChild(bt);
+    const cBox = el('div'), hBox = el('div');
+    view.append(cBox, hBox);
+    const showBottom = b => {
+      bt.querySelectorAll('[data-b]').forEach(x => x.classList.toggle('on', x.dataset.b === b));
+      cBox.style.display = b === 'c' ? '' : 'none'; hBox.style.display = b === 'h' ? '' : 'none'; $('cTools', bt).style.display = b === 'c' ? '' : 'none';
+      if (b === 'h') renderHistory(hBox, t);
+    };
+    bt.querySelectorAll('[data-b]').forEach(x => x.addEventListener('click', () => { secSet('ticket.bottom', x.dataset.b); showBottom(x.dataset.b); }));
+    const setAll = open => { setAllComments(!open); cBox.querySelectorAll('.card[data-csid]').forEach(cd => { cd.classList.toggle('collapsed', !open); if (open && cd.fill) cd.fill(); }); };
+    $('cAllOpen', bt).addEventListener('click', () => setAll(true));
+    $('cAllClose', bt).addEventListener('click', () => setAll(false));
+    // aus dem Verlauf zu einem Kommentar springen
+    ui.showComment = csid => {
+      showBottom('c');
+      const cd = cBox.querySelector(`.card[data-csid="${csid}"]`); if (!cd) return;
+      cd.classList.remove('collapsed'); if (cd.fill) cd.fill();
+      cd.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      cd.style.outline = '2px solid #00897b'; setTimeout(() => { cd.style.outline = ''; }, 2000);
+    };
+    showBottom(secGet('ticket.bottom', 'c'));
+    // Kommentare in Portionen aufbauen: der Tab bleibt bedienbar, auch bei sehr vielen/großen Kommentaren
+    const rseq = ui.renderSeq = (ui.renderSeq || 0) + 1;
+    // Inhalte aufgeklappter Kommentare erst aufbauen, wenn sie in die Nähe des sichtbaren Bereichs gescrollt werden
+    if (ui.commentIO) ui.commentIO.disconnect();
+    const io = ui.commentIO = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
+      for (const e of entries) if (e.isIntersecting) { io.unobserve(e.target); if (e.target.fill) e.target.fill(); }
+    }, { root: panel.querySelector('.body'), rootMargin: '1500px 0px' }) : null;
+    (async () => {
+      const list = ui.comments;
+      for (let i = 0; i < list.length; i += CFG.commentBatch) {
+        if (i) { await sleep(0); if (rseq !== ui.renderSeq) return; }
+        const frag = document.createDocumentFragment();
+        for (const c of list.slice(i, i + CFG.commentBatch)) frag.appendChild(commentCard(c, ka, io));
+        cBox.appendChild(frag);
+      }
+      if (!list.length) cBox.innerHTML = '<div class="hint" style="margin-top:8px">Noch keine Kommentare.</div>';
+    })();
   }
 
-  function commentCard(c, ka) {
+  // HTML-Inhalt anzeigen; sehr große Inhalte (z. B. viele eingebettete Bilder) erst auf Klick
+  function fillHtml(box, html, empty = '') {
+    html = html || '';
+    if (!html) { box.innerHTML = empty; return; }
+    if (html.length > CFG.bigHtmlMB * 1048576) {
+      box.innerHTML = `<div class="hint">Umfangreicher Inhalt (${(html.length / 1048576).toFixed(1).replace('.', ',')} MB, z. B. viele eingebettete Bilder). <button class="btn sm sec">Anzeigen</button></div>`;
+      box.querySelector('button').addEventListener('click', ev => { ev.stopPropagation(); box.innerHTML = showHtml(html); });
+    } else box.innerHTML = showHtml(html);
+  }
+
+  // Verlauf: Anlage, Feldänderungen (MultiData-Protokoll), Kommentare, Mails, Anhänge – neueste zuerst
+  async function renderHistory(box, t) {
+    const seq = box.dataset.seq = String(Number(box.dataset.seq || 0) + 1);
+    if (!box.children.length) box.innerHTML = '<div class="hint" style="margin-top:8px">Lade Protokoll …</div>';
+    let proto = null, protoErr = null;
+    try { proto = await loadProtocol(t.SID); } catch (e) { protoErr = e; }
+    if (box.dataset.seq !== seq || !box.isConnected) return;
+    const h = histGet(t.SID) || { ch: [], since: null };
+    const who = id => id ? userLabel(id) : '–';
+    const ev = [{ at: t.ANLAGE_DATUM, icon: '🆕', who: who(t.ANLAGE_USER_ID), what: 'Ticket angelegt', kind: 'x' }];
+    for (const c of ui.comments || []) {
+      const inbound = c.MEMO_IA == '1';
+      const parts = [kontaktLabel(c.LST_ID), Number(c.LFZ_STD) ? fmtH(c.LFZ_STD) + ' h' : '', Number(c.INABR_STD) ? 'abr. ' + fmtH(c.INABR_STD) : '', isOnsite(c) ? '🚗 vor Ort' : ''].filter(Boolean);
+      ev.push({ at: (inbound && c.EMAIL_DATUM) || c.LST_DATUM, icon: inbound ? '📥' : c.EMAIL_TO ? '✉' : '💬', who: inbound ? (c.EMAIL_TO || '–') : who(c.BEARBEITER_USER_ID),
+        what: (inbound ? 'Mail eingegangen' : c.EMAIL_TO ? `Mail an ${c.EMAIL_TO}` : 'Kommentar') + (parts.length ? ' · ' + parts.join(' · ') : ''), csid: c.SID, kind: 'c' });
+    }
+    for (const d of ui.docs || []) ev.push({ at: d.DATUM, icon: '📎', who: d.CREATED_BY || '–', what: 'Anhang: ' + (d.DOCUMENT_NAME || '(ohne Namen)'), kind: 'd' });
+    if (proto) for (const c of proto) ev.push({ at: c.at, icon: '✎', who: who(c.user), kind: 'f', src: 'md', what: c.from || c.to ? `${c.label}: ${c.from || '–'} → ${c.to || '–'}` : c.label });
+    else for (const c of h.ch || []) ev.push({ at: c.at, icon: c.src === 'wb' ? '✎' : '↻', who: c.src === 'wb' ? who(c.by) : '–', kind: 'f', src: c.src, after: c.after,
+      what: c.from || c.to ? `${c.label}: ${c.from || '–'} → ${c.to || '–'}` : c.label });
+    ev.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+    const onlyCh = secGet('ticket.histOnly', false);
+    box.innerHTML = `<div class="row" style="align-items:center;margin-top:6px"><label class="chk" style="margin:0"><input type="checkbox" data-ref="hiOnly"> nur Feldänderungen</label>
+      <span class="hint" style="flex:1;text-align:right">${proto ? 'Feldänderungen aus dem MultiData-Protokoll.'
+        : `MultiData-Protokoll nicht abrufbar (${esc(protoErr && protoErr.message || '')}) – angezeigt werden die Änderungen, die die Werkbank selbst erkannt hat${h.since ? ` (seit ${fmtDateTime(h.since)})` : ''}.`}</span></div>`;
+    $('hiOnly', box).checked = onlyCh;
+    $('hiOnly', box).addEventListener('change', () => { secSet('ticket.histOnly', $('hiOnly', box).checked); renderHistory(box, t); });
+    const tbl = el('table', { className: 'hist' });
+    tbl.innerHTML = '<thead><tr><th>Zeit</th><th>Wer</th><th>Was</th></tr></thead>';
+    const tb = el('tbody'); tbl.appendChild(tb);
+    for (const e of ev.filter(e => !onlyCh || e.kind === 'f')) {
+      const tr = el('tr', { className: e.kind === 'f' ? 'chgrow' : e.csid ? 'r' : '' });
+      tr.innerHTML = `<td class="w"></td><td class="w"></td><td></td>`;
+      tr.children[0].textContent = fmtDateTime(e.at);
+      if (e.kind === 'f' && e.src === 'ext' && e.after) tr.children[0].title = `Erkannt beim Öffnen: geändert zwischen ${fmtDateTime(e.after)} und ${fmtDateTime(e.at)} (Zeit = letzte Änderung laut MultiData)`;
+      tr.children[1].textContent = e.who;
+      tr.children[2].textContent = `${e.icon} ${e.what}`;
+      if (e.kind === 'f' && e.src !== 'md') tr.children[2].appendChild(el('span', { className: 'src', textContent: e.src === 'wb' ? 'Werkbank' : 'erkannt' }));
+      if (e.csid) { tr.title = 'Klick: zum Kommentar'; tr.addEventListener('click', () => ui.showComment(e.csid)); }
+      tb.appendChild(tr);
+    }
+    if (!tb.children.length) tb.innerHTML = '<tr><td colspan="3" class="hint">Keine Feldänderungen protokolliert.</td></tr>';
+    box.appendChild(tbl);
+  }
+  const kontaktLabel = id => ((KONTAKTARTEN || []).find(k => k[0] === id) || [id, id || ''])[1];
+
+  function commentCard(c, ka, io = null) {
     const card = el('div', { className: 'card' + (commentCollapsed(c.SID) ? ' collapsed' : '') });
     card.dataset.csid = c.SID;
     const kaName = (ka.find(k => k[0] === c.LST_ID) || [c.LST_ID, c.LST_ID])[1];
@@ -2236,6 +2766,7 @@
         <span>Std. <b>${fmtH(c.LFZ_STD)}</b></span>
         <span class="tag ${c.INABR_STD ? 'abr' : ''}">abr. ${fmtH(c.INABR_STD)}</span>
         ${c.LFZ_STD_MAN == 1 ? '<span class="tag">manuell</span>' : ''}
+        ${isOnsite(c) ? `<span class="tag onsite" title="Wegzeit ${esc(c.WEGZEIT ?? '–')} · Wegstrecke ${esc(c.WEGSTRECKE ?? '–')}">🚗 vor Ort</span>` : ''}
         <span style="flex:1"></span>
         ${(c.EMAIL_TO || c.MEMO_IA == '1') ? `<button class="btn sm sec" data-r="one" title="Antworten">↩</button><button class="btn sm sec" data-r="all" title="Allen antworten">↩↩</button><button class="btn sm sec" data-r="fwd" title="Weiterleiten">↪</button>` : ''}
         <button class="btn sm sec" data-ref="cEdit">✎ Bearbeiten</button>
@@ -2243,7 +2774,9 @@
       </div>
       <div class="mailinfo" data-ref="cMail" style="display:none"></div>
       <div class="txt"></div>`;
-    card.querySelector('.txt').innerHTML = sanitize(c.NOTIZ);
+    // Inhalt erst aufbauen, wenn der Kommentar aufgeklappt ist (eingeklappte kosten so fast nichts)
+    card.fill = () => { if (card.dataset.filled) return; card.dataset.filled = '1'; fillHtml(card.querySelector('.txt'), c.NOTIZ); };
+    if (!card.classList.contains('collapsed')) { if (io) io.observe(card); else card.fill(); }
     if (c.EMAIL_TO || c.EMAIL_DATUM || c.MEMO_IA == '1') {
       const mi = $('cMail', card); mi.style.display = '';
       mi.textContent = c.MEMO_IA == '1' ? `📥 Eingehende Mail von ${c.EMAIL_TO || '–'}${c.EMAIL_CC ? ' · Cc: ' + c.EMAIL_CC : ''}` :
@@ -2256,6 +2789,7 @@
     $('cHead', card).addEventListener('click', e => {
       if (e.target.closest('button')) return;
       const col = card.classList.toggle('collapsed');
+      if (!col) card.fill();
       setCommentCollapsed(c.SID, col);
     });
     confirmBtn($('cDel', card), 'Wirklich löschen?', async () => {
@@ -2287,8 +2821,9 @@
         <div class="c s"><label class="l">abr. Stunden</label><input type="text" data-ref="eAbr"></div>
         <div class="c"><div class="hint" data-ref="eHint"></div></div>
       </div>
+      ${WEG_OK ? '<label class="chk" title="Wegzeit und Wegstrecke = 1 (Kennzeichen für die Buchhaltung)"><input type="checkbox" data-ref="eOnsite"> 🚗 Vor-Ort-Termin</label>' : ''}
       <label class="l">Text</label>
-      <div class="rte" contenteditable="true" data-ref="eTxt"></div>
+      <div class="rte" contenteditable="true" spellcheck="true" lang="de" data-ref="eTxt"></div>
       <div class="row" style="margin-top:8px">
         <button class="btn" data-ref="eSave">Speichern</button>
         <button class="btn sec" data-ref="eCancel">Abbrechen</button>
@@ -2301,7 +2836,9 @@
     $('eMan', card).checked = c.LFZ_STD_MAN == 1;
     $('eStd', card).value = c.LFZ_STD ?? '';
     $('eAbr', card).value = c.INABR_STD ?? '';
+    if (WEG_OK) $('eOnsite', card).checked = isOnsite(c);
     $('eTxt', card).innerHTML = sanitize(c.NOTIZ);
+    rteBar($('eTxt', card), 'edit');
     const origHtml = $('eTxt', card).innerHTML;
     const sync = () => {
       const man = $('eMan', card).checked;
@@ -2317,6 +2854,7 @@
         const html = $('eTxt', card).innerHTML;
         if (html !== origHtml) ch.html = sanitize(html);
         if ($('eKa', card).value !== c.LST_ID) ch.kontaktart = $('eKa', card).value;
+        if (WEG_OK && $('eOnsite', card).checked !== isOnsite(c)) ch.onsite = $('eOnsite', card).checked;
         const d = $('eDate', card).value, f = $('eFrom', card).value, t = $('eTo', card).value;
         if (d !== date || f !== (c.LFZ_VON || '').slice(11, 16) || t !== (c.LFZ_BIS || '').slice(11, 16)) {
           if (!d || !f || !t) throw new Error('Datum, von und bis ausfüllen.');
@@ -2339,10 +2877,394 @@
     return card;
   }
 
+  // --- Texteditor (alle Editoren der Werkbank): Listen, Einzüge, Einfügen, Rückgängig ---
+  // Listen und Einzüge setzt die Werkbank selbst um statt mit execCommand('indent'/'outdent'): die Browser-Befehle verhalten
+  // sich bei verschachtelten Listen und eingefügten Word-/Web-Inhalten unzuverlässig. Weil der Browser solche Änderungen nicht
+  // kennt, hat der Editor ein eigenes Rückgängig/Wiederholen (Strg+Z / Strg+Y).
+  const isList = n => !!n && n.nodeType === 1 && (n.tagName === 'UL' || n.tagName === 'OL');
+  const BLOCK_TAGS = /^(P|DIV|H[1-6]|BLOCKQUOTE|TABLE|UL|OL|PRE|HR)$/;
+  const elOf = n => n && (n.nodeType === 1 ? n : n.parentElement);
+  const nodeLen = n => n.nodeType === 3 ? n.length : n.childNodes.length;
+  function selRange(rte) {
+    const s = getSelection(); if (!s.rangeCount) return null;
+    const r = s.getRangeAt(0); return rte.contains(r.commonAncestorContainer) ? r : null;
+  }
+  function setCaret(node, off = 0) {
+    const r = document.createRange(), s = getSelection();
+    r.setStart(node, Math.min(off, nodeLen(node))); r.collapse(true);
+    s.removeAllRanges(); s.addRange(r);
+  }
+  // Einfügemarke an den Anfang des ersten Textes in el (bzw. an den Anfang von el)
+  function caretInto(el) {
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const t = w.nextNode();
+    if (t) setCaret(t, 0); else setCaret(el, 0);
+  }
+  // markierte Listenpunkte (nur die obersten – Unterpunkte bewegen sich mit ihrem Punkt)
+  function selLis(rte) {
+    const r = selRange(rte); if (!r) return [];
+    const a = elOf(r.startContainer).closest('li'), b = elOf(r.endContainer).closest('li');
+    if (r.collapsed || a === b) return a && rte.contains(a) ? [a] : [];
+    // Punkte, die die Markierung nur umschließen (Elternpunkt), zählen nicht – außer die Markierung beginnt in ihrem Text
+    const all = [...rte.querySelectorAll('li')].filter(li => r.intersectsNode(li) && (li === a || !li.contains(r.commonAncestorContainer)));
+    return all.filter(li => !all.some(o => o !== li && o.contains(li)));
+  }
+  // Auswahl über DOM-Umbauten hinweg erhalten. fn() gibt das Element zurück, in dem die Einfügemarke landen soll,
+  // falls ihr bisheriger Ort beim Umbau entfernt wurde (z. B. leerer Listenpunkt → neuer Absatz).
+  function keepSel(rte, fn) {
+    const r = selRange(rte), pos = r && [r.startContainer, r.startOffset, r.endContainer, r.endOffset];
+    const landing = fn();
+    try {
+      if (pos && pos[0].isConnected && pos[2].isConnected && rte.contains(pos[0])) {
+        const n = document.createRange(); n.setStart(pos[0], Math.min(pos[1], nodeLen(pos[0]))); n.setEnd(pos[2], Math.min(pos[3], nodeLen(pos[2])));
+        const s = getSelection(); s.removeAllRanges(); s.addRange(n);
+      } else if (landing && landing.isConnected) caretInto(landing);
+    } catch { /* Auswahl nicht wiederherstellbar */ }
+  }
+  // Art einer neuen Unterebene: wie andere Unterlisten dieser Liste, sonst Aufzählung (•)
+  function subListTag(list) {
+    for (const li of list.children) { const s = [...li.children].find(isList); if (s) return s.tagName; }
+    return 'UL';
+  }
+  function indentLi(li) {
+    const prev = li.previousElementSibling, list = li.parentElement;
+    if (!prev || prev.tagName !== 'LI') return null; // der erste Punkt einer Ebene kann nicht tiefer (wie in Word)
+    let sub = prev.lastElementChild;
+    if (!isList(sub)) { sub = document.createElement(subListTag(list)); prev.appendChild(sub); }
+    sub.appendChild(li);
+    // eigene Unterpunkte von li, die nun gleichrangig mit li wären, bleiben unter li
+    return li;
+  }
+  // gibt das Element zurück, in dem der Punkt danach steht (verschobener Punkt oder neuer Absatz)
+  function outdentLi(li) {
+    const list = li.parentElement; if (!isList(list)) return null;
+    const outer = list.parentElement, after = [];
+    for (let n = li.nextElementSibling; n; n = n.nextElementSibling) after.push(n);
+    let landing = li;
+    if (outer && outer.tagName === 'LI') {
+      // eine Ebene höher; folgende Punkte derselben Ebene werden Unterpunkte (Reihenfolge bleibt)
+      if (after.length) {
+        const last = li.lastElementChild;
+        const sub = isList(last) && last.tagName === list.tagName ? last : li.appendChild(document.createElement(list.tagName));
+        after.forEach(n => sub.appendChild(n));
+      }
+      outer.after(li);
+    } else {
+      // oberste Ebene → normaler Absatz; folgende Punkte bleiben eine eigene Liste darunter
+      let ref = list, p = null; landing = null;
+      const put = n => { ref.after(n); ref = n; if (!landing) landing = n; };
+      for (const n of [...li.childNodes]) {
+        if (n.nodeType === 1 && BLOCK_TAGS.test(n.tagName)) { p = null; put(n); }
+        else { if (!p) { p = document.createElement('p'); put(p); } p.appendChild(n); }
+      }
+      if (!landing || !landing.textContent.trim() && !landing.querySelector?.('img,br')) {
+        if (!landing) { p = document.createElement('p'); put(p); }
+        if (!landing.querySelector('br') && !landing.textContent.trim()) landing.appendChild(document.createElement('br'));
+      }
+      if (after.length) {
+        const tail = document.createElement(list.tagName);
+        for (const a of [...list.attributes]) if (a.name !== 'start') tail.setAttribute(a.name, a.value);
+        // Nummerierung fortsetzen: neue Liste beginnt mit der nächsten Nummer
+        if (list.tagName === 'OL') tail.setAttribute('start', String((Number(list.getAttribute('start')) || 1) + [...list.children].indexOf(li)));
+        after.forEach(n => tail.appendChild(n)); put(tail);
+      }
+      li.remove();
+    }
+    if (!list.children.length) list.remove();
+    return landing;
+  }
+  const toPx = v => { const m = String(v || '').match(/^(-?[\d.]+)(px|pt|em|cm|mm)?$/); if (!m) return 0; const f = { pt: 4 / 3, em: 16, cm: 37.8, mm: 3.78 }[m[2]] || 1; return parseFloat(m[1]) * f; };
+  function blockAt(rte) {
+    const r = selRange(rte); if (!r) return null;
+    const b = elOf(r.startContainer).closest('p,div,h1,h2,h3,h4,h5,h6,blockquote,pre');
+    return b && b !== rte && rte.contains(b) ? b : null;
+  }
+  // Absatz (außerhalb von Listen) ein-/ausrücken: Einzug als margin-left im 40-px-Raster; entfernt auch Einzüge
+  // aus eingefügten Inhalten (pt/em, text-indent, blockquote)
+  function indentBlock(rte, dir) {
+    let b = blockAt(rte);
+    if (!b) { // Text direkt im Editor: Zeile in einen Absatz fassen
+      const r = selRange(rte); if (!r) return;
+      let top = r.startContainer === rte ? rte.childNodes[Math.min(r.startOffset, rte.childNodes.length - 1)] : r.startContainer;
+      while (top && top.parentNode !== rte) top = top.parentNode;
+      if (!top || (top.nodeType === 1 && BLOCK_TAGS.test(top.tagName))) return;
+      const line = [top];
+      for (let n = top.previousSibling; n && !(n.nodeType === 1 && (n.tagName === 'BR' || BLOCK_TAGS.test(n.tagName))); n = n.previousSibling) line.unshift(n);
+      for (let n = top.nextSibling; n && !(n.nodeType === 1 && BLOCK_TAGS.test(n.tagName)); n = n.nextSibling) { line.push(n); if (n.nodeType === 1 && n.tagName === 'BR') break; }
+      keepSel(rte, () => { b = document.createElement('p'); line[0].before(b); line.forEach(n => b.appendChild(n)); return b; });
+    }
+    if (dir < 0) {
+      const bq = b.closest('blockquote');
+      if (bq && rte.contains(bq) && toPx(b.style.marginLeft) <= 0) { keepSel(rte, () => { const f = bq.firstChild; while (bq.firstChild) bq.before(bq.firstChild); bq.remove(); return f; }); return; }
+      b.style.textIndent = '';
+    }
+    const cur = toPx(b.style.marginLeft) || toPx(b.style.paddingLeft);
+    const next = dir > 0 ? (Math.floor(cur / 40) + 1) * 40 : Math.max(0, Math.floor((cur - 40) / 40) * 40); // 36pt → 0
+    b.style.paddingLeft = '';
+    b.style.marginLeft = next ? next + 'px' : '';
+    if (!b.getAttribute('style')) b.removeAttribute('style');
+  }
+  function indentSel(rte, dir) {
+    const lis = selLis(rte);
+    if (!lis.length) { indentBlock(rte, dir); return; }
+    keepSel(rte, () => { let land = null; for (const li of (dir > 0 ? lis : [...lis].reverse())) land = (dir > 0 ? indentLi : outdentLi)(li) || land; return land; });
+  }
+  // Chrome legt eine neue Liste in einem Absatz an (<p><ol>…</ol></p>) – ungültig und beim Speichern zerrissen: Liste herausziehen
+  function listsOutOfP(rte) {
+    let first = null;
+    for (const list of [...rte.querySelectorAll('p > ul, p > ol')]) {
+      const p = list.parentElement; if (!rte.contains(p)) continue;
+      const rest = []; for (let n = list.nextSibling; n; n = n.nextSibling) rest.push(n);
+      p.after(list);
+      if (rest.some(n => n.textContent.trim() || (n.nodeType === 1 && n.querySelector?.('img')))) { const q = p.cloneNode(false); rest.forEach(n => q.appendChild(n)); list.after(q); } else rest.forEach(n => n.remove());
+      if (!p.textContent.trim() && !p.querySelector('img')) p.remove();
+      first = first || list;
+    }
+    return first;
+  }
+  // Liste ein/aus bzw. Listenart wechseln (• ↔ 1.)
+  function toggleList(rte, tag) {
+    const lis = selLis(rte);
+    if (!lis.length) { document.execCommand(tag === 'UL' ? 'insertUnorderedList' : 'insertOrderedList'); keepSel(rte, () => listsOutOfP(rte)); return; }
+    const lists = [...new Set(lis.map(li => li.parentElement))];
+    if (lists.every(l => l.tagName === tag)) {
+      keepSel(rte, () => { let land = null; [...lis].reverse().forEach(li => { let cur = li; for (let i = 0; i < 10 && cur && cur.tagName === 'LI' && isList(cur.parentElement); i++) cur = outdentLi(cur); land = cur || land; }); return land; });
+    } else keepSel(rte, () => {
+      lists.filter(l => l.tagName !== tag).forEach(l => {
+        const n = document.createElement(tag);
+        for (const a of [...l.attributes]) if (a.name !== 'type' && a.name !== 'start') n.setAttribute(a.name, a.value);
+        while (l.firstChild) n.appendChild(l.firstChild);
+        l.replaceWith(n);
+      });
+      return lis[0];
+    });
+  }
+  // Steht die Einfügemarke ganz am Anfang des Listenpunkts?
+  function atLiStart(rte) {
+    const s = getSelection(); if (!s.rangeCount || !s.isCollapsed) return null;
+    const li = elOf(s.anchorNode).closest('li'); if (!li || !rte.contains(li)) return null;
+    const r = document.createRange(); r.setStart(li, 0); r.setEnd(s.anchorNode, s.anchorOffset);
+    const frag = r.cloneContents();
+    return frag.textContent.replace(/[\u200b\ufeff]/g, '') === '' && !frag.querySelector('img,br') ? li : null;
+  }
+  const liEmpty = li => ![...li.childNodes].some(n => isList(n) || (n.nodeType === 1 && (n.tagName === 'IMG' || (n.querySelector && n.querySelector('img')))) ||
+    String(n.textContent || '').replace(/[\u00a0\u200b\s]/g, '') !== '');
+  // Tab in Tabellen: zur nächsten/vorigen Zelle
+  function tabCell(rte, back) {
+    const r = selRange(rte), cell = r && elOf(r.startContainer).closest('td,th');
+    if (!cell || !rte.contains(cell)) return false;
+    const cells = [...cell.closest('table').querySelectorAll('td,th')], i = cells.indexOf(cell), next = cells[i + (back ? -1 : 1)];
+    if (next) { const sel = getSelection(), rr = document.createRange(); rr.selectNodeContents(next); sel.removeAllRanges(); sel.addRange(rr); }
+    return true;
+  }
+
+  // --- Einfügen: Word-Listen in echte Listen, Fremdformatierung entfernen ---
+  function cleanWordLists(html) {
+    if (!/mso-list/i.test(html)) return html;
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    let top = null, stack = [];
+    for (const p of [...doc.querySelectorAll('p')]) {
+      const m = (p.getAttribute('style') || '').match(/mso-list:\s*l\d+\s+level(\d+)/i);
+      if (!m) { top = null; continue; }
+      const level = Math.max(1, Math.min(9, +m[1]));
+      const ign = [...p.querySelectorAll('span')].find(s => /mso-list:\s*ignore/i.test(s.getAttribute('style') || ''));
+      const marker = ign ? ign.textContent.replace(/\u00a0/g, ' ').trim() : '';
+      if (ign) { let par = ign.parentElement; ign.remove(); while (par && par !== p && !par.childNodes.length) { const up = par.parentElement; par.remove(); par = up; } }
+      const tag = /^(\d+|[a-z]|[ivxlcdm]+)[.)]$/i.test(marker) ? 'ol' : 'ul';
+      const li = doc.createElement('li');
+      while (p.firstChild) li.appendChild(p.firstChild);
+      if (!top || p.previousElementSibling !== top) { top = doc.createElement(tag); p.before(top); stack = [top]; }
+      while (stack.length > level) stack.pop();
+      while (stack.length < level) {
+        const cur = stack[stack.length - 1], host = cur.lastElementChild || cur.appendChild(doc.createElement('li'));
+        const sub = doc.createElement(tag); host.appendChild(sub); stack.push(sub);
+      }
+      stack[stack.length - 1].appendChild(li);
+      p.remove();
+    }
+    return doc.body.innerHTML;
+  }
+  const rgbOf = c => { const m = String(c || '').match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+))?/i); return m ? [+m[1], +m[2], +m[3], m[4] == null ? 1 : +m[4]] : null; };
+  // Fremde Formatierung beim Einfügen entfernen (Schriftart, -größe, Abstände, Zeilenhöhe …), damit der Text wie der eigene
+  // aussieht und beim Weiterschreiben nichts „mitwandert“. Fett/kursiv/unterstrichen, Farben, Ausrichtung, Listen,
+  // Tabellen, Links und Bilder bleiben.
+  function cleanPaste(html) {
+    const doc = new DOMParser().parseFromString(cleanWordLists(html), 'text/html');
+    const unwrap = n => { while (n.firstChild) n.before(n.firstChild); n.remove(); };
+    doc.querySelectorAll('b[id^="docs-internal-guid"],span[id^="docs-internal-guid"]').forEach(unwrap); // Google Docs
+    try { doc.querySelectorAll('o\\:p, xml, meta, style, title, colgroup').forEach(n => n.remove()); } catch { /* ignore */ }
+    for (const n of [...doc.body.querySelectorAll('*')]) {
+      const st = n.style, tag = n.tagName;
+      const fw = st.fontWeight, bold = /^(bold|bolder|[6-9]00)$/.test(fw), notBold = /^(normal|[1-4]00)$/.test(fw);
+      const ital = st.fontStyle === 'italic', und = /underline/.test(st.textDecoration || st.textDecorationLine || '');
+      const keep = [];
+      const col = rgbOf(st.color); if (col && col[3] > 0 && Math.max(col[0], col[1], col[2]) - Math.min(col[0], col[1], col[2]) > 40) keep.push(`color:${st.color}`); // nur farbiger Text, kein Grau/Schwarz/Weiß
+      const bg = rgbOf(st.backgroundColor); if (bg && bg[3] > 0.05 && bg[0] + bg[1] + bg[2] < 735) keep.push(`background-color:${st.backgroundColor}`);
+      if (/^(center|right|justify)$/.test(st.textAlign) && /^(P|DIV|TD|TH|H[1-6])$/.test(tag)) keep.push(`text-align:${st.textAlign}`);
+      if (/^(TD|TH|TABLE)$/.test(tag)) for (const k of ['border', 'border-top', 'border-bottom', 'border-left', 'border-right', 'padding', 'border-collapse', 'vertical-align', 'width'])
+        if (st.getPropertyValue(k)) keep.push(`${k}:${st.getPropertyValue(k)}`);
+      for (const a of [...n.attributes]) if (!/^(href|src|alt|title|colspan|rowspan|width|height|start|type|dir|target)$/i.test(a.name)) n.removeAttribute(a.name);
+      if (keep.length) n.setAttribute('style', keep.join(';'));
+      if ((tag === 'B' || tag === 'STRONG') && notBold) { unwrap(n); continue; }
+      const wrapIn = t => { const w = doc.createElement(t); while (n.firstChild) w.appendChild(n.firstChild); n.appendChild(w); };
+      if (bold && !/^(B|STRONG|H[1-6]|TH)$/.test(tag)) wrapIn('b');
+      if (ital && !/^(I|EM)$/.test(tag)) wrapIn('i');
+      if (und && tag !== 'U' && tag !== 'A') wrapIn('u');
+      if ((tag === 'SPAN' || tag === 'FONT') && !n.attributes.length) unwrap(n);
+    }
+    // Absätze in Listenpunkten auflösen (aus Dokument-Editoren): sonst erzeugt Enter keinen neuen Punkt, sondern eine Zeile im selben
+    for (const li of [...doc.body.querySelectorAll('li')]) {
+      const ps = [...li.children].filter(c => c.tagName === 'P' || c.tagName === 'DIV');
+      ps.forEach((pp, i) => { if (i && pp.previousSibling && !(pp.previousSibling.nodeType === 1 && /^(UL|OL|BR)$/.test(pp.previousSibling.tagName))) pp.before(doc.createElement('br')); unwrap(pp); });
+    }
+    // leere Absätze am Anfang/Ende des eingefügten Inhalts weglassen
+    for (const pick of [b => b.firstElementChild, b => b.lastElementChild]) {
+      let e; while ((e = pick(doc.body)) && /^(P|DIV)$/.test(e.tagName) && !e.textContent.trim() && !e.querySelector('img,table')) e.remove();
+    }
+    return sanitize(doc.body.innerHTML);
+  }
+
+  // --- Rückgängig / Wiederholen (Stand + Einfügemarke) ---
+  function undoManager(rte) {
+    const undo = [], redo = []; let open = false, timer = null;
+    const path = node => { const p = []; while (node && node !== rte) { if (!node.parentNode) return null; p.unshift([...node.parentNode.childNodes].indexOf(node)); node = node.parentNode; } return node === rte ? p : null; };
+    const resolve = p => { let n = rte; for (const i of p || []) { n = n.childNodes[i]; if (!n) return null; } return n; };
+    const snap = () => { const r = selRange(rte); return { html: rte.innerHTML, sel: r ? [path(r.startContainer), r.startOffset, path(r.endContainer), r.endOffset] : null }; };
+    const restore = st => {
+      rte.innerHTML = st.html;
+      try {
+        const a = st.sel && resolve(st.sel[0]), b = st.sel && resolve(st.sel[2]);
+        if (a && b) { const r = document.createRange(); r.setStart(a, Math.min(st.sel[1], nodeLen(a))); r.setEnd(b, Math.min(st.sel[3], nodeLen(b))); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+        else caretInto(rte);
+      } catch { /* ignore */ }
+      rte.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const checkpoint = () => {
+      open = false; clearTimeout(timer);
+      const s = snap(), top = undo[undo.length - 1];
+      if (!top || top.html !== s.html) { undo.push(s); if (undo.length > 200) undo.shift(); }
+      redo.length = 0;
+    };
+    const doUndo = () => { open = false; const cur = snap(); while (undo.length && undo[undo.length - 1].html === cur.html) undo.pop(); if (!undo.length) return; redo.push(cur); restore(undo.pop()); };
+    const doRedo = () => { open = false; if (!redo.length) return; undo.push(snap()); restore(redo.pop()); };
+    // Tippen: ein Rückgängig-Schritt je Eingabe-Pause bzw. je Wort/Zeile
+    rte.addEventListener('beforeinput', e => {
+      if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') { e.preventDefault(); (e.inputType === 'historyUndo' ? doUndo : doRedo)(); return; }
+      const brk = /insertParagraph|insertLineBreak|insertFromPaste|insertFromDrop|delete(Content|Word|Soft|Hard)|format/.test(e.inputType) || e.data === ' ';
+      if (!open || brk) { checkpoint(); open = !brk; }
+      clearTimeout(timer); timer = setTimeout(() => { open = false; }, 800);
+    });
+    rte.addEventListener('keydown', e => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); doUndo(); }
+      else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); doRedo(); }
+    });
+    rte.addEventListener('mousedown', () => { open = false; });
+    return { checkpoint, undo: doUndo, redo: doRedo };
+  }
+
+  // --- Größe des Textfelds: unten rechts ziehen; die Größe wird je Editor-Art gemerkt ---
+  function resizable(rte, key) {
+    if (!key) return;
+    const all = () => store.get('mdqt.rteSize', {});
+    const h = all()[key];
+    if (h) { rte.style.height = h + 'px'; rte.style.maxHeight = 'none'; }
+    rte.addEventListener('mousedown', e => { // Griff unten rechts: Begrenzung aufheben, damit man größer ziehen kann
+      const b = rte.getBoundingClientRect();
+      if (e.clientX > b.right - 20 && e.clientY > b.bottom - 20) { rte.style.maxHeight = 'none'; rte.dataset.resizing = '1'; }
+    });
+    document.addEventListener('mouseup', function up() {
+      if (!rte.isConnected) { document.removeEventListener('mouseup', up); return; }
+      if (!rte.dataset.resizing) return; delete rte.dataset.resizing;
+      const v = Math.round(rte.getBoundingClientRect().height); if (v > 40) store.set('mdqt.rteSize', { ...all(), [key]: v });
+    });
+  }
+
+  // --- Alles zusammen: Tastatur, Einfügen, Werkzeugleiste, Rückgängig, Größe ---
+  // before(): z. B. gemerkte Auswahl wiederherstellen (Werkzeugleiste mit Auswahlfeldern nimmt den Fokus)
+  function setupRte(rte, { toolbar = null, before = () => rte.focus(), after = () => rte.dispatchEvent(new Event('input', { bubbles: true })), sizeKey = null } = {}) {
+    if (rte.dataset.rteReady) return rte._um; rte.dataset.rteReady = '1';
+    const um = rte._um = undoManager(rte);
+    const op = fn => { um.checkpoint(); fn(); after(); };
+    // Enter erzeugt <p> (wie in der Anzeige); beim Verlassen zurück auf den Browser-Standard (andere Editoren der Seite)
+    rte.addEventListener('focus', () => { try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch { /* ignore */ } });
+    rte.addEventListener('blur', () => { try { document.execCommand('defaultParagraphSeparator', false, 'div'); } catch { /* ignore */ } });
+    rte.addEventListener('keydown', e => {
+      if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        if (tabCell(rte, e.shiftKey)) return;
+        op(() => indentSel(rte, e.shiftKey ? -1 : 1)); return;
+      }
+      if (e.key === 'Backspace' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        const li = atLiStart(rte); if (li) { e.preventDefault(); op(() => keepSel(rte, () => outdentLi(li))); }
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        const s = getSelection(), li = s.rangeCount && s.isCollapsed ? elOf(s.anchorNode).closest('li') : null;
+        if (li && rte.contains(li) && liEmpty(li)) { e.preventDefault(); op(() => keepSel(rte, () => outdentLi(li))); }
+      }
+    });
+    rte.addEventListener('paste', async e => {
+      const items = [...(e.clipboardData?.items || [])];
+      const imgs = items.filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
+      const html = e.clipboardData?.getData('text/html');
+      if (!imgs.length && !html) return; // reiner Text: Browser fügt ein
+      e.preventDefault(); um.checkpoint();
+      if (imgs.length && !html) {
+        for (const f of imgs) await new Promise(res => { const fr = new FileReader(); fr.onload = () => { document.execCommand('insertHTML', false, `<img src="${fr.result}" alt="${esc(f.name || 'Bild')}">`); res(); }; fr.readAsDataURL(f); });
+      } else document.execCommand('insertHTML', false, cleanPaste(html));
+      after();
+    });
+    resizable(rte, sizeKey);
+    if (toolbar) {
+      toolbar.querySelectorAll('button[data-li]').forEach(b => b.addEventListener('mousedown', e => {
+        e.preventDefault(); before();
+        const a = b.dataset.li;
+        op(() => { if (a === 'in' || a === 'out') indentSel(rte, a === 'in' ? 1 : -1); else toggleList(rte, a === 'ol' ? 'OL' : 'UL'); });
+        syncBar();
+      }));
+      // Knöpfe zeigen den Zustand an der Einfügemarke (fett, Liste …)
+      const syncBar = () => {
+        const r = selRange(rte); if (!r) return;
+        const at = elOf(r.startContainer), list = at.closest('ul,ol');
+        for (const b of toolbar.querySelectorAll('button[data-cmd]')) {
+          if (!/^(bold|italic|underline)$/.test(b.dataset.cmd)) continue;
+          let on = false; try { on = document.queryCommandState(b.dataset.cmd); } catch { /* ignore */ }
+          b.classList.toggle('on', !!on);
+        }
+        toolbar.querySelectorAll('button[data-li=ul],button[data-li=ol]').forEach(b => b.classList.toggle('on', !!list && rte.contains(list) && list.tagName === b.dataset.li.toUpperCase()));
+      };
+      let seen = false;
+      const onSel = () => {
+        if (rte.isConnected) seen = true; else if (seen) { document.removeEventListener('selectionchange', onSel); return; }
+        if (rte.contains(getSelection().anchorNode)) syncBar();
+      };
+      document.addEventListener('selectionchange', onSel);
+    }
+    return um;
+  }
+  const LIST_BTNS = `<button type="button" data-li="ul" title="Aufzählung ein/aus">• Liste</button><button type="button" data-li="ol" title="Nummerierung ein/aus">1. Liste</button>
+    <button type="button" data-li="out" title="Einzug verringern (Umschalt+Tab; am Anfang eines Punkts auch Rücktaste)">⇤</button><button type="button" data-li="in" title="Einzug vergrößern (Tab)">⇥</button>`;
+  // Kleine Werkzeugleiste für Kommentar bearbeiten, Signatur, Textbausteine
+  function rteBar(rte, sizeKey = null) {
+    const tb = el('div', { className: 'tb' });
+    tb.innerHTML = `<button type="button" data-cmd="bold" title="Fett (Strg+B)"><b>F</b></button><button type="button" data-cmd="italic" title="Kursiv (Strg+I)"><i>K</i></button>
+      <button type="button" data-cmd="underline" title="Unterstrichen (Strg+U)"><u>U</u></button><span class="sep"></span>${LIST_BTNS}<span class="sep"></span>
+      <button type="button" data-cmd="removeFormat" title="Formatierung entfernen">✕ Format</button>`;
+    rte.before(tb);
+    const um = setupRte(rte, { toolbar: tb, sizeKey });
+    tb.querySelectorAll('button[data-cmd]').forEach(b => b.addEventListener('mousedown', e => {
+      e.preventDefault(); rte.focus(); um.checkpoint(); document.execCommand(b.dataset.cmd, false, null); rte.dispatchEvent(new Event('input', { bubbles: true }));
+    }));
+    return tb;
+  }
+
   // Wiederverwendbares Formular: Datum/Dauer/Kontaktart, Text-Editor, Abrechenbar, optional Mail & Anhänge
   function timeForm({ billableDefault: bd = false, allowZero = false, kontaktarten: ka = [], allowMail = false, allowFiles = false,
-    mailDefaults = {}, kndId = null, suppressNotify = false, onRemoveSuppress = null, ticketDocs = [], onChange = null }) {
+    mailDefaults = {}, kndId = null, suppressNotify = false, onRemoveSuppress = null, ticketDocs = [], onChange = null, allowOnsite = false }) {
     const w = el('div');
+    allowOnsite = allowOnsite && WEG_OK;
     w.innerHTML = `
       <div class="row">
         <div class="c s" style="flex-basis:150px"><label class="l">Datum</label><input type="date" data-ref="fDate"></div>
@@ -2353,6 +3275,7 @@
       <div class="hint" data-ref="fCalc"></div>
       <label class="chk"><input type="checkbox" data-ref="fBill"> Abrechenbar</label>
       <span data-ref="fAbrBox" style="display:none"><label class="chk">abr. Stunden (leer = wie gebucht) <input type="text" data-ref="fAbr" style="width:80px"></label></span>
+      ${allowOnsite ? '<label class="chk" style="margin-left:12px" title="Setzt im Kommentar Wegzeit und Wegstrecke auf 1 (Kennzeichen für die Buchhaltung)"><input type="checkbox" data-ref="fOnsite"> 🚗 Vor-Ort-Termin</label>' : ''}
       ${allowMail ? `<label class="chk" style="margin-left:12px"><input type="checkbox" data-ref="fMailOn"> <b>✉ Als Mail senden</b> („Antwort sofort senden“)</label>
       <div class="mailbox" data-ref="fMailBox" style="display:none">
         <div class="warnbox" data-ref="fSupp" style="display:none">Am Ticket ist „Keine Benachrichtigungen“ gesetzt – so geht keine Mail raus.
@@ -2373,7 +3296,7 @@
         <select data-ref="fSize" title="Schriftgröße">${CFG.fontSizes.map(z => `<option value="${z}"${z === CFG.defaultFontSize ? ' selected' : ''}>${z} pt</option>`).join('')}</select>
         <button type="button" data-cmd="bold" title="Fett"><b>F</b></button><button type="button" data-cmd="italic" title="Kursiv"><i>K</i></button>
         <button type="button" data-cmd="underline" title="Unterstrichen"><u>U</u></button>
-        <button type="button" data-cmd="insertUnorderedList">• Liste</button><button type="button" data-cmd="insertOrderedList">1. Liste</button>
+        <span class="sep"></span>${LIST_BTNS}<span class="sep"></span>
         <button type="button" data-ref="tblBtn" title="Tabelle einfügen">⊞ Tabelle</button>
         <button type="button" data-tbl="row+" title="Zeile unter der aktuellen Zelle einfügen">+Zeile</button><button type="button" data-tbl="col+" title="Spalte rechts einfügen">+Spalte</button>
         <button type="button" data-tbl="row-" title="Aktuelle Zeile löschen">−Zeile</button><button type="button" data-tbl="col-" title="Aktuelle Spalte löschen">−Spalte</button>
@@ -2384,7 +3307,7 @@
       <div class="tb" data-ref="tblPop" style="display:none;align-items:center">Tabelle: <input type="number" data-ref="tblR" value="3" min="1" max="50" style="width:50px"> Zeilen ×
         <input type="number" data-ref="tblC" value="3" min="1" max="20" style="width:50px"> Spalten <label class="chk" style="margin:0 6px"><input type="checkbox" data-ref="tblH" checked> Kopfzeile</label>
         <button type="button" data-ref="tblIns">Einfügen</button></div>
-      <div class="rte" contenteditable="true" data-ref="fText" style="font-family:${CFG.defaultFont};font-size:${CFG.defaultFontSize}pt"></div>
+      <div class="rte" contenteditable="true" spellcheck="true" lang="de" data-ref="fText" style="font-family:${CFG.defaultFont};font-size:${CFG.defaultFontSize}pt"></div>
       ${allowFiles ? `<div class="drop" data-ref="fDrop">📎 Dateien hierher ziehen oder <u>auswählen</u><input type="file" multiple data-ref="fFile" style="display:none"></div>
       ${ticketDocs.length ? `<details style="margin-top:4px"><summary style="font-weight:400">📎 Anhänge aus dem Ticket hinzufügen (${ticketDocs.length})</summary><div data-ref="fDocs"></div>
         <button type="button" class="btn sm sec" data-ref="fDocsAdd" style="margin-top:4px">Ausgewählte hinzufügen</button></details>` : ''}
@@ -2417,9 +3340,15 @@
     const saveSel = () => { const sel = getSelection(); if (sel.rangeCount && rte.contains(sel.anchorNode)) savedRange = sel.getRangeAt(0).cloneRange(); };
     const restoreSel = () => { rte.focus(); if (savedRange) { const sel = getSelection(); sel.removeAllRanges(); sel.addRange(savedRange); } };
     ['keyup', 'mouseup', 'input'].forEach(t => rte.addEventListener(t, saveSel));
-    document.addEventListener('selectionchange', () => { if (rte.contains(getSelection().anchorNode)) saveSel(); });
-    const cmd = (c, v = null) => { restoreSel(); document.execCommand('styleWithCSS', false, true); document.execCommand(c, false, v); saveSel(); };
+    let shown = false;
+    const onSelChange = () => {
+      if (w.isConnected) shown = true; else if (shown) { document.removeEventListener('selectionchange', onSelChange); return; }
+      if (rte.contains(getSelection().anchorNode)) saveSel();
+    };
+    document.addEventListener('selectionchange', onSelChange); // meldet sich ab, sobald das Formular nicht mehr angezeigt wird
+    const cmd = (c, v = null) => { restoreSel(); if (rte._um) rte._um.checkpoint(); document.execCommand('styleWithCSS', false, true); document.execCommand(c, false, v); saveSel(); rte.dispatchEvent(new Event('input', { bubbles: true })); };
     w.querySelectorAll('.tb button[data-cmd]').forEach(b => b.addEventListener('mousedown', e => { e.preventDefault(); cmd(b.dataset.cmd); }));
+    setupRte(rte, { toolbar: w.querySelector('.tb'), before: restoreSel, after: () => { saveSel(); rte.dispatchEvent(new Event('input', { bubbles: true })); }, sizeKey: 'form' });
     $('fFont', w).addEventListener('change', e => cmd('fontName', e.target.value));
     $('fSize', w).addEventListener('change', e => {
       // execCommand kennt nur Stufen 1–7 → Stufe 7 setzen und durch echte pt-Größe ersetzen
@@ -2444,6 +3373,7 @@
       const node = savedRange && savedRange.startContainer;
       const cell = node && (node.nodeType === 1 ? node : node.parentElement).closest('td,th');
       if (!cell || !rte.contains(cell)) return;
+      if (rte._um) rte._um.checkpoint();
       const tr = cell.parentElement, table = tr.closest('table'), ci = [...tr.children].indexOf(cell);
       const newCell = () => { const td = document.createElement('td'); td.setAttribute('style', cellStyle); td.innerHTML = '&nbsp;'; return td; };
       if (b.dataset.tbl === 'row+') { const nr = document.createElement('tr'); for (let i = 0; i < tr.children.length; i++) nr.appendChild(newCell()); tr.after(nr); }
@@ -2455,13 +3385,6 @@
       const fr = new FileReader();
       fr.onload = () => { rte.focus(); document.execCommand('insertHTML', false, `<img src="${fr.result}" alt="${esc(file.name || 'Bild')}">`); res(); };
       fr.readAsDataURL(file);
-    });
-    rte.addEventListener('paste', async e => {
-      const items = [...(e.clipboardData?.items || [])];
-      const imgs = items.filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
-      if (imgs.length) { e.preventDefault(); for (const f of imgs) await insertImage(f); return; }
-      const html = e.clipboardData?.getData('text/html');
-      if (html) { e.preventDefault(); document.execCommand('insertHTML', false, sanitize(html)); }
     });
 
     // Signatur & Textbausteine
@@ -2487,7 +3410,7 @@
       const b = src === 'own' ? (settings().blocks || [])[+i] : (await mdTextBlocks())[+i];
       if (b) cmd('insertHTML', sanitize(b.html));
     });
-    const alertMsg = t => { const m = el('div', { className: 'warnbox', textContent: t }); w.prepend(m); setTimeout(() => m.remove(), 4000); };
+    const alertMsg = t => toast(t, /^\s*✖/.test(t) ? 'err' : 'warn');
 
     // Anhänge
     let files = [];
@@ -2546,10 +3469,12 @@
         }
         // Grundschrift (Standard Arial) für Mails mitgeben, damit der Empfänger sie so sieht
         if (mail) html = `<div style="font-family:${CFG.defaultFont}, sans-serif;font-size:${CFG.defaultFontSize}pt">${html}</div>`;
-        return { date, minutes, html, kontaktart: $('fKa', w).value, billable, abrHours: billable ? parseHours($('fAbr', w).value) : null, mail, files: [...files] };
+        return { date, minutes, html, kontaktart: $('fKa', w).value, billable, abrHours: billable ? parseHours($('fAbr', w).value) : null, mail, files: [...files],
+          onsite: allowOnsite && $('fOnsite', w).checked };
       },
       reset() {
         $('fDur', w).value = ''; rte.innerHTML = ''; $('fAbr', w).value = ''; files = []; renderFiles(); calc();
+        if (allowOnsite) $('fOnsite', w).checked = false;
         if (allowMail) { $('fMailOn', w).checked = false; toggleMail(); }
       },
       setBillable(v) { $('fBill', w).checked = v; sync(); },
@@ -2557,12 +3482,14 @@
       state() {
         return { date: $('fDate', w).value, dur: $('fDur', w).value, ka: $('fKa', w).value, bill: $('fBill', w).checked, abr: $('fAbr', w).value, html: rte.innerHTML,
           mailOn: allowMail ? $('fMailOn', w).checked : false, to: allowMail ? $('fTo', w).value : '', cc: allowMail ? $('fCc', w).value : '', bcc: allowMail ? $('fBcc', w).value : '',
+          onsite: allowOnsite ? $('fOnsite', w).checked : false,
           empty: !rte.innerText.trim() && !/<img|<table/i.test(rte.innerHTML) && !$('fDur', w).value };
       },
       restore(d) {
         if (!d) return;
         $('fDate', w).value = d.date || todayStr(); $('fDur', w).value = d.dur || ''; if (d.ka) $('fKa', w).value = d.ka;
         $('fBill', w).checked = !!d.bill; $('fAbr', w).value = d.abr || ''; sync(); calc();
+        if (allowOnsite) $('fOnsite', w).checked = !!d.onsite;
         rte.innerHTML = sanitize(d.html || '');
         if (allowMail && d.mailOn) { $('fMailOn', w).checked = true; $('fTo', w).value = d.to || ''; $('fCc', w).value = d.cc || ''; $('fBcc', w).value = d.bcc || ''; toggleMail(true); }
       },
@@ -2608,7 +3535,7 @@
       $('fMailOn', w).addEventListener('change', toggleMail);
       $('fSuppBtn', w).addEventListener('click', async ev => busy(ev.target, async () => {
         try { await onRemoveSuppress(); suppressNotify = false; $('fSupp', w).style.display = 'none'; }
-        catch (e) { $('fSupp', w).textContent = '✖ ' + e.message; }
+        catch (e) { $('fSupp', w).textContent = '✖ ' + e.message; toast(e.message); }
       }));
     }
     return api_;
@@ -2618,7 +3545,7 @@
   let newForm = null;
   async function ensureNewForm() {
     if (newForm) return;
-    newForm = timeForm({ billableDefault: false, kontaktarten: await kontaktarten(), onChange: () => saveNewDraft() });
+    newForm = timeForm({ billableDefault: false, kontaktarten: await kontaktarten(), onChange: () => saveNewDraft(), allowOnsite: true });
     $('nTimeBox').appendChild(newForm.el);
   }
   $('nWithTime').addEventListener('change', async () => { await ensureNewForm(); $('nTimeBox').style.display = $('nWithTime').checked ? '' : 'none'; saveNewDraft(); });
@@ -2800,8 +3727,60 @@
     const box = $('stBlocks'); box.innerHTML = '';
     (st.blocks || []).forEach(b => addBlockEditor(b));
     if (!(st.blocks || []).length) box.innerHTML = '<div class="hint" data-empty="1">Noch keine eigenen Bausteine.</div>';
-    renderTeam();
+    renderTeam(); renderIntern();
   }
+
+  // --- Personio-Adresse ---
+  $('stPUrl').value = settings().personioUrl || '';
+  $('stPUrl').addEventListener('change', () => {
+    const v = $('stPUrl').value.trim().replace(/\/+$/, '').replace(/\/my-desk.*$/, '');
+    if (v && !/^https:\/\/[\w-]+\.app\.personio\.(com|de)$/.test(v)) { msg('stPMsg', '✖ Bitte die Adresse in der Form https://firma.app.personio.com eingeben.', 'err'); return; }
+    saveSettings({ ...settings(), personioUrl: v }); $('stPUrl').value = v;
+    msg('stPMsg', v ? '✔ Gespeichert.' : `✔ Zurückgesetzt auf ${CFG.personioUrl}.`, 'ok');
+  });
+  // --- Internes Zeiten-Ticket ---
+  async function renderIntern() {
+    const c = internCfg(), k = monthKey(todayStr());
+    $('itPat').value = c.pattern || CFG.intern.pattern;
+    $('itCurL').textContent = `Ticket ${monthTag(k)}`;
+    $('itCur').value = c.tickets[k] || '';
+    $('itNew').textContent = `＋ Neues Ticket für ${monthTag(k)}`;
+    $('itFirm').value = c.firm ? c.firm.MATCH : '';
+    $('itFirm').placeholder = c.firm ? '' : `Standard: erste interne Firma (${String((team().intern[0] || {}).name || '–').replace(/^\d+\s*-\s*/, '')})`;
+    $('itK').value = c.k || '';
+    $('itK').placeholder = await internKuerzel().catch(() => 'z. B. LE');
+    $('itInfo').textContent = '';
+    if (c.tickets[k]) ticketBySid(c.tickets[k]).then(t => { $('itInfo').textContent = t ? `„${t.TITEL}“ · ${statusInfo(t.STATUS)[1]}` : 'Ticket nicht gefunden'; }).catch(() => null);
+  }
+  $('itK').addEventListener('change', () => { saveIntern({ k: $('itK').value.trim().toUpperCase() }); renderIntern(); renderInternInfo(); });
+  $('itPat').addEventListener('change', () => { saveIntern({ pattern: $('itPat').value.trim() || CFG.intern.pattern }); renderIntern(); renderInternInfo(); });
+  $('itCur').addEventListener('change', async () => {
+    const v = $('itCur').value.trim(), k = monthKey(todayStr()), tk = { ...internCfg().tickets };
+    if (v && !/^\d+$/.test(v)) { msg('itMsg', '✖ Bitte eine Ticket-Nr. eingeben.', 'err'); return; }
+    if (v) tk[k] = Number(v); else delete tk[k];
+    saveIntern({ tickets: tk }); renderIntern(); renderInternInfo();
+  });
+  pickField($('itFirm'), $('itFirmRes'), async () => {
+    const q = $('itFirm').value.trim();
+    return q.length < 3 ? [] : (await searchAddresses(q)).map(a => ({ value: a, label: (a.IMAGE_NR === 36 ? '🏢 ' : '👤 ') + a.MATCH }));
+  }, { label: () => (internCfg().firm || {}).MATCH || '', delay: 350, onPick: it => { saveIntern({ firm: { ROW_ID: it.value.ROW_ID, MATCH: it.value.MATCH } }); msg('itMsg', '✔ Firma übernommen.', 'ok'); } });
+  $('itFind').addEventListener('click', ev => busy(ev.target, async () => {
+    const k = monthKey(todayStr());
+    try {
+      const tk = { ...internCfg().tickets }; delete tk[k]; saveIntern({ tickets: tk }); // gemerktes ignorieren, neu suchen
+      const t = await findInternTicket(k);
+      msg('itMsg', t ? `✔ Gefunden: #${t.SID} „${t.TITEL}“.` : `Kein Ticket „${await internTitle(k)}“ gefunden.`, t ? 'ok' : '');
+      renderIntern(); renderInternInfo();
+    } catch (e) { msg('itMsg', '✖ ' + e.message, 'err'); }
+  }));
+  confirmBtn($('itNew'), () => `Wirklich anlegen? (Vormonat wird geschlossen)`, async () => {
+    try {
+      msg('itMsg', 'Lege an …');
+      const { t, closed } = await createInternTicket(monthKey(todayStr()));
+      msg('itMsg', `✔ #${t.SID} „${t.TITEL}“ angelegt${closed ? `, #${closed.SID} „${closed.TITEL}“ per QuickClose geschlossen` : ''}.`, 'ok');
+      renderIntern(); renderInternInfo();
+    } catch (e) { msg('itMsg', '✖ ' + e.message, 'err'); }
+  }, e => msg('itMsg', '✖ ' + e.message, 'err'), 5000);
 
   // --- Team-Konfiguration ---
   const custSource = async q => {
@@ -2820,22 +3799,16 @@
   }
   const nbPick = multiPick($('stNb'), { placeholder: 'Kunde suchen (Name oder Nr.) …', source: custSource, onChange: saveTeam });
   const inPick = multiPick($('stIn'), { placeholder: 'Kunde suchen (Name oder Nr.) …', source: custSource, onChange: saveTeam });
-  function renderM365() {
-    const c = m365Cfg(), g = graphStore.get();
-    $('mTenant').value = c.tenant; $('mClient').value = c.clientId; $('mFolder').value = c.folder;
-    $('mRedirect').textContent = m365Redirect();
-    $('mStatus').textContent = !m365Ready() ? 'nicht eingerichtet' : g?.refresh && g.tenant === c.tenant ? `angemeldet${g.user ? ' als ' + g.user.upn : ''}` : 'eingerichtet – Anmeldung beim ersten Öffnen';
-    $('mLogout').style.display = g?.refresh ? '' : 'none';
+  function renderOffice() {
+    const a = officeAck();
+    $('oStatus').textContent = a.all ? 'Einrichtungshinweise ausgeschaltet.'
+      : a.ext.length ? `Eingerichtet für: ${a.ext.map(e => '.' + e).join(', ')}. Für weitere Typen erscheint beim ersten Öffnen ein Hinweis.`
+      : 'Beim ersten Öffnen je Dateityp erscheint eine kurze Anleitung.';
+    $('oReset').style.display = a.all || a.ext.length ? '' : 'none';
   }
-  $('mSave').addEventListener('click', () => {
-    const tenant = $('mTenant').value.trim(), clientId = $('mClient').value.trim(), folder = $('mFolder').value.trim().replace(/^\/+|\/+$/g, '') || 'Werkbank-Anhänge';
-    if (clientId && !/^[0-9a-f-]{36}$/i.test(clientId)) return msg('stTeamMsg', '✖ Die Client-ID muss eine GUID sein.', 'err');
-    store.set(CFG.store.team, { ...store.get(CFG.store.team, {}), m365: { tenant, clientId, folder } });
-    graphStore.clear(); renderM365(); msg('stTeamMsg', '✔ Microsoft-365-Einstellungen übernommen.', 'ok');
-  });
-  $('mLogout').addEventListener('click', () => { graphStore.clear(); renderM365(); msg('stTeamMsg', '✔ Von Microsoft 365 abgemeldet (nur in dieser Werkbank).', 'ok'); });
+  $('oReset').addEventListener('click', () => { store.set(OFFICE_ACK, { all: false, ext: [] }); renderOffice(); });
   function renderTeam() {
-    renderM365();
+    renderOffice();
     const tc = team();
     teamRendering = true;
     nbPick.set(toPick(tc.nonBillable)); inPick.set(toPick(tc.intern));
@@ -2852,7 +3825,6 @@
   $('stExport').addEventListener('click', () => {
     const tc = team();
     const data = { type: 'mdqt-team', version: 1, exportedAt: new Date().toISOString(), nonBillable: tc.nonBillable, intern: tc.intern, othersBillable: tc.othersBillable !== false };
-    if (m365Ready()) data.m365 = m365Cfg();
     if ($('stExpTpl').checked) data.templates = templates();
     download('werkbank-team-config.json', JSON.stringify(data, null, 2), 'application/json');
     msg('stTeamMsg', '✔ Exportiert.', 'ok');
@@ -2865,8 +3837,7 @@
       const d = JSON.parse(await f.text());
       if (!d || d.type !== 'mdqt-team') throw new Error('Keine Werkbank-Team-Konfiguration.');
       const clean = l => (Array.isArray(l) ? l : []).filter(c => c && c.id != null).map(c => ({ id: String(c.id), name: String(c.name || c.id) }));
-      const m = d.m365 && typeof d.m365 === 'object' ? { tenant: String(d.m365.tenant || '').trim(), clientId: String(d.m365.clientId || '').trim(), folder: String(d.m365.folder || 'Werkbank-Anhänge').trim() } : (team().m365 || undefined);
-      store.set(CFG.store.team, { nonBillable: clean(d.nonBillable), intern: clean(d.intern), othersBillable: d.othersBillable !== false, ...(m ? { m365: m } : {}) });
+      store.set(CFG.store.team, { nonBillable: clean(d.nonBillable), intern: clean(d.intern), othersBillable: d.othersBillable !== false });
       let extra = '';
       if (Array.isArray(d.templates) && d.templates.length) {
         const own = templates(), names = new Set(own.map(t => t.name));
@@ -2889,28 +3860,14 @@
     const box = $('stBlocks'); box.querySelector('[data-empty]')?.remove();
     const c = el('div', { className: 'card' });
     c.innerHTML = `<div class="row"><div class="c"><input type="text" data-a="name" placeholder="Name des Bausteins"></div><button class="btn sm warn" data-a="del">Entfernen</button></div>
-      <div class="rte" contenteditable="true" data-a="html" style="margin-top:4px;font-family:Arial;font-size:10pt"></div>`;
+      <div class="rte" contenteditable="true" spellcheck="true" lang="de" data-a="html" style="margin-top:4px;font-family:Arial;font-size:10pt"></div>`;
     c.querySelector('[data-a=name]').value = b.name || '';
     c.querySelector('[data-a=html]').innerHTML = sanitize(b.html || '');
     c.querySelector('[data-a=del]').addEventListener('click', () => c.remove());
-    enablePaste(c.querySelector('[data-a=html]'));
+    rteBar(c.querySelector('[data-a=html]'));
     box.appendChild(c);
   }
-  // Einfügen in einfache Editoren: Bilder als eingebettete Bilder, HTML entschärft
-  function enablePaste(ed) {
-    ed.addEventListener('paste', e => {
-      const items = [...(e.clipboardData?.items || [])];
-      const imgs = items.filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
-      if (imgs.length) {
-        e.preventDefault();
-        imgs.forEach(f => { const fr = new FileReader(); fr.onload = () => document.execCommand('insertHTML', false, `<img src="${fr.result}">`); fr.readAsDataURL(f); });
-        return;
-      }
-      const html = e.clipboardData?.getData('text/html');
-      if (html) { e.preventDefault(); document.execCommand('insertHTML', false, sanitize(html)); }
-    });
-  }
-  enablePaste($('stSig'));
+  rteBar($('stSig'), 'sig');
   $('stTheme').addEventListener('change', () => { saveSettings({ ...settings(), theme: $('stTheme').value }); applyTheme(); });
 
   // Dark Mode: automatisch nach System oder fest hell/dunkel
@@ -2943,6 +3900,7 @@
   const isWorkday = d => { const w = weekday(d); return w >= 1 && w <= 5; };
   const personioRound = min => { const q = Math.floor(min / 15), r = min % 15; return (q + (r >= CFG.personioRoundMin ? 1 : 0)) * 0.25; };
   const personioStore = () => store.get(CFG.store.personio, {});
+  const personioInfo = () => store.get(CFG.store.personioInfo, {});       // Abwesenheit/Feiertag je Tag (Anzeige)
 
   async function loadTimes({ users, from, to }) {
     const meId = await me();
@@ -2975,7 +3933,6 @@
     $('zFrom').value = z.from || first; $('zTo').value = z.to || todayStr();
     $('zColor').checked = z.color !== false; $('zWeekend').checked = z.weekend !== false; $('zDetails').checked = !!z.details;
     $('zLow').value = z.low ?? CFG.dayColors.low;
-    $('zTicket').value = settings().timesTicket || '';
     const box = $('zRanges'), t = todayStr();
     const mon = s => addDays(s, -((weekday(s) + 6) % 7));
     const lastOfMonth = (y, m) => addDays(`${m === 11 ? y + 1 : y}-${pad((m + 1) % 12 + 1)}-01`, -1);
@@ -2989,7 +3946,32 @@
   })();
   const saveTimesView = () => store.set(CFG.store.timesView, { from: $('zFrom').value, to: $('zTo').value, color: $('zColor').checked, weekend: $('zWeekend').checked, details: $('zDetails').checked, low: +$('zLow').value || CFG.dayColors.low });
   ['zColor', 'zWeekend', 'zDetails', 'zLow'].forEach(r => $(r).addEventListener('change', () => { saveTimesView(); renderTimes(); }));
-  $('zTicket').addEventListener('change', () => saveSettings({ ...settings(), timesTicket: $('zTicket').value.trim() }));
+  // Hinweis, auf welches interne Ticket gebucht wird (je Monat im gewählten Zeitraum)
+  async function renderInternInfo() {
+    const box = $('zIntern'); if (!box) return;
+    const from = $('zFrom').value || todayStr(), to = $('zTo').value || todayStr();
+    const months = []; for (let k = monthKey(to); k >= monthKey(from) && months.length < 7; k = prevMonth(k)) months.unshift(k);
+    box.innerHTML = '';
+    for (const k of months) {
+      const span = el('span'); span.style.marginRight = '14px'; box.appendChild(span);
+      span.textContent = `${monthTag(k)}: …`;
+      try {
+        const t = await findInternTicket(k);
+        span.textContent = `${monthTag(k)}: `;
+        if (t) { span.appendChild(wbLink(el('a', { textContent: `#${t.SID} ${t.TITEL}` }), ticketRoute(t.SID), () => openTicket(t.SID))); if (t.STATUS === 'Z') span.appendChild(document.createTextNode(' (abgeschlossen)')); }
+        else if (k === monthKey(todayStr())) {
+          span.appendChild(document.createTextNode('noch kein Ticket '));
+          const b = el('button', { className: 'btn sm sec', textContent: '＋ anlegen' });
+          confirmBtn(b, 'Anlegen? (Vormonat wird geschlossen)', async () => {
+            try { const { t: n, closed } = await createInternTicket(k); msg('zMsg', `✔ #${n.SID} „${n.TITEL}“ angelegt${closed ? `, #${closed.SID} geschlossen` : ''}.`, 'ok'); renderInternInfo(); }
+            catch (e) { msg('zMsg', '✖ ' + e.message, 'err'); }
+          });
+          span.appendChild(b);
+        } else span.appendChild(document.createTextNode('kein Ticket gefunden'));
+      } catch (e) { span.textContent = `${monthTag(k)}: ✖ ${e.message}`; }
+    }
+  }
+  ['zFrom', 'zTo'].forEach(r => $(r).addEventListener('change', () => { if (ui.tab === 'times') renderInternInfo(); }));
 
   async function runTimes() {
     const from = $('zFrom').value, to = $('zTo').value;
@@ -3002,19 +3984,94 @@
   }
   $('zGo').addEventListener('click', ev => busy(ev.target, runTimes));
 
-  // Personio-CSV (Export „Arbeitszeit pro Tag“, Minuten) – per Drag & Drop oder Auswahl
-  async function importPersonio(file) {
-    const text = await file.text();
-    const p = personioStore(); let n = 0;
-    for (const line of text.split(/\r?\n/)) {
-      const m = line.match(/(\d{2})\.(\d{2})\.(\d{4})\s*[;,\t]\s*(\d+)/);
-      if (m) { p[`${m[3]}-${m[2]}-${m[1]}`] = +m[4]; n++; }
+  // --- Personio: Arbeitsminuten je Tag (aus „⟳ Aus Personio holen“ oder der CSV „Stundenzettel exportieren“) ---
+  const personioBase = () => {
+    const u = String(settings().personioUrl || '').trim().replace(/\/+$/, '');
+    return /^https:\/\/[\w-]+\.app\.personio\.(com|de)$/.test(u) ? u : CFG.personioUrl;
+  };
+  // days = [{ d: 'JJJJ-MM-TT', min, abs, run }]. Künftige Tage bleiben weg (sonst gälten sie als „frei“),
+  // ebenso heute, solange die Stempeluhr läuft bzw. aus der CSV (dort ist der Tag noch nicht abgeschlossen).
+  function mergePersonio(days, source) {
+    const p = personioStore(), info = personioInfo(), today = todayStr(), got = [];
+    let skippedToday = false;
+    for (const x of (Array.isArray(days) ? days : []).slice(0, 800)) {
+      if (!x || !/^\d{4}-\d{2}-\d{2}$/.test(x.d) || !Number.isFinite(+x.min) || x.d > today) continue;
+      if (x.d === today && x.run) { skippedToday = true; continue; }
+      p[x.d] = Math.max(0, Math.round(+x.min));
+      const abs = String(x.abs || '').trim().slice(0, 120);
+      if (abs && !/^(keine|none)$/i.test(abs)) info[x.d] = abs; else delete info[x.d];
+      got.push(x.d);
     }
-    if (!n) throw new Error('Keine Zeilen im Format „TT.MM.JJJJ;Minuten“ gefunden.');
-    store.set(CFG.store.personio, p);
-    msg('zMsg', `✔ Personio: ${n} Tage übernommen.`, 'ok');
+    if (!got.length) throw new Error(skippedToday ? 'Nur der heutige Tag gefunden – der wird erst nach dem Ausstempeln übernommen.' : 'Keine vergangenen Tage in den Personio-Daten gefunden.');
+    got.sort();
+    store.set(CFG.store.personio, p); store.set(CFG.store.personioInfo, info);
+    const range = `${fmtDate(got[0])} – ${fmtDate(got[got.length - 1])}`;
+    msg('zMsg', `✔ Personio: ${got.length} Tage übernommen (${range})${skippedToday ? '; heute folgt nach dem Ausstempeln' : ''}.`, 'ok');
+    log('Personio übernommen', `${source}: ${got.length} Tage, ${range}`);
     renderTimes();
   }
+  // CSV aus Personio: „Datum,Arbeit,Pause,Abwesenheit/Feiertage,…“ (Minuten); ältere Exporte „TT.MM.JJJJ;Minuten“
+  function parsePersonioCsv(text) {
+    const lines = String(text).replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim());
+    if (!lines.length) return [];
+    const count = (l, c) => l.split(c).length;
+    const sep = [';', ',', '\t'].reduce((best, c) => count(lines[0], c) > count(lines[0], best) ? c : best, ';');
+    const split = line => {
+      const out = []; let cur = '', q = false;
+      for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+        else if (c === '"') q = true; else if (c === sep) { out.push(cur); cur = ''; } else cur += c;
+      }
+      out.push(cur); return out.map(v => v.trim());
+    };
+    const head = split(lines[0]).map(h => h.toLowerCase());
+    let iD = head.findIndex(h => /^(datum|date|tag|day)$/.test(h)), iW = head.findIndex(h => /^(arbeit|arbeitszeit|work|worked|working time)/.test(h));
+    const iA = head.findIndex(h => /abwesenheit|absence|feiertag|holiday/.test(h));
+    const hasHead = iD >= 0 && iW >= 0;
+    if (!hasHead) { iD = 0; iW = 1; }
+    const toDate = v => {
+      let m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+      m = String(v || '').match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/); return m ? `${m[3]}-${pad(m[2])}-${pad(m[1])}` : null;
+    };
+    const raw = [];
+    for (const l of hasHead ? lines.slice(1) : lines) {
+      const c = split(l), d = toDate(c[iD]);
+      const v = String(c[iW] ?? '').replace(',', '.'), hm = v.match(/^(\d+):(\d{2})$/);
+      const n = hm ? +hm[1] * 60 + +hm[2] : /^\d+(\.\d+)?$/.test(v) ? +v : NaN;
+      if (d && Number.isFinite(n)) raw.push({ d, n, hm: !!hm, abs: iA >= 0 ? c[iA] : '' });
+    }
+    // Export in Stunden (z. B. 7.62) statt Minuten erkennen
+    const hours = (hasHead && /stunde|hour/.test(head[iW])) || (raw.some(r => !r.hm && r.n % 1) && raw.every(r => r.hm || r.n <= 24));
+    const today = todayStr();
+    return raw.map(r => ({ d: r.d, min: r.hm ? r.n : Math.round(hours ? r.n * 60 : r.n), abs: r.abs, run: r.d === today }));
+  }
+  async function importPersonio(file) {
+    const days = parsePersonioCsv(await file.text());
+    if (!days.length) throw new Error('Keine Tage erkannt – erwartet wird der Personio-Export „Stundenzettel exportieren“ (CSV).');
+    mergePersonio(days, 'CSV ' + (file.name || ''));
+  }
+  // „⟳ Aus Personio holen“: kleines Personio-Fenster öffnen; dort liest der Personio-Helfer (oben) den Stundenzettel
+  // mit der eigenen Personio-Anmeldung und schickt die Tage per postMessage zurück.
+  function fetchPersonio() {
+    const today = todayStr(), from = $('zFrom').value, to = $('zTo').value > today ? today : $('zTo').value;
+    if (!from || !to || to < from) { msg('zMsg', 'Bitte oben einen Zeitraum wählen, der vor heute beginnt.', 'err'); return; }
+    if ((new Date(to) - new Date(from)) / 864e5 > 186) { msg('zMsg', 'Zeitraum bitte auf max. 6 Monate begrenzen.', 'err'); return; }
+    const nonce = crypto.randomUUID();
+    store.set(CFG.store.personioPending, { nonce, at: Date.now() });
+    const url = personioBase() + '/my-desk?mdqt-import=' + encodeURIComponent(JSON.stringify({ nonce, from, to }));
+    const w = window.open(url, 'mdqtPersonio', 'popup,width=560,height=420');
+    if (!w) { msg('zMsg', '✖ Das Personio-Fenster wurde blockiert. Bitte Pop-ups für csp.synaforce.com erlauben (Symbol rechts in der Adresszeile) und erneut klicken.', 'err'); return; }
+    msg('zMsg', `Hole Zeiten ${fmtDate(from)} – ${fmtDate(to)} aus Personio … Verlangt Personio eine Anmeldung: dort anmelden, dann hier erneut klicken.`);
+  }
+  function personioResult(m) {
+    const pend = store.get(CFG.store.personioPending, null);
+    if (!m || m.type !== 'mdqt-personio' || !pend || m.nonce !== pend.nonce) return;
+    store.set(CFG.store.personioPending, null);
+    if (m.error) { msg('zMsg', '✖ Personio: ' + m.error + (m.login ? ' Bitte in Personio anmelden und danach erneut „⟳ Aus Personio holen“ klicken.' : ''), 'err'); return; }
+    try { mergePersonio(m.days, 'Personio'); } catch (e) { msg('zMsg', '✖ ' + e.message, 'err'); }
+  }
+  window.addEventListener('message', e => { if (e.origin === personioBase() && e.data && e.data.type === 'mdqt-personio') personioResult(e.data); });
   {
     const drop = $('zDrop'), inp = $('zFile');
     drop.addEventListener('click', () => inp.click());
@@ -3022,23 +4079,26 @@
     ['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
     ['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
     drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) importPersonio(f).catch(er => msg('zMsg', '✖ ' + er.message, 'err')); });
-    $('zPClear').addEventListener('click', () => { store.set(CFG.store.personio, {}); renderTimes(); });
+    $('zPGet').addEventListener('click', fetchPersonio);
+    $('zPClear').addEventListener('click', () => { store.set(CFG.store.personio, {}); store.set(CFG.store.personioInfo, {}); renderTimes(); });
   }
 
-  // Ausgleich: Differenz Personio − gebucht auf das Sammelticket buchen
+  // Rest/Fehlzeit als Kommentar ohne Text auf das interne Ticket des jeweiligen Monats buchen. days = [{ date, diff (h) }]
   async function bookBalance(days) {
-    const sid = $('zTicket').value.trim();
-    if (!/^\d+$/.test(sid)) throw new Error('Bitte zuerst ein Ticket für den Ausgleich eintragen.');
-    const t = await ticketBySid(sid); if (!t) throw new Error(`Ticket ${sid} nicht gefunden.`);
+    const done = [];
     for (const d of days) {
-      await addComment(t, { date: d.date, minutes: Math.round(d.diff * 60), html: '<p>Interne Nacharbeiten und Abgleich der Arbeitszeit.</p>', kontaktart: CFG.defaultKontaktart, billable: false });
+      const k = monthKey(d.date), t = await findInternTicket(k);
+      if (!t) throw new Error(`Kein internes Zeiten-Ticket für ${monthTag(k)} – unter ⚙ Einstellungen anlegen oder eintragen.${done.length ? ` (bereits gebucht: ${done.length} Tag(e))` : ''}`);
+      await addComment(t, { date: d.date, minutes: roundUp(Math.round(d.diff * 60)), html: '', kontaktart: CFG.defaultKontaktart, billable: false });
+      done.push(`${fmtDate(d.date)} ${fmtH(d.diff)} h → #${t.SID}`);
     }
-    log('Zeitausgleich gebucht', `#${sid}: ` + days.map(d => `${fmtDate(d.date)} ${fmtH(d.diff)} h`).join(', '));
+    log('Restzeit intern gebucht', done.join(', '));
+    return done;
   }
 
   function renderTimes() {
     const box = $('zView'); box.innerHTML = '';
-    const pStore = personioStore();
+    const pStore = personioStore(), pInfo = personioInfo();
     const pDays = Object.keys(pStore).sort();
     $('zPInfo').textContent = pDays.length ? `Personio-Daten: ${fmtDate(pDays[0])} – ${fmtDate(pDays[pDays.length - 1])} (${pDays.length} Tage)` : 'keine Personio-Daten';
     $('zPClear').style.display = pDays.length ? '' : 'none';
@@ -3087,48 +4147,70 @@
     box.appendChild(kpi);
     if (hasP && all.diffPlus.length) {
       const bar = el('div', { className: 'row' }); bar.style.margin = '6px 0';
-      const b = el('button', { className: 'btn sm', textContent: `Alle Fehlzeiten ausgleichen (${all.diffPlus.length} Tage, ${fmtH(sumDiff)} h)` });
-      confirmBtn(b, () => { if (!/^\d+$/.test($('zTicket').value.trim())) throw new Error('Bitte zuerst ein Ticket für den Ausgleich eintragen.'); return `Wirklich ${fmtH(sumDiff)} h auf #${$('zTicket').value.trim()} buchen?`; },
-        async () => { try { msg('zMsg', 'Buche …'); await bookBalance(all.diffPlus); await runTimes(); msg('zMsg', '✔ Ausgleich gebucht.', 'ok'); } catch (e) { msg('zMsg', '✖ ' + e.message, 'err'); } },
+      const b = el('button', { className: 'btn sm', textContent: `Alle Fehlzeiten intern buchen (${all.diffPlus.length} Tage, ${fmtH(sumDiff)} h)`, title: 'Je Tag die Differenz zu Personio als Kommentar ohne Text auf das interne Zeiten-Ticket des Monats buchen' });
+      confirmBtn(b, `Wirklich ${fmtH(sumDiff)} h intern buchen?`,
+        async () => { try { msg('zMsg', 'Buche …'); const d = await bookBalance(all.diffPlus); await runTimes(); msg('zMsg', `✔ Gebucht: ${d.join(', ')}.`, 'ok'); } catch (e) { msg('zMsg', '✖ ' + e.message, 'err'); await runTimes().catch(() => null); } },
         e => msg('zMsg', '✖ ' + e.message, 'err'), 6000);
       bar.appendChild(b); box.appendChild(bar);
     }
+    // Rest eines Tages intern buchen: Vorschlag = Differenz zu Personio, sonst Stunden selbst eintragen
+    const restCell = (cell, d, preset) => {
+      const b = el('button', { className: 'btn sm sec', textContent: preset ? `+${fmtH(preset)} h intern` : '＋ intern',
+        title: 'Rest als Kommentar ohne Text auf das interne Zeiten-Ticket des Monats buchen' });
+      b.addEventListener('click', ev => {
+        ev.stopPropagation();
+        const f = el('span', { className: 'inl' });
+        f.innerHTML = `<input type="text" placeholder="h" title="Stunden, z. B. 1,5 oder 0:45"> <button class="btn sm">Buchen</button> <button class="btn sm sec" title="Abbrechen">×</button>`;
+        const [inp, go, x] = [f.querySelector('input'), ...f.querySelectorAll('button')];
+        inp.value = preset ? String(preset).replace('.', ',') : '';
+        x.addEventListener('click', e2 => { e2.stopPropagation(); f.replaceWith(b); });
+        f.addEventListener('click', e2 => e2.stopPropagation());
+        inp.addEventListener('keydown', e2 => { if (e2.key === 'Enter') go.click(); if (e2.key === 'Escape') x.click(); });
+        confirmBtn(go, () => {
+          const m = roundUp(parseMinutes(inp.value));
+          if (!m || isNaN(m)) throw new Error('Bitte die Stunden eingeben, z. B. 1,5.');
+          if (m > CFG.maxHours * 60) throw new Error(`Mehr als ${CFG.maxHours} h – bitte prüfen.`);
+          return `${fmtH(m / 60)} h buchen?`;
+        }, async () => {
+          try { const done = await bookBalance([{ date: d, diff: roundUp(parseMinutes(inp.value)) / 60 }]); await runTimes(); msg('zMsg', `✔ Gebucht: ${done.join(', ')}.`, 'ok'); }
+          catch (e) { msg('zMsg', '✖ ' + e.message, 'err'); }
+        }, e => msg('zMsg', '✖ ' + e.message, 'err'));
+        b.replaceWith(f); inp.focus(); inp.select();
+      });
+      cell.appendChild(b);
+    };
 
     // Tagesliste
     const tbl = el('table', { className: 'ztbl' });
-    tbl.innerHTML = `<thead><tr><th>Tag / Ticket</th><th>Kunde</th><th class="n">Std.</th><th class="n">abr.</th>${hasP ? '<th class="n">Personio</th><th class="n">Diff.</th><th></th>' : ''}</tr></thead>`;
+    const act = single; // Spalte „intern buchen“ nur bei den eigenen Zeiten
+    tbl.innerHTML = `<thead><tr><th>Tag / Ticket</th><th>Kunde</th><th class="n">Std.</th><th class="n">abr.</th>${hasP ? '<th class="n">Personio</th><th class="n">Diff.</th>' : ''}${act ? '<th></th>' : ''}</tr></thead>`;
     const tb = el('tbody'); tbl.appendChild(tb);
-    const colN = hasP ? 7 : 4;
+    const pad3 = (hasP ? '<td></td><td></td>' : '') + (act ? '<td></td>' : '');
     for (const d of dayList) {
       const day = days[d], wd = isWorkday(d);
       if (!day && !wd && $('zWeekend').checked) continue;
-      const pMin = pStore[d], soll = hasP && pMin != null ? personioRound(pMin) : null;
+      const pMin = pStore[d], soll = hasP && pMin != null ? personioRound(pMin) : null, pAbs = hasP ? pInfo[d] || '' : '';
       const std = day?.std || 0, diff = soll != null ? Math.round((soll - std) * 100) / 100 : null;
       let cls = 'zday';
       if ($('zColor').checked && wd && d <= todayStr()) cls += soll === 0 ? ' z-free' : std <= 0 ? ' z-red' : std < low ? ' z-yellow' : ' z-green';
       if (!wd) cls += ' z-we';
       const tr = el('tr', { className: cls });
-      tr.innerHTML = `<td><b>${WD[weekday(d)]} ${fmtDate(d)}</b>${!wd && day ? ' <span class="tag">Wochenende</span>' : ''}${std > 10 ? ' <span class="tag abr">über 10 h</span>' : ''}${soll === 0 ? ' <span class="tag">frei laut Personio</span>' : ''}</td><td></td>
+      tr.innerHTML = `<td><b>${WD[weekday(d)]} ${fmtDate(d)}</b>${!wd && day ? ' <span class="tag">Wochenende</span>' : ''}${std > 10 ? ' <span class="tag abr">über 10 h</span>' : ''}${pAbs && !/home\s*office|mobil/i.test(pAbs) ? ` <span class="tag">${esc(pAbs)}</span>` : soll === 0 ? ' <span class="tag">frei laut Personio</span>' : ''}</td><td></td>
         <td class="n"><b>${fmtH(std)}</b></td><td class="n">${fmtH(day?.abr || 0)}</td>` +
-        (hasP ? `<td class="n">${soll == null ? '–' : fmtH(soll)}</td><td class="n ${diff > 0 ? 'neg' : diff < 0 ? 'pos' : ''}">${diff == null || diff === 0 ? (diff === 0 ? '✓' : '') : (diff > 0 ? '−' : '+') + fmtH(Math.abs(diff))}</td><td></td>` : '');
-      if (hasP && diff > 0) {
-        const b = el('button', { className: 'btn sm sec', textContent: `+${fmtH(diff)} h buchen`, title: 'Fehlende Zeit auf das Ausgleichs-Ticket buchen' });
-        confirmBtn(b, () => { if (!/^\d+$/.test($('zTicket').value.trim())) throw new Error('Bitte zuerst ein Ticket für den Ausgleich eintragen.'); return `Auf #${$('zTicket').value.trim()}?`; },
-          async () => { try { await bookBalance([{ date: d, diff }]); await runTimes(); msg('zMsg', `✔ ${fmtH(diff)} h am ${fmtDate(d)} gebucht.`, 'ok'); } catch (e) { msg('zMsg', '✖ ' + e.message, 'err'); } },
-          e => msg('zMsg', '✖ ' + e.message, 'err'));
-        tr.lastElementChild.appendChild(b);
-      }
+        (hasP ? `<td class="n">${soll == null ? '–' : fmtH(soll)}</td><td class="n ${diff > 0 ? 'neg' : diff < 0 ? 'pos' : ''}">${diff == null || diff === 0 ? (diff === 0 ? '✓' : '') : (diff > 0 ? '−' : '+') + fmtH(Math.abs(diff))}</td>` : '') +
+        (act ? '<td style="white-space:nowrap"></td>' : '');
+      if (act && d <= todayStr() && soll !== 0 && (wd || day)) restCell(tr.lastElementChild, d, hasP && diff > 0 ? diff : null);
       tb.appendChild(tr);
       if (!day) continue;
       for (const g of ['Kunde', 'Intern']) {
         const rows = Object.values(day.groups[g]); if (!rows.length) continue;
         const gs = rows.reduce((a, r) => ({ std: a.std + r.std, abr: a.abr + r.abr }), { std: 0, abr: 0 });
         const gh = el('tr', { className: 'zgrp' });
-        gh.innerHTML = `<td style="padding-left:14px">${g === 'Intern' ? '🏠 Intern' : '🏢 Kunde'}</td><td></td><td class="n">${fmtH(gs.std)}</td><td class="n">${fmtH(gs.abr)}</td>${hasP ? '<td></td><td></td><td></td>' : ''}`;
+        gh.innerHTML = `<td style="padding-left:14px">${g === 'Intern' ? '🏠 Intern' : '🏢 Kunde'}</td><td></td><td class="n">${fmtH(gs.std)}</td><td class="n">${fmtH(gs.abr)}</td>${pad3}`;
         tb.appendChild(gh);
         for (const r of rows.sort((a, b) => b.std - a.std)) {
           const trt = el('tr', { className: 'r zt' });
-          trt.innerHTML = `<td style="padding-left:28px"><b>#${r.t.SID}</b> <span></span></td><td class="hint"></td><td class="n">${fmtH(r.std)}</td><td class="n">${fmtH(r.abr)}</td>${hasP ? '<td></td><td></td><td></td>' : ''}`;
+          trt.innerHTML = `<td style="padding-left:28px"><b>#${r.t.SID}</b> <span></span></td><td class="hint"></td><td class="n">${fmtH(r.std)}</td><td class="n">${fmtH(r.abr)}</td>${pad3}`;
           trt.querySelector('span').textContent = r.t.TITEL || '';
           trt.children[1].textContent = (r.t.MATCHCODE || '').replace(/^\d+\s*-\s*/, '');
           wbRow(trt, ticketRoute(r.t.SID), () => openTicket(r.t.SID));
@@ -3136,7 +4218,7 @@
           if (showDetails) for (const c of r.items) {
             const tri = el('tr', { className: 'zi' });
             const von = (c.LFZ_VON || '').slice(11, 16), bis = (c.LFZ_BIS || '').slice(11, 16);
-            tri.innerHTML = `<td style="padding-left:44px" colspan="2" class="hint"></td><td class="n hint">${fmtH(c.LFZ_STD)}</td><td class="n hint">${fmtH(c.INABR_STD)}</td>${hasP ? '<td></td><td></td><td></td>' : ''}`;
+            tri.innerHTML = `<td style="padding-left:44px" colspan="2" class="hint"></td><td class="n hint">${fmtH(c.LFZ_STD)}</td><td class="n hint">${fmtH(c.INABR_STD)}</td>${pad3}`;
             tri.firstElementChild.textContent = `${von ? von + '–' + bis + ' · ' : ''}${users.length > 1 ? c.BEARBEITER_USER_ID + ' · ' : ''}${htmlToText(c.NOTIZ).slice(0, 140)}`;
             tb.appendChild(tri);
           }
@@ -3145,7 +4227,7 @@
     }
     const tf = el('tr', { className: 'tsum' });
     tf.innerHTML = `<td><b>Summe</b></td><td></td><td class="n"><b>${fmtH(all.std)}</b></td><td class="n"><b>${fmtH(all.abr)}</b></td>` +
-      (hasP ? `<td class="n"><b>${fmtH(all.soll)}</b></td><td class="n"><b>${sumDiff ? '−' + fmtH(sumDiff) : '✓'}</b></td><td></td>` : '');
+      (hasP ? `<td class="n"><b>${fmtH(all.soll)}</b></td><td class="n"><b>${sumDiff ? '−' + fmtH(sumDiff) : '✓'}</b></td>` : '') + (act ? '<td></td>' : '');
     tb.appendChild(tf);
     box.appendChild(tbl);
 
@@ -3186,10 +4268,14 @@
 
   // ================= SYNCHRONISATION ZWISCHEN TABS & ÄNDERUNGEN VON AUSSEN =================
   // Kurzer „Fingerabdruck“ eines Tickets, um Änderungen in MultiData oder von Kolleg:innen zu erkennen
+  const sigOf = (t, cs) => JSON.stringify([t && [t.DATE_MODIFIED, t.STATUS, t.SUM_STD, t.MEMO_SUM_ABRSTD, t.BEARBEITER_USER_ID, t.TITEL, t.PRIORITY, t.ERRQ_ID],
+    cs.length, cs.reduce((m, c) => Math.max(m, c.SID), 0)]);
   async function ticketSignature(sid) {
-    const [t] = await load('MDERRDA', { filter: [['SID', '=', Number(sid)]], sqlColumns: ['SID', 'DATE_MODIFIED', 'STATUS', 'SUM_STD', 'MEMO_SUM_ABRSTD', 'BEARBEITER_USER_ID', 'TITEL', 'PRIORITY', 'ERRQ_ID'] });
-    const cs = await load('MDERRDA_MDERRDAC', { take: 3000, filter: [['MDERRDA_SID', '=', Number(sid)]], sqlColumns: ['SID'] });
-    return JSON.stringify([t && [t.DATE_MODIFIED, t.STATUS, t.SUM_STD, t.MEMO_SUM_ABRSTD, t.BEARBEITER_USER_ID, t.TITEL, t.PRIORITY, t.ERRQ_ID], cs.length, Math.max(0, ...cs.map(c => c.SID))]);
+    const [[t], cs] = await Promise.all([
+      load('MDERRDA', { filter: [['SID', '=', Number(sid)]], sqlColumns: ['SID', 'DATE_MODIFIED', 'STATUS', 'SUM_STD', 'MEMO_SUM_ABRSTD', 'BEARBEITER_USER_ID', 'TITEL', 'PRIORITY', 'ERRQ_ID'] }),
+      load('MDERRDA_MDERRDAC', { take: 1000, filter: [['MDERRDA_SID', '=', Number(sid)]], sqlColumns: ['SID'] }),
+    ]);
+    return sigOf(t, cs);
   }
   function ticketChangedElsewhere(where) {
     if (ui.isDirty && ui.isDirty()) {
@@ -3218,6 +4304,8 @@
   });
   // Gemeinsam gespeicherte Daten wurden in einem anderen Tab geändert
   bus.on('store', key => {
+    if (key === CFG.store.personioResult) { personioResult(store.get(key, null)); return; }
+    if ((key === CFG.store.personio || key === CFG.store.personioInfo) && ui.tab === 'times') { renderTimes(); return; }
     if (key === CFG.store.inbox) { updateBadges(); if (ui.tab === 'inbox') renderInbox(); }
     else if (key === CFG.store.drafts) {
       updateBadges(); if (ui.tab === 'drafts') renderDrafts();
@@ -3265,18 +4353,29 @@
   // ================= PROTOKOLL =================
   function renderLog() {
     const box = $('logView'); box.innerHTML = '';
-    const l = store.get(CFG.store.log, []);
-    if (!l.length) { box.innerHTML = '<div class="hint" style="margin-top:8px">Noch keine Einträge.</div>'; return; }
+    const q = $('logFilter').value.trim().toLowerCase();
+    const l = store.get(CFG.store.log, []).filter(e => !q || `${e.action} ${e.detail}`.toLowerCase().includes(q));
+    if (!l.length) { box.innerHTML = `<div class="hint" style="margin-top:8px">${q ? 'Keine passenden Einträge.' : 'Noch keine Einträge.'}</div>`; return; }
     const tbl = el('table');
     tbl.innerHTML = '<thead><tr><th>Zeit</th><th>Aktion</th><th>Details</th></tr></thead>';
     const tb = el('tbody'); tbl.appendChild(tb);
     for (const e of l) {
       const tr = el('tr'); const d = new Date(e.t);
-      tr.innerHTML = `<td style="white-space:nowrap">${d.toLocaleDateString('de-DE')} ${d.toLocaleTimeString('de-DE').slice(0, 5)}</td><td>${esc(e.action)}</td><td>${esc(e.detail)}</td>`;
+      tr.innerHTML = `<td style="white-space:nowrap">${d.toLocaleDateString('de-DE')} ${d.toLocaleTimeString('de-DE').slice(0, 5)}</td><td>${esc(e.action)}</td><td></td>`;
+      linkTickets(tr.lastElementChild, e.detail);
       tb.appendChild(tr);
     }
     box.appendChild(tbl);
   }
+  // „#123456“ im Text als Link auf das Ticket (Linksklick: hier öffnen, Mittelklick: neuer Tab)
+  function linkTickets(node, text) {
+    for (const part of String(text || '').split(/(#\d{4,})/)) {
+      if (/^#\d{4,}$/.test(part)) { const sid = part.slice(1); node.appendChild(wbLink(el('a', { textContent: part, title: 'Ticket öffnen · Mittelklick: in neuem Tab' }), ticketRoute(sid), () => openTicket(sid))); }
+      else if (part) node.appendChild(document.createTextNode(part));
+    }
+  }
+  let logT;
+  $('logFilter').addEventListener('input', () => { clearTimeout(logT); logT = setTimeout(renderLog, 200); });
   confirmBtn($('logClear'), 'Wirklich leeren?', async () => { store.set(CFG.store.log, []); renderLog(); });
   } // main
 })();
