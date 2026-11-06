@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.6.1.8
+// @version      1.6.1.9
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1245,7 +1245,10 @@
   #mdqt-panel .card .meta{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--mq-muted2);align-items:center}
   #mdqt-panel .card .meta b{color:var(--mq-fg)}
   #mdqt-panel .card .txt{margin-top:4px;overflow-x:auto;contain:content}
-  #mdqt-panel .card .txt p{margin:2px 0}#mdqt-panel .card .txt ul{margin:2px 0 2px 18px;padding:0}
+  #mdqt-panel .card .txt p,#mdqt-panel .rte p{margin:2px 0}
+  #mdqt-panel .card .txt ul,#mdqt-panel .card .txt ol,#mdqt-panel .rte ul,#mdqt-panel .rte ol{margin:2px 0;padding-left:26px}
+  #mdqt-panel .card .txt li,#mdqt-panel .rte li{margin:1px 0}
+  #mdqt-panel .tb .sep{display:inline-block;width:1px;height:18px;background:var(--mq-border);margin:0 3px;vertical-align:middle}
   #mdqt-panel .head{background:var(--mq-soft);border-radius:6px;padding:10px}
   #mdqt-panel .head h3{margin:0;font-size:15px;white-space:nowrap}
   #mdqt-panel .head .hrow1{display:flex;gap:8px;align-items:center}
@@ -2738,6 +2741,7 @@
     $('eAbr', card).value = c.INABR_STD ?? '';
     if (WEG_OK) $('eOnsite', card).checked = isOnsite(c);
     $('eTxt', card).innerHTML = sanitize(c.NOTIZ);
+    rteBar($('eTxt', card));
     const origHtml = $('eTxt', card).innerHTML;
     const sync = () => {
       const man = $('eMan', card).checked;
@@ -2776,6 +2780,209 @@
     return card;
   }
 
+  // --- Texteditor: Listen, Einzüge, Einfügen (für alle Editoren der Werkbank) ---
+  // Eigene Umsetzung statt execCommand('indent'/'outdent'): die Browser-Befehle verhalten sich bei verschachtelten Listen
+  // und bei eingefügten Word-/Outlook-Inhalten unzuverlässig (Einzüge lassen sich dann nicht mehr entfernen).
+  const isList = n => !!n && n.nodeType === 1 && (n.tagName === 'UL' || n.tagName === 'OL');
+  const BLOCK_TAGS = /^(P|DIV|H[1-6]|BLOCKQUOTE|TABLE|UL|OL|PRE|HR)$/;
+  const elOf = n => n && (n.nodeType === 1 ? n : n.parentElement);
+  function selRange(rte) {
+    const s = getSelection(); if (!s.rangeCount) return null;
+    const r = s.getRangeAt(0); return rte.contains(r.commonAncestorContainer) ? r : null;
+  }
+  // markierte Listenpunkte (nur die obersten – Unterpunkte bewegen sich mit ihrem Punkt)
+  function selLis(rte) {
+    const r = selRange(rte); if (!r) return [];
+    const a = elOf(r.startContainer).closest('li'), b = elOf(r.endContainer).closest('li');
+    if (r.collapsed || a === b) return a && rte.contains(a) ? [a] : [];
+    // Punkte, die die Markierung nur umschließen (Elternpunkt), zählen nicht – außer die Markierung beginnt in ihrem Text
+    const all = [...rte.querySelectorAll('li')].filter(li => r.intersectsNode(li) && (li === a || !li.contains(r.commonAncestorContainer)));
+    return all.filter(li => !all.some(o => o !== li && o.contains(li)));
+  }
+  // Auswahl über DOM-Umbauten hinweg erhalten (Textknoten bleiben dieselben)
+  function keepSel(rte, fn) {
+    const r = selRange(rte), pos = r && [r.startContainer, r.startOffset, r.endContainer, r.endOffset];
+    const fallback = r && (elOf(r.startContainer).closest('li,p,div') || null);
+    fn();
+    if (!pos) return;
+    const s = getSelection(), n = document.createRange();
+    try {
+      if (pos[0].isConnected && pos[2].isConnected) { n.setStart(pos[0], pos[1]); n.setEnd(pos[2], pos[3]); }
+      else { const t = fallback && fallback.isConnected ? fallback : rte; n.selectNodeContents(t); n.collapse(true); }
+      s.removeAllRanges(); s.addRange(n);
+    } catch { /* Auswahl nicht wiederherstellbar */ }
+  }
+  function indentLi(li) {
+    const prev = li.previousElementSibling, list = li.parentElement;
+    if (!prev || prev.tagName !== 'LI') return false; // der erste Punkt einer Ebene kann nicht tiefer (wie in Word)
+    let sub = prev.lastElementChild;
+    if (!isList(sub)) { sub = document.createElement(list.tagName); prev.appendChild(sub); }
+    sub.appendChild(li);
+    return true;
+  }
+  function outdentLi(li) {
+    const list = li.parentElement; if (!isList(list)) return false;
+    const outer = list.parentElement, after = [];
+    for (let n = li.nextElementSibling; n; n = n.nextElementSibling) after.push(n);
+    if (outer && outer.tagName === 'LI') {
+      // eine Ebene höher; folgende Punkte derselben Ebene werden Unterpunkte (Reihenfolge bleibt)
+      if (after.length) {
+        const last = li.lastElementChild;
+        const sub = isList(last) && last.tagName === list.tagName ? last : li.appendChild(document.createElement(list.tagName));
+        after.forEach(n => sub.appendChild(n));
+      }
+      outer.after(li);
+    } else {
+      // oberste Ebene → normaler Absatz; folgende Punkte bleiben eine eigene Liste darunter
+      let ref = list;
+      const put = n => { ref.after(n); ref = n; };
+      let p = null;
+      for (const n of [...li.childNodes]) {
+        if (n.nodeType === 1 && BLOCK_TAGS.test(n.tagName)) { p = null; put(n); }
+        else { if (!p) { p = document.createElement('p'); put(p); } p.appendChild(n); }
+      }
+      if (ref === list) { p = document.createElement('p'); p.appendChild(document.createElement('br')); put(p); }
+      if (after.length) {
+        const tail = document.createElement(list.tagName);
+        if (list.getAttribute('style')) tail.setAttribute('style', list.getAttribute('style'));
+        after.forEach(n => tail.appendChild(n)); put(tail);
+      }
+      li.remove();
+    }
+    if (!list.children.length) list.remove();
+    return true;
+  }
+  const toPx = v => { const m = String(v || '').match(/^(-?[\d.]+)(px|pt|em|cm|mm)?$/); if (!m) return 0; const f = { pt: 4 / 3, em: 16, cm: 37.8, mm: 3.78 }[m[2]] || 1; return parseFloat(m[1]) * f; };
+  function blockAt(rte) {
+    const r = selRange(rte); if (!r) return null;
+    const b = elOf(r.startContainer).closest('p,div,h1,h2,h3,h4,h5,h6,blockquote,pre');
+    return b && b !== rte && rte.contains(b) ? b : null;
+  }
+  // Absatz (außerhalb von Listen) ein-/ausrücken: Einzug als margin-left in 40-px-Schritten; entfernt auch Einzüge
+  // aus eingefügten Inhalten (pt/em, text-indent, blockquote)
+  function indentBlock(rte, dir) {
+    let b = blockAt(rte);
+    if (!b) { // Text direkt im Editor: Zeile in einen Absatz fassen
+      const r = selRange(rte); if (!r) return;
+      let top = r.startContainer === rte ? rte.childNodes[Math.min(r.startOffset, rte.childNodes.length - 1)] : r.startContainer;
+      while (top && top.parentNode !== rte) top = top.parentNode;
+      if (!top) return;
+      // zusammenhängende Inline-Inhalte (bis zum nächsten Zeilenumbruch/Block) in einen Absatz fassen
+      const line = [top];
+      for (let n = top.previousSibling; n && !(n.nodeType === 1 && (n.tagName === 'BR' || BLOCK_TAGS.test(n.tagName))); n = n.previousSibling) line.unshift(n);
+      for (let n = top.nextSibling; n && !(n.nodeType === 1 && BLOCK_TAGS.test(n.tagName)); n = n.nextSibling) { line.push(n); if (n.nodeType === 1 && n.tagName === 'BR') break; }
+      if (line.length === 1 && line[0].nodeType === 1 && BLOCK_TAGS.test(line[0].tagName)) return;
+      keepSel(rte, () => { b = document.createElement('div'); line[0].before(b); line.forEach(n => b.appendChild(n)); });
+    }
+    if (dir < 0) {
+      const bq = b.closest('blockquote');
+      if (bq && rte.contains(bq) && toPx(b.style.marginLeft) <= 0) { while (bq.firstChild) bq.before(bq.firstChild); bq.remove(); return; }
+      b.style.textIndent = '';
+    }
+    const cur = toPx(b.style.marginLeft) || toPx(b.style.paddingLeft);
+    const next = dir > 0 ? (Math.floor(cur / 40) + 1) * 40 : Math.max(0, Math.floor((cur - 40) / 40) * 40); // 40-px-Raster; 36pt → 0
+    b.style.paddingLeft = '';
+    b.style.marginLeft = next ? next + 'px' : '';
+    if (!b.getAttribute('style')) b.removeAttribute('style');
+  }
+  function indentSel(rte, dir) {
+    const lis = selLis(rte);
+    if (!lis.length) { indentBlock(rte, dir); return; }
+    keepSel(rte, () => (dir > 0 ? lis : [...lis].reverse()).forEach(li => (dir > 0 ? indentLi : outdentLi)(li)));
+  }
+  // Liste ein/aus bzw. Listenart wechseln (• ↔ 1.)
+  function toggleList(rte, tag) {
+    const lis = selLis(rte);
+    if (!lis.length) { document.execCommand(tag === 'UL' ? 'insertUnorderedList' : 'insertOrderedList'); return; }
+    const lists = [...new Set(lis.map(li => li.parentElement))];
+    if (lists.every(l => l.tagName === tag)) {
+      keepSel(rte, () => [...lis].reverse().forEach(li => { for (let i = 0; i < 10 && li.isConnected && isList(li.parentElement); i++) outdentLi(li); }));
+    } else keepSel(rte, () => lists.filter(l => l.tagName !== tag).forEach(l => {
+      const n = document.createElement(tag);
+      for (const a of [...l.attributes]) if (a.name !== 'type') n.setAttribute(a.name, a.value);
+      while (l.firstChild) n.appendChild(l.firstChild);
+      l.replaceWith(n);
+    }));
+  }
+  // Steht die Einfügemarke ganz am Anfang des Listenpunkts?
+  function atLiStart(rte) {
+    const s = getSelection(); if (!s.rangeCount || !s.isCollapsed) return null;
+    const li = elOf(s.anchorNode).closest('li'); if (!li || !rte.contains(li)) return null;
+    const r = document.createRange(); r.setStart(li, 0); r.setEnd(s.anchorNode, s.anchorOffset);
+    const frag = r.cloneContents();
+    return frag.textContent.replace(/[\u200b\ufeff]/g, '') === '' && !frag.querySelector('img,br') ? li : null;
+  }
+  const liEmpty = li => ![...li.childNodes].some(n => isList(n) || (n.nodeType === 1 && n.querySelector && n.querySelector('img')) || (n.nodeType === 1 && n.tagName === 'IMG') ||
+    String(n.textContent || '').replace(/[\u00a0\u200b\s]/g, '') !== '');
+  // Word-Listen (Absätze mit mso-list und Pseudo-Aufzählungszeichen) beim Einfügen in echte Listen umwandeln
+  function cleanWordLists(html) {
+    if (!/mso-list/i.test(html)) return html;
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    let top = null, stack = [];
+    for (const p of [...doc.querySelectorAll('p')]) {
+      const m = (p.getAttribute('style') || '').match(/mso-list:\s*l\d+\s+level(\d+)/i);
+      if (!m) { top = null; continue; }
+      const level = Math.max(1, Math.min(9, +m[1]));
+      const ign = [...p.querySelectorAll('span')].find(s => /mso-list:\s*ignore/i.test(s.getAttribute('style') || ''));
+      const marker = ign ? ign.textContent.replace(/\u00a0/g, ' ').trim() : '';
+      if (ign) { let par = ign.parentElement; ign.remove(); while (par && par !== p && !par.childNodes.length) { const up = par.parentElement; par.remove(); par = up; } }
+      const tag = /^(\d+|[a-z]|[ivxlcdm]+)[.)]$/i.test(marker) ? 'ol' : 'ul';
+      const li = doc.createElement('li');
+      while (p.firstChild) li.appendChild(p.firstChild);
+      if (!top || p.previousElementSibling !== top) { top = doc.createElement(tag); p.before(top); stack = [top]; }
+      while (stack.length > level) stack.pop();
+      while (stack.length < level) {
+        const cur = stack[stack.length - 1], host = cur.lastElementChild || cur.appendChild(doc.createElement('li'));
+        const sub = doc.createElement(tag); host.appendChild(sub); stack.push(sub);
+      }
+      stack[stack.length - 1].appendChild(li);
+      p.remove();
+    }
+    return doc.body.innerHTML;
+  }
+  // Tastatur, Einfügen und Listen-/Einzugsknöpfe für einen Editor. before(): z. B. gemerkte Auswahl wiederherstellen
+  function setupRte(rte, { toolbar = null, before = () => rte.focus(), after = () => rte.dispatchEvent(new Event('input', { bubbles: true })) } = {}) {
+    if (rte.dataset.rteReady) return; rte.dataset.rteReady = '1';
+    rte.addEventListener('keydown', e => {
+      if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); indentSel(rte, e.shiftKey ? -1 : 1); after(); return; }
+      if (e.key === 'Backspace' && !e.shiftKey && !e.ctrlKey) { const li = atLiStart(rte); if (li) { e.preventDefault(); keepSel(rte, () => outdentLi(li)); after(); } return; }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        const s = getSelection(), li = s.rangeCount && s.isCollapsed ? elOf(s.anchorNode).closest('li') : null;
+        if (li && rte.contains(li) && liEmpty(li)) { e.preventDefault(); keepSel(rte, () => outdentLi(li)); after(); }
+      }
+    });
+    rte.addEventListener('paste', async e => {
+      const items = [...(e.clipboardData?.items || [])];
+      const imgs = items.filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
+      if (imgs.length) {
+        e.preventDefault();
+        for (const f of imgs) await new Promise(res => { const fr = new FileReader(); fr.onload = () => { document.execCommand('insertHTML', false, `<img src="${fr.result}" alt="${esc(f.name || 'Bild')}">`); res(); }; fr.readAsDataURL(f); });
+        return;
+      }
+      const html = e.clipboardData?.getData('text/html');
+      if (html) { e.preventDefault(); document.execCommand('insertHTML', false, sanitize(cleanWordLists(html))); }
+    });
+    if (toolbar) toolbar.querySelectorAll('button[data-li]').forEach(b => b.addEventListener('mousedown', e => {
+      e.preventDefault(); before();
+      const a = b.dataset.li;
+      if (a === 'in' || a === 'out') indentSel(rte, a === 'in' ? 1 : -1); else toggleList(rte, a === 'ol' ? 'OL' : 'UL');
+      after();
+    }));
+  }
+  const LIST_BTNS = `<button type="button" data-li="ul" title="Aufzählung ein/aus">• Liste</button><button type="button" data-li="ol" title="Nummerierung ein/aus">1. Liste</button>
+    <button type="button" data-li="out" title="Einzug verringern (Umschalt+Tab; am Anfang eines Punkts auch Rücktaste)">⇤</button><button type="button" data-li="in" title="Einzug vergrößern (Tab)">⇥</button>`;
+  // Kleine Werkzeugleiste für Kommentar bearbeiten, Signatur, Textbausteine
+  function rteBar(rte) {
+    const tb = el('div', { className: 'tb' });
+    tb.innerHTML = `<button type="button" data-cmd="bold" title="Fett (Strg+B)"><b>F</b></button><button type="button" data-cmd="italic" title="Kursiv (Strg+I)"><i>K</i></button>
+      <button type="button" data-cmd="underline" title="Unterstrichen (Strg+U)"><u>U</u></button><span class="sep"></span>${LIST_BTNS}<span class="sep"></span>
+      <button type="button" data-cmd="removeFormat" title="Formatierung entfernen">✕ Format</button>`;
+    tb.querySelectorAll('button[data-cmd]').forEach(b => b.addEventListener('mousedown', e => { e.preventDefault(); rte.focus(); document.execCommand(b.dataset.cmd, false, null); }));
+    setupRte(rte, { toolbar: tb });
+    rte.before(tb);
+    return tb;
+  }
+
   // Wiederverwendbares Formular: Datum/Dauer/Kontaktart, Text-Editor, Abrechenbar, optional Mail & Anhänge
   function timeForm({ billableDefault: bd = false, allowZero = false, kontaktarten: ka = [], allowMail = false, allowFiles = false,
     mailDefaults = {}, kndId = null, suppressNotify = false, onRemoveSuppress = null, ticketDocs = [], onChange = null, allowOnsite = false }) {
@@ -2812,7 +3019,7 @@
         <select data-ref="fSize" title="Schriftgröße">${CFG.fontSizes.map(z => `<option value="${z}"${z === CFG.defaultFontSize ? ' selected' : ''}>${z} pt</option>`).join('')}</select>
         <button type="button" data-cmd="bold" title="Fett"><b>F</b></button><button type="button" data-cmd="italic" title="Kursiv"><i>K</i></button>
         <button type="button" data-cmd="underline" title="Unterstrichen"><u>U</u></button>
-        <button type="button" data-cmd="insertUnorderedList">• Liste</button><button type="button" data-cmd="insertOrderedList">1. Liste</button>
+        <span class="sep"></span>${LIST_BTNS}<span class="sep"></span>
         <button type="button" data-ref="tblBtn" title="Tabelle einfügen">⊞ Tabelle</button>
         <button type="button" data-tbl="row+" title="Zeile unter der aktuellen Zelle einfügen">+Zeile</button><button type="button" data-tbl="col+" title="Spalte rechts einfügen">+Spalte</button>
         <button type="button" data-tbl="row-" title="Aktuelle Zeile löschen">−Zeile</button><button type="button" data-tbl="col-" title="Aktuelle Spalte löschen">−Spalte</button>
@@ -2864,6 +3071,7 @@
     document.addEventListener('selectionchange', onSelChange); // meldet sich ab, sobald das Formular nicht mehr angezeigt wird
     const cmd = (c, v = null) => { restoreSel(); document.execCommand('styleWithCSS', false, true); document.execCommand(c, false, v); saveSel(); };
     w.querySelectorAll('.tb button[data-cmd]').forEach(b => b.addEventListener('mousedown', e => { e.preventDefault(); cmd(b.dataset.cmd); }));
+    setupRte(rte, { toolbar: w.querySelector('.tb'), before: restoreSel, after: () => { saveSel(); rte.dispatchEvent(new Event('input', { bubbles: true })); } });
     $('fFont', w).addEventListener('change', e => cmd('fontName', e.target.value));
     $('fSize', w).addEventListener('change', e => {
       // execCommand kennt nur Stufen 1–7 → Stufe 7 setzen und durch echte pt-Größe ersetzen
@@ -2899,13 +3107,6 @@
       const fr = new FileReader();
       fr.onload = () => { rte.focus(); document.execCommand('insertHTML', false, `<img src="${fr.result}" alt="${esc(file.name || 'Bild')}">`); res(); };
       fr.readAsDataURL(file);
-    });
-    rte.addEventListener('paste', async e => {
-      const items = [...(e.clipboardData?.items || [])];
-      const imgs = items.filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
-      if (imgs.length) { e.preventDefault(); for (const f of imgs) await insertImage(f); return; }
-      const html = e.clipboardData?.getData('text/html');
-      if (html) { e.preventDefault(); document.execCommand('insertHTML', false, sanitize(html)); }
     });
 
     // Signatur & Textbausteine
@@ -3377,24 +3578,10 @@
     c.querySelector('[data-a=name]').value = b.name || '';
     c.querySelector('[data-a=html]').innerHTML = sanitize(b.html || '');
     c.querySelector('[data-a=del]').addEventListener('click', () => c.remove());
-    enablePaste(c.querySelector('[data-a=html]'));
+    rteBar(c.querySelector('[data-a=html]'));
     box.appendChild(c);
   }
-  // Einfügen in einfache Editoren: Bilder als eingebettete Bilder, HTML entschärft
-  function enablePaste(ed) {
-    ed.addEventListener('paste', e => {
-      const items = [...(e.clipboardData?.items || [])];
-      const imgs = items.filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
-      if (imgs.length) {
-        e.preventDefault();
-        imgs.forEach(f => { const fr = new FileReader(); fr.onload = () => document.execCommand('insertHTML', false, `<img src="${fr.result}">`); fr.readAsDataURL(f); });
-        return;
-      }
-      const html = e.clipboardData?.getData('text/html');
-      if (html) { e.preventDefault(); document.execCommand('insertHTML', false, sanitize(html)); }
-    });
-  }
-  enablePaste($('stSig'));
+  rteBar($('stSig'));
   $('stTheme').addEventListener('change', () => { saveSettings({ ...settings(), theme: $('stTheme').value }); applyTheme(); });
 
   // Dark Mode: automatisch nach System oder fest hell/dunkel
