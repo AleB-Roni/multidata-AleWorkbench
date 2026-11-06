@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.6.1.9
+// @version      1.6.1.10
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1197,7 +1197,8 @@
   #mdqt-panel input[type=text],#mdqt-panel input[type=date],#mdqt-panel input[type=time],#mdqt-panel select,#mdqt-panel textarea,#mdqt-panel .rte{
     width:100%;border:1px solid var(--mq-border);border-radius:4px;padding:5px 7px;font:13px inherit;font-family:inherit;background:var(--mq-input) !important;color:var(--mq-fg) !important}
   #mdqt-panel textarea{min-height:64px;resize:vertical}
-  #mdqt-panel .rte{min-height:70px;max-height:260px;overflow:auto}
+  #mdqt-panel .rte{min-height:70px;max-height:300px;overflow:auto;resize:vertical}
+  #mdqt-panel .tb button.on{background:var(--mq-accent-soft);border-color:#00897b}
   #mdqt-panel .rte:focus{outline:2px solid #80cbc4}
   #mdqt-panel input[type=checkbox]{appearance:auto !important;-webkit-appearance:checkbox !important;width:15px;height:15px;margin:0;accent-color:#00897b;flex:none}
   #mdqt-panel .row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
@@ -2741,7 +2742,7 @@
     $('eAbr', card).value = c.INABR_STD ?? '';
     if (WEG_OK) $('eOnsite', card).checked = isOnsite(c);
     $('eTxt', card).innerHTML = sanitize(c.NOTIZ);
-    rteBar($('eTxt', card));
+    rteBar($('eTxt', card), 'edit');
     const origHtml = $('eTxt', card).innerHTML;
     const sync = () => {
       const man = $('eMan', card).checked;
@@ -2780,15 +2781,28 @@
     return card;
   }
 
-  // --- Texteditor: Listen, Einzüge, Einfügen (für alle Editoren der Werkbank) ---
-  // Eigene Umsetzung statt execCommand('indent'/'outdent'): die Browser-Befehle verhalten sich bei verschachtelten Listen
-  // und bei eingefügten Word-/Outlook-Inhalten unzuverlässig (Einzüge lassen sich dann nicht mehr entfernen).
+  // --- Texteditor (alle Editoren der Werkbank): Listen, Einzüge, Einfügen, Rückgängig ---
+  // Listen und Einzüge setzt die Werkbank selbst um statt mit execCommand('indent'/'outdent'): die Browser-Befehle verhalten
+  // sich bei verschachtelten Listen und eingefügten Word-/Web-Inhalten unzuverlässig. Weil der Browser solche Änderungen nicht
+  // kennt, hat der Editor ein eigenes Rückgängig/Wiederholen (Strg+Z / Strg+Y).
   const isList = n => !!n && n.nodeType === 1 && (n.tagName === 'UL' || n.tagName === 'OL');
   const BLOCK_TAGS = /^(P|DIV|H[1-6]|BLOCKQUOTE|TABLE|UL|OL|PRE|HR)$/;
   const elOf = n => n && (n.nodeType === 1 ? n : n.parentElement);
+  const nodeLen = n => n.nodeType === 3 ? n.length : n.childNodes.length;
   function selRange(rte) {
     const s = getSelection(); if (!s.rangeCount) return null;
     const r = s.getRangeAt(0); return rte.contains(r.commonAncestorContainer) ? r : null;
+  }
+  function setCaret(node, off = 0) {
+    const r = document.createRange(), s = getSelection();
+    r.setStart(node, Math.min(off, nodeLen(node))); r.collapse(true);
+    s.removeAllRanges(); s.addRange(r);
+  }
+  // Einfügemarke an den Anfang des ersten Textes in el (bzw. an den Anfang von el)
+  function caretInto(el) {
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const t = w.nextNode();
+    if (t) setCaret(t, 0); else setCaret(el, 0);
   }
   // markierte Listenpunkte (nur die obersten – Unterpunkte bewegen sich mit ihrem Punkt)
   function selLis(rte) {
@@ -2799,31 +2813,38 @@
     const all = [...rte.querySelectorAll('li')].filter(li => r.intersectsNode(li) && (li === a || !li.contains(r.commonAncestorContainer)));
     return all.filter(li => !all.some(o => o !== li && o.contains(li)));
   }
-  // Auswahl über DOM-Umbauten hinweg erhalten (Textknoten bleiben dieselben)
+  // Auswahl über DOM-Umbauten hinweg erhalten. fn() gibt das Element zurück, in dem die Einfügemarke landen soll,
+  // falls ihr bisheriger Ort beim Umbau entfernt wurde (z. B. leerer Listenpunkt → neuer Absatz).
   function keepSel(rte, fn) {
     const r = selRange(rte), pos = r && [r.startContainer, r.startOffset, r.endContainer, r.endOffset];
-    const fallback = r && (elOf(r.startContainer).closest('li,p,div') || null);
-    fn();
-    if (!pos) return;
-    const s = getSelection(), n = document.createRange();
+    const landing = fn();
     try {
-      if (pos[0].isConnected && pos[2].isConnected) { n.setStart(pos[0], pos[1]); n.setEnd(pos[2], pos[3]); }
-      else { const t = fallback && fallback.isConnected ? fallback : rte; n.selectNodeContents(t); n.collapse(true); }
-      s.removeAllRanges(); s.addRange(n);
+      if (pos && pos[0].isConnected && pos[2].isConnected && rte.contains(pos[0])) {
+        const n = document.createRange(); n.setStart(pos[0], Math.min(pos[1], nodeLen(pos[0]))); n.setEnd(pos[2], Math.min(pos[3], nodeLen(pos[2])));
+        const s = getSelection(); s.removeAllRanges(); s.addRange(n);
+      } else if (landing && landing.isConnected) caretInto(landing);
     } catch { /* Auswahl nicht wiederherstellbar */ }
+  }
+  // Art einer neuen Unterebene: wie andere Unterlisten dieser Liste, sonst Aufzählung (•)
+  function subListTag(list) {
+    for (const li of list.children) { const s = [...li.children].find(isList); if (s) return s.tagName; }
+    return 'UL';
   }
   function indentLi(li) {
     const prev = li.previousElementSibling, list = li.parentElement;
-    if (!prev || prev.tagName !== 'LI') return false; // der erste Punkt einer Ebene kann nicht tiefer (wie in Word)
+    if (!prev || prev.tagName !== 'LI') return null; // der erste Punkt einer Ebene kann nicht tiefer (wie in Word)
     let sub = prev.lastElementChild;
-    if (!isList(sub)) { sub = document.createElement(list.tagName); prev.appendChild(sub); }
+    if (!isList(sub)) { sub = document.createElement(subListTag(list)); prev.appendChild(sub); }
     sub.appendChild(li);
-    return true;
+    // eigene Unterpunkte von li, die nun gleichrangig mit li wären, bleiben unter li
+    return li;
   }
+  // gibt das Element zurück, in dem der Punkt danach steht (verschobener Punkt oder neuer Absatz)
   function outdentLi(li) {
-    const list = li.parentElement; if (!isList(list)) return false;
+    const list = li.parentElement; if (!isList(list)) return null;
     const outer = list.parentElement, after = [];
     for (let n = li.nextElementSibling; n; n = n.nextElementSibling) after.push(n);
+    let landing = li;
     if (outer && outer.tagName === 'LI') {
       // eine Ebene höher; folgende Punkte derselben Ebene werden Unterpunkte (Reihenfolge bleibt)
       if (after.length) {
@@ -2834,23 +2855,27 @@
       outer.after(li);
     } else {
       // oberste Ebene → normaler Absatz; folgende Punkte bleiben eine eigene Liste darunter
-      let ref = list;
-      const put = n => { ref.after(n); ref = n; };
-      let p = null;
+      let ref = list, p = null; landing = null;
+      const put = n => { ref.after(n); ref = n; if (!landing) landing = n; };
       for (const n of [...li.childNodes]) {
         if (n.nodeType === 1 && BLOCK_TAGS.test(n.tagName)) { p = null; put(n); }
         else { if (!p) { p = document.createElement('p'); put(p); } p.appendChild(n); }
       }
-      if (ref === list) { p = document.createElement('p'); p.appendChild(document.createElement('br')); put(p); }
+      if (!landing || !landing.textContent.trim() && !landing.querySelector?.('img,br')) {
+        if (!landing) { p = document.createElement('p'); put(p); }
+        if (!landing.querySelector('br') && !landing.textContent.trim()) landing.appendChild(document.createElement('br'));
+      }
       if (after.length) {
         const tail = document.createElement(list.tagName);
-        if (list.getAttribute('style')) tail.setAttribute('style', list.getAttribute('style'));
+        for (const a of [...list.attributes]) if (a.name !== 'start') tail.setAttribute(a.name, a.value);
+        // Nummerierung fortsetzen: neue Liste beginnt mit der nächsten Nummer
+        if (list.tagName === 'OL') tail.setAttribute('start', String((Number(list.getAttribute('start')) || 1) + [...list.children].indexOf(li)));
         after.forEach(n => tail.appendChild(n)); put(tail);
       }
       li.remove();
     }
     if (!list.children.length) list.remove();
-    return true;
+    return landing;
   }
   const toPx = v => { const m = String(v || '').match(/^(-?[\d.]+)(px|pt|em|cm|mm)?$/); if (!m) return 0; const f = { pt: 4 / 3, em: 16, cm: 37.8, mm: 3.78 }[m[2]] || 1; return parseFloat(m[1]) * f; };
   function blockAt(rte) {
@@ -2858,7 +2883,7 @@
     const b = elOf(r.startContainer).closest('p,div,h1,h2,h3,h4,h5,h6,blockquote,pre');
     return b && b !== rte && rte.contains(b) ? b : null;
   }
-  // Absatz (außerhalb von Listen) ein-/ausrücken: Einzug als margin-left in 40-px-Schritten; entfernt auch Einzüge
+  // Absatz (außerhalb von Listen) ein-/ausrücken: Einzug als margin-left im 40-px-Raster; entfernt auch Einzüge
   // aus eingefügten Inhalten (pt/em, text-indent, blockquote)
   function indentBlock(rte, dir) {
     let b = blockAt(rte);
@@ -2866,21 +2891,19 @@
       const r = selRange(rte); if (!r) return;
       let top = r.startContainer === rte ? rte.childNodes[Math.min(r.startOffset, rte.childNodes.length - 1)] : r.startContainer;
       while (top && top.parentNode !== rte) top = top.parentNode;
-      if (!top) return;
-      // zusammenhängende Inline-Inhalte (bis zum nächsten Zeilenumbruch/Block) in einen Absatz fassen
+      if (!top || (top.nodeType === 1 && BLOCK_TAGS.test(top.tagName))) return;
       const line = [top];
       for (let n = top.previousSibling; n && !(n.nodeType === 1 && (n.tagName === 'BR' || BLOCK_TAGS.test(n.tagName))); n = n.previousSibling) line.unshift(n);
       for (let n = top.nextSibling; n && !(n.nodeType === 1 && BLOCK_TAGS.test(n.tagName)); n = n.nextSibling) { line.push(n); if (n.nodeType === 1 && n.tagName === 'BR') break; }
-      if (line.length === 1 && line[0].nodeType === 1 && BLOCK_TAGS.test(line[0].tagName)) return;
-      keepSel(rte, () => { b = document.createElement('div'); line[0].before(b); line.forEach(n => b.appendChild(n)); });
+      keepSel(rte, () => { b = document.createElement('p'); line[0].before(b); line.forEach(n => b.appendChild(n)); return b; });
     }
     if (dir < 0) {
       const bq = b.closest('blockquote');
-      if (bq && rte.contains(bq) && toPx(b.style.marginLeft) <= 0) { while (bq.firstChild) bq.before(bq.firstChild); bq.remove(); return; }
+      if (bq && rte.contains(bq) && toPx(b.style.marginLeft) <= 0) { keepSel(rte, () => { const f = bq.firstChild; while (bq.firstChild) bq.before(bq.firstChild); bq.remove(); return f; }); return; }
       b.style.textIndent = '';
     }
     const cur = toPx(b.style.marginLeft) || toPx(b.style.paddingLeft);
-    const next = dir > 0 ? (Math.floor(cur / 40) + 1) * 40 : Math.max(0, Math.floor((cur - 40) / 40) * 40); // 40-px-Raster; 36pt → 0
+    const next = dir > 0 ? (Math.floor(cur / 40) + 1) * 40 : Math.max(0, Math.floor((cur - 40) / 40) * 40); // 36pt → 0
     b.style.paddingLeft = '';
     b.style.marginLeft = next ? next + 'px' : '';
     if (!b.getAttribute('style')) b.removeAttribute('style');
@@ -2888,21 +2911,37 @@
   function indentSel(rte, dir) {
     const lis = selLis(rte);
     if (!lis.length) { indentBlock(rte, dir); return; }
-    keepSel(rte, () => (dir > 0 ? lis : [...lis].reverse()).forEach(li => (dir > 0 ? indentLi : outdentLi)(li)));
+    keepSel(rte, () => { let land = null; for (const li of (dir > 0 ? lis : [...lis].reverse())) land = (dir > 0 ? indentLi : outdentLi)(li) || land; return land; });
+  }
+  // Chrome legt eine neue Liste in einem Absatz an (<p><ol>…</ol></p>) – ungültig und beim Speichern zerrissen: Liste herausziehen
+  function listsOutOfP(rte) {
+    let first = null;
+    for (const list of [...rte.querySelectorAll('p > ul, p > ol')]) {
+      const p = list.parentElement; if (!rte.contains(p)) continue;
+      const rest = []; for (let n = list.nextSibling; n; n = n.nextSibling) rest.push(n);
+      p.after(list);
+      if (rest.some(n => n.textContent.trim() || (n.nodeType === 1 && n.querySelector?.('img')))) { const q = p.cloneNode(false); rest.forEach(n => q.appendChild(n)); list.after(q); } else rest.forEach(n => n.remove());
+      if (!p.textContent.trim() && !p.querySelector('img')) p.remove();
+      first = first || list;
+    }
+    return first;
   }
   // Liste ein/aus bzw. Listenart wechseln (• ↔ 1.)
   function toggleList(rte, tag) {
     const lis = selLis(rte);
-    if (!lis.length) { document.execCommand(tag === 'UL' ? 'insertUnorderedList' : 'insertOrderedList'); return; }
+    if (!lis.length) { document.execCommand(tag === 'UL' ? 'insertUnorderedList' : 'insertOrderedList'); keepSel(rte, () => listsOutOfP(rte)); return; }
     const lists = [...new Set(lis.map(li => li.parentElement))];
     if (lists.every(l => l.tagName === tag)) {
-      keepSel(rte, () => [...lis].reverse().forEach(li => { for (let i = 0; i < 10 && li.isConnected && isList(li.parentElement); i++) outdentLi(li); }));
-    } else keepSel(rte, () => lists.filter(l => l.tagName !== tag).forEach(l => {
-      const n = document.createElement(tag);
-      for (const a of [...l.attributes]) if (a.name !== 'type') n.setAttribute(a.name, a.value);
-      while (l.firstChild) n.appendChild(l.firstChild);
-      l.replaceWith(n);
-    }));
+      keepSel(rte, () => { let land = null; [...lis].reverse().forEach(li => { let cur = li; for (let i = 0; i < 10 && cur && cur.tagName === 'LI' && isList(cur.parentElement); i++) cur = outdentLi(cur); land = cur || land; }); return land; });
+    } else keepSel(rte, () => {
+      lists.filter(l => l.tagName !== tag).forEach(l => {
+        const n = document.createElement(tag);
+        for (const a of [...l.attributes]) if (a.name !== 'type' && a.name !== 'start') n.setAttribute(a.name, a.value);
+        while (l.firstChild) n.appendChild(l.firstChild);
+        l.replaceWith(n);
+      });
+      return lis[0];
+    });
   }
   // Steht die Einfügemarke ganz am Anfang des Listenpunkts?
   function atLiStart(rte) {
@@ -2912,9 +2951,18 @@
     const frag = r.cloneContents();
     return frag.textContent.replace(/[\u200b\ufeff]/g, '') === '' && !frag.querySelector('img,br') ? li : null;
   }
-  const liEmpty = li => ![...li.childNodes].some(n => isList(n) || (n.nodeType === 1 && n.querySelector && n.querySelector('img')) || (n.nodeType === 1 && n.tagName === 'IMG') ||
+  const liEmpty = li => ![...li.childNodes].some(n => isList(n) || (n.nodeType === 1 && (n.tagName === 'IMG' || (n.querySelector && n.querySelector('img')))) ||
     String(n.textContent || '').replace(/[\u00a0\u200b\s]/g, '') !== '');
-  // Word-Listen (Absätze mit mso-list und Pseudo-Aufzählungszeichen) beim Einfügen in echte Listen umwandeln
+  // Tab in Tabellen: zur nächsten/vorigen Zelle
+  function tabCell(rte, back) {
+    const r = selRange(rte), cell = r && elOf(r.startContainer).closest('td,th');
+    if (!cell || !rte.contains(cell)) return false;
+    const cells = [...cell.closest('table').querySelectorAll('td,th')], i = cells.indexOf(cell), next = cells[i + (back ? -1 : 1)];
+    if (next) { const sel = getSelection(), rr = document.createRange(); rr.selectNodeContents(next); sel.removeAllRanges(); sel.addRange(rr); }
+    return true;
+  }
+
+  // --- Einfügen: Word-Listen in echte Listen, Fremdformatierung entfernen ---
   function cleanWordLists(html) {
     if (!/mso-list/i.test(html)) return html;
     const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -2940,46 +2988,179 @@
     }
     return doc.body.innerHTML;
   }
-  // Tastatur, Einfügen und Listen-/Einzugsknöpfe für einen Editor. before(): z. B. gemerkte Auswahl wiederherstellen
-  function setupRte(rte, { toolbar = null, before = () => rte.focus(), after = () => rte.dispatchEvent(new Event('input', { bubbles: true })) } = {}) {
-    if (rte.dataset.rteReady) return; rte.dataset.rteReady = '1';
+  const rgbOf = c => { const m = String(c || '').match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+))?/i); return m ? [+m[1], +m[2], +m[3], m[4] == null ? 1 : +m[4]] : null; };
+  // Fremde Formatierung beim Einfügen entfernen (Schriftart, -größe, Abstände, Zeilenhöhe …), damit der Text wie der eigene
+  // aussieht und beim Weiterschreiben nichts „mitwandert“. Fett/kursiv/unterstrichen, Farben, Ausrichtung, Listen,
+  // Tabellen, Links und Bilder bleiben.
+  function cleanPaste(html) {
+    const doc = new DOMParser().parseFromString(cleanWordLists(html), 'text/html');
+    const unwrap = n => { while (n.firstChild) n.before(n.firstChild); n.remove(); };
+    doc.querySelectorAll('b[id^="docs-internal-guid"],span[id^="docs-internal-guid"]').forEach(unwrap); // Google Docs
+    try { doc.querySelectorAll('o\\:p, xml, meta, style, title, colgroup').forEach(n => n.remove()); } catch { /* ignore */ }
+    for (const n of [...doc.body.querySelectorAll('*')]) {
+      const st = n.style, tag = n.tagName;
+      const fw = st.fontWeight, bold = /^(bold|bolder|[6-9]00)$/.test(fw), notBold = /^(normal|[1-4]00)$/.test(fw);
+      const ital = st.fontStyle === 'italic', und = /underline/.test(st.textDecoration || st.textDecorationLine || '');
+      const keep = [];
+      const col = rgbOf(st.color); if (col && col[3] > 0 && Math.max(col[0], col[1], col[2]) - Math.min(col[0], col[1], col[2]) > 40) keep.push(`color:${st.color}`); // nur farbiger Text, kein Grau/Schwarz/Weiß
+      const bg = rgbOf(st.backgroundColor); if (bg && bg[3] > 0.05 && bg[0] + bg[1] + bg[2] < 735) keep.push(`background-color:${st.backgroundColor}`);
+      if (/^(center|right|justify)$/.test(st.textAlign) && /^(P|DIV|TD|TH|H[1-6])$/.test(tag)) keep.push(`text-align:${st.textAlign}`);
+      if (/^(TD|TH|TABLE)$/.test(tag)) for (const k of ['border', 'border-top', 'border-bottom', 'border-left', 'border-right', 'padding', 'border-collapse', 'vertical-align', 'width'])
+        if (st.getPropertyValue(k)) keep.push(`${k}:${st.getPropertyValue(k)}`);
+      for (const a of [...n.attributes]) if (!/^(href|src|alt|title|colspan|rowspan|width|height|start|type|dir|target)$/i.test(a.name)) n.removeAttribute(a.name);
+      if (keep.length) n.setAttribute('style', keep.join(';'));
+      if ((tag === 'B' || tag === 'STRONG') && notBold) { unwrap(n); continue; }
+      const wrapIn = t => { const w = doc.createElement(t); while (n.firstChild) w.appendChild(n.firstChild); n.appendChild(w); };
+      if (bold && !/^(B|STRONG|H[1-6]|TH)$/.test(tag)) wrapIn('b');
+      if (ital && !/^(I|EM)$/.test(tag)) wrapIn('i');
+      if (und && tag !== 'U' && tag !== 'A') wrapIn('u');
+      if ((tag === 'SPAN' || tag === 'FONT') && !n.attributes.length) unwrap(n);
+    }
+    // Absätze in Listenpunkten auflösen (aus Dokument-Editoren): sonst erzeugt Enter keinen neuen Punkt, sondern eine Zeile im selben
+    for (const li of [...doc.body.querySelectorAll('li')]) {
+      const ps = [...li.children].filter(c => c.tagName === 'P' || c.tagName === 'DIV');
+      ps.forEach((pp, i) => { if (i && pp.previousSibling && !(pp.previousSibling.nodeType === 1 && /^(UL|OL|BR)$/.test(pp.previousSibling.tagName))) pp.before(doc.createElement('br')); unwrap(pp); });
+    }
+    // leere Absätze am Anfang/Ende des eingefügten Inhalts weglassen
+    for (const pick of [b => b.firstElementChild, b => b.lastElementChild]) {
+      let e; while ((e = pick(doc.body)) && /^(P|DIV)$/.test(e.tagName) && !e.textContent.trim() && !e.querySelector('img,table')) e.remove();
+    }
+    return sanitize(doc.body.innerHTML);
+  }
+
+  // --- Rückgängig / Wiederholen (Stand + Einfügemarke) ---
+  function undoManager(rte) {
+    const undo = [], redo = []; let open = false, timer = null;
+    const path = node => { const p = []; while (node && node !== rte) { if (!node.parentNode) return null; p.unshift([...node.parentNode.childNodes].indexOf(node)); node = node.parentNode; } return node === rte ? p : null; };
+    const resolve = p => { let n = rte; for (const i of p || []) { n = n.childNodes[i]; if (!n) return null; } return n; };
+    const snap = () => { const r = selRange(rte); return { html: rte.innerHTML, sel: r ? [path(r.startContainer), r.startOffset, path(r.endContainer), r.endOffset] : null }; };
+    const restore = st => {
+      rte.innerHTML = st.html;
+      try {
+        const a = st.sel && resolve(st.sel[0]), b = st.sel && resolve(st.sel[2]);
+        if (a && b) { const r = document.createRange(); r.setStart(a, Math.min(st.sel[1], nodeLen(a))); r.setEnd(b, Math.min(st.sel[3], nodeLen(b))); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+        else caretInto(rte);
+      } catch { /* ignore */ }
+      rte.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const checkpoint = () => {
+      open = false; clearTimeout(timer);
+      const s = snap(), top = undo[undo.length - 1];
+      if (!top || top.html !== s.html) { undo.push(s); if (undo.length > 200) undo.shift(); }
+      redo.length = 0;
+    };
+    const doUndo = () => { open = false; const cur = snap(); while (undo.length && undo[undo.length - 1].html === cur.html) undo.pop(); if (!undo.length) return; redo.push(cur); restore(undo.pop()); };
+    const doRedo = () => { open = false; if (!redo.length) return; undo.push(snap()); restore(redo.pop()); };
+    // Tippen: ein Rückgängig-Schritt je Eingabe-Pause bzw. je Wort/Zeile
+    rte.addEventListener('beforeinput', e => {
+      if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') { e.preventDefault(); (e.inputType === 'historyUndo' ? doUndo : doRedo)(); return; }
+      const brk = /insertParagraph|insertLineBreak|insertFromPaste|insertFromDrop|delete(Content|Word|Soft|Hard)|format/.test(e.inputType) || e.data === ' ';
+      if (!open || brk) { checkpoint(); open = !brk; }
+      clearTimeout(timer); timer = setTimeout(() => { open = false; }, 800);
+    });
     rte.addEventListener('keydown', e => {
-      if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); indentSel(rte, e.shiftKey ? -1 : 1); after(); return; }
-      if (e.key === 'Backspace' && !e.shiftKey && !e.ctrlKey) { const li = atLiStart(rte); if (li) { e.preventDefault(); keepSel(rte, () => outdentLi(li)); after(); } return; }
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); doUndo(); }
+      else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); doRedo(); }
+    });
+    rte.addEventListener('mousedown', () => { open = false; });
+    return { checkpoint, undo: doUndo, redo: doRedo };
+  }
+
+  // --- Größe des Textfelds: unten rechts ziehen; die Größe wird je Editor-Art gemerkt ---
+  function resizable(rte, key) {
+    if (!key) return;
+    const all = () => store.get('mdqt.rteSize', {});
+    const h = all()[key];
+    if (h) { rte.style.height = h + 'px'; rte.style.maxHeight = 'none'; }
+    rte.addEventListener('mousedown', e => { // Griff unten rechts: Begrenzung aufheben, damit man größer ziehen kann
+      const b = rte.getBoundingClientRect();
+      if (e.clientX > b.right - 20 && e.clientY > b.bottom - 20) { rte.style.maxHeight = 'none'; rte.dataset.resizing = '1'; }
+    });
+    document.addEventListener('mouseup', function up() {
+      if (!rte.isConnected) { document.removeEventListener('mouseup', up); return; }
+      if (!rte.dataset.resizing) return; delete rte.dataset.resizing;
+      const v = Math.round(rte.getBoundingClientRect().height); if (v > 40) store.set('mdqt.rteSize', { ...all(), [key]: v });
+    });
+  }
+
+  // --- Alles zusammen: Tastatur, Einfügen, Werkzeugleiste, Rückgängig, Größe ---
+  // before(): z. B. gemerkte Auswahl wiederherstellen (Werkzeugleiste mit Auswahlfeldern nimmt den Fokus)
+  function setupRte(rte, { toolbar = null, before = () => rte.focus(), after = () => rte.dispatchEvent(new Event('input', { bubbles: true })), sizeKey = null } = {}) {
+    if (rte.dataset.rteReady) return rte._um; rte.dataset.rteReady = '1';
+    const um = rte._um = undoManager(rte);
+    const op = fn => { um.checkpoint(); fn(); after(); };
+    // Enter erzeugt <p> (wie in der Anzeige); beim Verlassen zurück auf den Browser-Standard (andere Editoren der Seite)
+    rte.addEventListener('focus', () => { try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch { /* ignore */ } });
+    rte.addEventListener('blur', () => { try { document.execCommand('defaultParagraphSeparator', false, 'div'); } catch { /* ignore */ } });
+    rte.addEventListener('keydown', e => {
+      if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        if (tabCell(rte, e.shiftKey)) return;
+        op(() => indentSel(rte, e.shiftKey ? -1 : 1)); return;
+      }
+      if (e.key === 'Backspace' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        const li = atLiStart(rte); if (li) { e.preventDefault(); op(() => keepSel(rte, () => outdentLi(li))); }
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
         const s = getSelection(), li = s.rangeCount && s.isCollapsed ? elOf(s.anchorNode).closest('li') : null;
-        if (li && rte.contains(li) && liEmpty(li)) { e.preventDefault(); keepSel(rte, () => outdentLi(li)); after(); }
+        if (li && rte.contains(li) && liEmpty(li)) { e.preventDefault(); op(() => keepSel(rte, () => outdentLi(li))); }
       }
     });
     rte.addEventListener('paste', async e => {
       const items = [...(e.clipboardData?.items || [])];
       const imgs = items.filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
-      if (imgs.length) {
-        e.preventDefault();
-        for (const f of imgs) await new Promise(res => { const fr = new FileReader(); fr.onload = () => { document.execCommand('insertHTML', false, `<img src="${fr.result}" alt="${esc(f.name || 'Bild')}">`); res(); }; fr.readAsDataURL(f); });
-        return;
-      }
       const html = e.clipboardData?.getData('text/html');
-      if (html) { e.preventDefault(); document.execCommand('insertHTML', false, sanitize(cleanWordLists(html))); }
-    });
-    if (toolbar) toolbar.querySelectorAll('button[data-li]').forEach(b => b.addEventListener('mousedown', e => {
-      e.preventDefault(); before();
-      const a = b.dataset.li;
-      if (a === 'in' || a === 'out') indentSel(rte, a === 'in' ? 1 : -1); else toggleList(rte, a === 'ol' ? 'OL' : 'UL');
+      if (!imgs.length && !html) return; // reiner Text: Browser fügt ein
+      e.preventDefault(); um.checkpoint();
+      if (imgs.length && !html) {
+        for (const f of imgs) await new Promise(res => { const fr = new FileReader(); fr.onload = () => { document.execCommand('insertHTML', false, `<img src="${fr.result}" alt="${esc(f.name || 'Bild')}">`); res(); }; fr.readAsDataURL(f); });
+      } else document.execCommand('insertHTML', false, cleanPaste(html));
       after();
-    }));
+    });
+    resizable(rte, sizeKey);
+    if (toolbar) {
+      toolbar.querySelectorAll('button[data-li]').forEach(b => b.addEventListener('mousedown', e => {
+        e.preventDefault(); before();
+        const a = b.dataset.li;
+        op(() => { if (a === 'in' || a === 'out') indentSel(rte, a === 'in' ? 1 : -1); else toggleList(rte, a === 'ol' ? 'OL' : 'UL'); });
+        syncBar();
+      }));
+      // Knöpfe zeigen den Zustand an der Einfügemarke (fett, Liste …)
+      const syncBar = () => {
+        const r = selRange(rte); if (!r) return;
+        const at = elOf(r.startContainer), list = at.closest('ul,ol');
+        for (const b of toolbar.querySelectorAll('button[data-cmd]')) {
+          if (!/^(bold|italic|underline)$/.test(b.dataset.cmd)) continue;
+          let on = false; try { on = document.queryCommandState(b.dataset.cmd); } catch { /* ignore */ }
+          b.classList.toggle('on', !!on);
+        }
+        toolbar.querySelectorAll('button[data-li=ul],button[data-li=ol]').forEach(b => b.classList.toggle('on', !!list && rte.contains(list) && list.tagName === b.dataset.li.toUpperCase()));
+      };
+      let seen = false;
+      const onSel = () => {
+        if (rte.isConnected) seen = true; else if (seen) { document.removeEventListener('selectionchange', onSel); return; }
+        if (rte.contains(getSelection().anchorNode)) syncBar();
+      };
+      document.addEventListener('selectionchange', onSel);
+    }
+    return um;
   }
   const LIST_BTNS = `<button type="button" data-li="ul" title="Aufzählung ein/aus">• Liste</button><button type="button" data-li="ol" title="Nummerierung ein/aus">1. Liste</button>
     <button type="button" data-li="out" title="Einzug verringern (Umschalt+Tab; am Anfang eines Punkts auch Rücktaste)">⇤</button><button type="button" data-li="in" title="Einzug vergrößern (Tab)">⇥</button>`;
   // Kleine Werkzeugleiste für Kommentar bearbeiten, Signatur, Textbausteine
-  function rteBar(rte) {
+  function rteBar(rte, sizeKey = null) {
     const tb = el('div', { className: 'tb' });
     tb.innerHTML = `<button type="button" data-cmd="bold" title="Fett (Strg+B)"><b>F</b></button><button type="button" data-cmd="italic" title="Kursiv (Strg+I)"><i>K</i></button>
       <button type="button" data-cmd="underline" title="Unterstrichen (Strg+U)"><u>U</u></button><span class="sep"></span>${LIST_BTNS}<span class="sep"></span>
       <button type="button" data-cmd="removeFormat" title="Formatierung entfernen">✕ Format</button>`;
-    tb.querySelectorAll('button[data-cmd]').forEach(b => b.addEventListener('mousedown', e => { e.preventDefault(); rte.focus(); document.execCommand(b.dataset.cmd, false, null); }));
-    setupRte(rte, { toolbar: tb });
     rte.before(tb);
+    const um = setupRte(rte, { toolbar: tb, sizeKey });
+    tb.querySelectorAll('button[data-cmd]').forEach(b => b.addEventListener('mousedown', e => {
+      e.preventDefault(); rte.focus(); um.checkpoint(); document.execCommand(b.dataset.cmd, false, null); rte.dispatchEvent(new Event('input', { bubbles: true }));
+    }));
     return tb;
   }
 
@@ -3069,9 +3250,9 @@
       if (rte.contains(getSelection().anchorNode)) saveSel();
     };
     document.addEventListener('selectionchange', onSelChange); // meldet sich ab, sobald das Formular nicht mehr angezeigt wird
-    const cmd = (c, v = null) => { restoreSel(); document.execCommand('styleWithCSS', false, true); document.execCommand(c, false, v); saveSel(); };
+    const cmd = (c, v = null) => { restoreSel(); if (rte._um) rte._um.checkpoint(); document.execCommand('styleWithCSS', false, true); document.execCommand(c, false, v); saveSel(); rte.dispatchEvent(new Event('input', { bubbles: true })); };
     w.querySelectorAll('.tb button[data-cmd]').forEach(b => b.addEventListener('mousedown', e => { e.preventDefault(); cmd(b.dataset.cmd); }));
-    setupRte(rte, { toolbar: w.querySelector('.tb'), before: restoreSel, after: () => { saveSel(); rte.dispatchEvent(new Event('input', { bubbles: true })); } });
+    setupRte(rte, { toolbar: w.querySelector('.tb'), before: restoreSel, after: () => { saveSel(); rte.dispatchEvent(new Event('input', { bubbles: true })); }, sizeKey: 'form' });
     $('fFont', w).addEventListener('change', e => cmd('fontName', e.target.value));
     $('fSize', w).addEventListener('change', e => {
       // execCommand kennt nur Stufen 1–7 → Stufe 7 setzen und durch echte pt-Größe ersetzen
@@ -3096,6 +3277,7 @@
       const node = savedRange && savedRange.startContainer;
       const cell = node && (node.nodeType === 1 ? node : node.parentElement).closest('td,th');
       if (!cell || !rte.contains(cell)) return;
+      if (rte._um) rte._um.checkpoint();
       const tr = cell.parentElement, table = tr.closest('table'), ci = [...tr.children].indexOf(cell);
       const newCell = () => { const td = document.createElement('td'); td.setAttribute('style', cellStyle); td.innerHTML = '&nbsp;'; return td; };
       if (b.dataset.tbl === 'row+') { const nr = document.createElement('tr'); for (let i = 0; i < tr.children.length; i++) nr.appendChild(newCell()); tr.after(nr); }
@@ -3581,7 +3763,7 @@
     rteBar(c.querySelector('[data-a=html]'));
     box.appendChild(c);
   }
-  rteBar($('stSig'));
+  rteBar($('stSig'), 'sig');
   $('stTheme').addEventListener('change', () => { saveSettings({ ...settings(), theme: $('stTheme').value }); applyTheme(); });
 
   // Dark Mode: automatisch nach System oder fest hell/dunkel
