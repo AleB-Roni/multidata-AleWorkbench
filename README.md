@@ -39,6 +39,24 @@ Bitte **nicht beide** gleichzeitig aktiv haben; es läuft ohnehin nur die zuerst
 
 Kundenspezifisches (welche Kunden nicht abrechenbar bzw. intern sind) steht **nicht im Code**. Diese Angaben werden unter ⚙ gepflegt und als JSON-Datei weitergegeben (Format siehe `team-config.example.json`). Die echte Team-Datei gehört **nicht** in dieses Repository; sie wird intern geteilt, z. B. über Teams oder SharePoint.
 
+## Arbeiten im Ticket
+
+- **Kopf:** Betreff, Status, Priorität, Queue, Bearbeiter, Firma, Parent-Ticket und „Keine Benachrichtigungen“ werden nur vorgemerkt (gelb markiert) und gemeinsam mit **Speichern** übernommen; **Verwerfen** stellt den alten Stand wieder her. Bearbeiter und Firma sucht man direkt im Feld. Beim Firmenwechsel kann MultiData abrechenbare Stunden zurücksetzen – die Werkbank weist darauf hin.
+- **🚗 Vor-Ort-Termin:** Haken beim Buchen (oder beim Bearbeiten eines Kommentars) setzt im Kommentar *Wegzeit* und *Wegstrecke* auf 1 – das Kennzeichen für die Buchhaltung. Solche Kommentare tragen das Etikett „🚗 vor Ort“.
+- **Reiter unten:** *💬 Kommentare* und *🕘 Verlauf*. Der Verlauf zeigt Anlage, Kommentare, Mails, Anhänge und Änderungen an Status, Bearbeiter, Queue, Priorität, Firma, Betreff und Parent. Änderungen über die Werkbank werden direkt eingetragen; Änderungen in MultiData oder durch Kolleg:innen erkennt die Werkbank beim nächsten Öffnen des Tickets (Vergleich mit dem zuletzt gesehenen Stand, nur in diesem Browser, Zeit = letzte Änderung laut MultiData).
+- Große Tickets bauen sich stückweise auf; Kommentarinhalte werden erst gerendert, wenn sie in die Nähe des sichtbaren Bereichs kommen. Antwortet MultiData nicht, gibt es nach 30 s (plus einem automatischen zweiten Versuch) eine Fehlermeldung statt eines endlosen „Lade …“.
+
+## Internes Zeiten-Ticket (Restzeiten)
+
+Unter ⚙ → *Internes Zeiten-Ticket* wird das monatliche interne Ticket festgelegt (z. B. „Zeiten LE NOV 26“; Kürzel, Betreff-Muster und Firma sind einstellbar, Standard-Firma ist die erste interne Firma der Team-Konfiguration).
+
+- **＋ Neues Ticket für <Monat>** legt es an: Priorität *Niedrig*, Status *Warten intern*, keine Benachrichtigungen. Das Ticket des Vormonats wird dabei per QuickClose geschlossen. Gibt es für den Monat schon eins, wird keins doppelt angelegt.
+- Im **Zeiten-Tab** hat jeder Tag (bei den eigenen Zeiten) den Knopf **＋ intern**: Stunden eintragen, *Buchen* – der Rest wird als Kommentar ohne Text auf das interne Ticket **des jeweiligen Monats** gebucht. Mit Personio-Abgleich ist die Differenz schon vorausgefüllt („+1,25 h intern“), „Alle Fehlzeiten intern buchen“ erledigt alle Tage auf einmal.
+
+## Protokoll
+
+Alle Aktionen der Werkbank (nur in diesem Browser). Ticketnummern sind Links (Klick: öffnen, Mittelklick: neuer Tab); oben kann man nach Text oder Ticket-Nr. filtern.
+
 ## Anhänge im Browser öffnen
 
 - **.eml** wird direkt in der Werkbank als Mail angezeigt: Kopfzeilen, Text und Anhänge, auch weitergeleitete Mails. Das passiert vollständig im Browser, ohne Upload. Externe Bilder lädt die Vorschau erst auf Klick, Skripte in der Mail werden nie ausgeführt.
@@ -58,7 +76,7 @@ Damit sich die Datei nach dem Download sofort in Office öffnet, braucht der Bro
 
 ## Datenschutz
 
-- Lokal im Browser (localStorage) liegen: Signatur, Textbausteine, Entwürfe, Filter und Vorlagen, Personio-Zeiten (falls importiert), Posteingangs-Vorschau und Protokoll.
+- Lokal im Browser (localStorage) liegen: Signatur, Textbausteine, Entwürfe, Filter und Vorlagen, Personio-Zeiten (falls importiert), Posteingangs-Vorschau, Protokoll, Ticket-Verlauf (zuletzt gesehener Stand der letzten 400 Tickets) und die Nummern der internen Zeiten-Tickets.
 - Diese Daten werden nirgendwohin übertragen. Unter ⚙ → „Alle Werkbank-Daten in diesem Browser löschen“ lassen sie sich entfernen.
 - Das Skript spricht im Betrieb ausschließlich mit `csp.synaforce.com`. Vorschauen entstehen im Browser; „In Office öffnen“ lädt in den Downloads-Ordner. Nichts wird in eine Cloud hochgeladen.
 - Tampermonkey lädt beim Installieren/Aktualisieren zusätzlich die Vorschau-Bibliotheken von `cdn.jsdelivr.net` und `cdn.sheetjs.com` (fest versioniert, mit Prüfsumme).

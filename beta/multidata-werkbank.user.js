@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.6.1.6
+// @version      1.6.1.7
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -55,6 +55,7 @@
       recent: 'mdqt.recentCustomers', filters: 'mdqt.filters', log: 'mdqt.log', drafts: 'mdqt.drafts', size: 'mdqt.size',
       settings: 'mdqt.settings', inbox: 'mdqt.inbox', sections: 'mdqt.sections', comments: 'mdqt.comments', personio: 'mdqt.personio',
       timesView: 'mdqt.timesView', templates: 'mdqt.searchTemplates', team: 'mdqt.team', facetSort: 'mdqt.facetSort',
+      history: 'mdqt.ticketHistory',
     },
     legacyKeys: ['mdqt.myCustomers', 'mdqt.lastText', 'mdqt.graph', 'mdqt.authResult'], // Reste älterer Versionen, werden beim Start entfernt
     pollTicketSec: 45,           // offenes Ticket auf Änderungen von außen prüfen
@@ -72,6 +73,11 @@
     defaultStartIfPast: 9 * 60, // Startzeit (Minuten) bei Buchung auf vergangene Tage
     defaultKontaktart: 'SUPPORT',
     searchLimit: 300,
+    apiTimeoutSec: 30,           // Lesezugriffe: danach einmal wiederholen, dann Fehlermeldung statt endlosem „Lade …“
+    writeTimeoutSec: 120,        // Schreibzugriffe (Speichern, Mail senden)
+    commentBatch: 15,            // Kommentare in Portionen aufbauen, damit der Tab sofort reagiert
+    bigHtmlMB: 3,                // größere Kommentare (z. B. viele eingebettete Bilder) erst auf Klick anzeigen
+    intern: { pattern: 'Zeiten {K} {MON} {YY}', priority: 4, status: 'WI' }, // monatliches internes Zeiten-Ticket
     // Priorität (MultiData-Feld PRIORITY; 3 = normal)
     priorities: [[1, 'Kritisch', '#b71c1c'], [2, 'Hoch', '#ef6c00'], [3, 'Normal', '#fbc02d'], [4, 'Niedrig', '#4fc3f7'], [5, 'Sehr niedrig', '#90a4ae']],
     // Farbcodierung Arbeitstage im Zeiten-Tab
@@ -90,6 +96,12 @@
   // MEMO_IA = '1' → eingehende Mail (Absender steht dann in EMAIL_TO)
   const COMMENT_COLS = ['ROW_ID', 'SID', 'MDERRDA_SID', 'STATUS', 'BEARBEITER_USER_ID', 'LST_TITEL', 'LST_ID', 'LST_DATUM',
     'LFZ_VON', 'LFZ_BIS', 'LFZ_STD', 'INABR_STD', 'LFZ_STD_MAN', 'NOTIZ', 'MEMO_MIN', 'EMAIL_TO', 'EMAIL_CC', 'EMAIL_BCC', 'EMAIL_DATUM', 'MEMO_IA'];
+  // Vor-Ort-Kennzeichen für die Buchhaltung: Wegzeit und Wegstrecke = 1. Liefert MultiData die Felder nicht,
+  // arbeitet die Werkbank ohne sie weiter (WEG_OK = false).
+  const WEG_COLS = ['WEGZEIT', 'WEGSTRECKE'];
+  let WEG_OK = true;
+  const commentCols = () => WEG_OK ? [...COMMENT_COLS, ...WEG_COLS] : COMMENT_COLS;
+  const isOnsite = c => Number(c.WEGZEIT) > 0 || Number(c.WEGSTRECKE) > 0;
   const DOC_COLS = ['ROW_ID', 'IND_ARCHIV_DATUM', 'CREATED_BY', 'SID', 'MDERRDA_SID', 'DATUM', 'DOCTY_ID', 'IS_IDX', 'TITEL', 'DOCUMENT', 'DOCUMENT_NAME', 'ATT_KZ', 'MEMO_DMS_URL'];
 
   const statusInfo = id => CFG.statuses.find(s => s[0] === id) || [id, id || '–', '#999'];
@@ -141,21 +153,38 @@
     }
     return html + (inList ? '</ul>' : '') || '<p></p>';
   }
-  // HTML aus MultiData zum Anzeigen/Bearbeiten entschärfen (keine Skripte, keine Event-Handler)
-  function sanitize(html) {
+  // HTML aus MultiData zum Anzeigen/Bearbeiten entschärfen (keine Skripte, keine Event-Handler).
+  // display = true: nur zum Anzeigen – Bilder laden erst beim Hinscrollen, Links öffnen einen neuen Tab.
+  // <base> wird immer entfernt: ein <base href> aus einer Mail würde sonst alle Adressen der Seite umbiegen.
+  function sanitize(html, display = false) {
     const doc = new DOMParser().parseFromString(`<div>${html || ''}</div>`, 'text/html');
-    doc.querySelectorAll('script,style,iframe,object,embed,link,meta,form,input,button').forEach(n => n.remove());
-    doc.querySelectorAll('*').forEach(n => [...n.attributes].forEach(a => {
-      if (/^on/i.test(a.name) || (/^(href|src)$/i.test(a.name) && /^\s*javascript:/i.test(a.value))) n.removeAttribute(a.name);
-    }));
-    return doc.body.firstChild.innerHTML;
+    doc.querySelectorAll('script,style,iframe,frame,frameset,object,embed,applet,link,meta,base,title,form,input,button,select,textarea,noscript,template,portal').forEach(n => n.remove());
+    doc.querySelectorAll('*').forEach(n => {
+      for (const a of [...n.attributes]) {
+        if (/^on/i.test(a.name) || /^(srcdoc|formaction|ping)$/i.test(a.name) || (/^(href|src|xlink:href|action)$/i.test(a.name) && /^\s*(javascript|vbscript):/i.test(a.value))) n.removeAttribute(a.name);
+      }
+      if (!display) return;
+      if (n.tagName === 'IMG') { n.setAttribute('loading', 'lazy'); n.setAttribute('decoding', 'async'); }
+      else if (n.tagName === 'A' && n.getAttribute('href') && !/^\s*#/.test(n.getAttribute('href'))) { n.setAttribute('target', '_blank'); n.setAttribute('rel', 'noopener noreferrer'); }
+    });
+    return doc.body.firstChild ? doc.body.firstChild.innerHTML : '';
   }
-  // Blöcke/Zeilenumbrüche als Leerzeichen, damit Wörter nicht zusammenkleben („WerkbankTest“)
+  const showHtml = html => sanitize(html, true);
+  // Reiner Text für Vorschauen/Protokoll. Eingebettete Bilder werden vorher entfernt und sehr lange Inhalte gekürzt,
+  // damit große Mails die Seite nicht ausbremsen; geparst wird in einem inaktiven Dokument (lädt keine Bilder).
   const htmlToText = html => {
-    const d = document.createElement('div');
-    d.innerHTML = sanitize(String(html || '').replace(/<(br|\/p|\/div|\/li|\/tr|\/td|\/th|\/h\d)[^>]*>/gi, ' $&'));
-    return d.textContent.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    let s = String(html || '');
+    if (!s) return '';
+    if (s.length > 20000) s = s.replace(/data:[^"'\s)>]{100,}/gi, '');
+    if (s.length > 80000) s = s.slice(0, 80000);
+    s = s.replace(/<(br|\/p|\/div|\/li|\/tr|\/td|\/th|\/h\d)[^>]*>/gi, ' $&');
+    const d = new DOMParser().parseFromString(s, 'text/html');
+    d.querySelectorAll('script,style,title,noscript,template').forEach(n => n.remove());
+    return (d.body ? d.body.textContent : '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
   };
+  // Ortszeit im Format der MultiData-Datumsfelder (ohne Zeitzone), für eigene Zeitstempel
+  const localISO = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   const store = {
     get(k, def) { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } },
@@ -226,28 +255,47 @@
     try { return JSON.parse(raw); } catch { return raw; }
   }
   // Token läuft nach wenigen Minuten ab; MultiData erneuert es nur bei eigener Aktivität → Aktualisierung anstoßen.
-  async function renewToken() {
+  // Laufen mehrere Anfragen gleichzeitig in den Ablauf, wird nur einmal erneuert.
+  let renewing = null;
+  const renewToken = () => renewing ||= doRenewToken().finally(() => { renewing = null; });
+  async function doRenewToken() {
     const old = localStorage.getItem(CFG.tokenKey);
     const btn = [...document.querySelectorAll('[aria-label="refresh"]')].find(b => b.offsetParent !== null && !b.closest('#mdqt-panel'));
     if (btn) btn.click();
     for (let i = 0; i < 40 && localStorage.getItem(CFG.tokenKey) === old; i++) await new Promise(r => setTimeout(r, 250));
     return localStorage.getItem(CFG.tokenKey) !== old;
   }
-  async function api(path, body, method = 'POST', retry = true) {
-    const res = await fetch('/mdapi/' + path, {
-      method,
-      headers: { 'Accept': 'application/json, text/plain, */*', 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token() },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const text = await res.text();
+  // Jede Anfrage hat ein Zeitlimit: Lesezugriffe werden bei Zeitüberschreitung/Netzfehler einmal wiederholt,
+  // danach gibt es eine Fehlermeldung (statt endlos „Lade …“). Schreibzugriffe werden nie automatisch wiederholt.
+  async function api(path, body, method = 'POST', retry = true, attempt = 0) {
+    const read = method === 'GET' || path.startsWith('data/load/') || path.startsWith('data/InitNewRow/');
+    const ms = (read ? CFG.apiTimeoutSec : CFG.writeTimeoutSec) * 1000;
+    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
+    let res, text;
+    try {
+      res = await fetch('/mdapi/' + path, {
+        method, signal: ac.signal,
+        headers: { 'Accept': 'application/json, text/plain, */*', 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token() },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      text = await res.text();
+    } catch (e) {
+      const timeout = e.name === 'AbortError';
+      if (read && attempt === 0) { await sleep(timeout ? 0 : 1000); return api(path, body, method, retry, 1); }
+      throw new Error(timeout
+        ? (read ? `MultiData antwortet nicht (keine Antwort nach ${ms / 1000} s, auch nicht beim zweiten Versuch). Bitte „↻ Neu laden“.`
+          : `MultiData hat nach ${ms / 1000} s nicht geantwortet – bitte neu laden und prüfen, ob die Aktion ausgeführt wurde.`)
+        : `Keine Verbindung zu MultiData (${e.message}).`);
+    } finally { clearTimeout(timer); }
     if (res.status === 401) {
-      if (retry && await renewToken()) return api(path, body, method, false);
+      if (retry && await renewToken()) return api(path, body, method, false, attempt);
       throw new Error('Sitzung abgelaufen – in MultiData einmal „Aktualisieren“ klicken oder F5.');
     }
     if (!res.ok) {
       let msg = text.slice(0, 300);
       try { msg = JSON.parse(text).message || msg; } catch { /* ignore */ }
-      throw new Error(`MultiData-Fehler (${res.status}): ${msg}`);
+      const err = new Error(`MultiData-Fehler (${res.status}): ${msg}`); err.status = res.status;
+      throw err;
     }
     try { return text ? JSON.parse(text) : {}; } catch { return text; }
   }
@@ -602,13 +650,11 @@
   // ===========================================================================
   // 5. Fachfunktionen
   // ===========================================================================
+  // Stammdaten werden einmal pro Tab geladen; gleichzeitige Aufrufe teilen sich dieselbe Anfrage.
+  const once = (get, set, fn) => { let p = null; return () => get() != null ? Promise.resolve(get()) : (p ||= fn().then(v => { set(v); return v; }).finally(() => { p = null; })); };
   let ME = null;
-  async function me() {
-    if (ME) return ME;
-    const d = await api('data/InitNewRow/DLG_TICKET_CREATE', { tableName: 'DLG_TICKET_CREATE', values: { MEMO_BATCH: 'true' }, copy: false });
-    ME = d.BEARBEITER_USER_ID;
-    return ME;
-  }
+  const me = once(() => ME, v => { ME = v; }, async () =>
+    (await api('data/InitNewRow/DLG_TICKET_CREATE', { tableName: 'DLG_TICKET_CREATE', values: { MEMO_BATCH: 'true' }, copy: false })).BEARBEITER_USER_ID);
 
   // --- Tickets ---
   const ticketBy = async filter => (await load('MDERRDA', { filter, sqlColumns: TICKET_DETAIL_COLS }))[0] || null;
@@ -734,19 +780,17 @@
 
   // Bearbeiter-Liste (MultiData-Benutzer) – einmal pro Sitzung geladen
   let USERS = null;
-  async function loadUsers() {
-    if (USERS) return USERS;
-    const r = await load('MDERRDA', { lookupColumnName: 'BEARBEITER_USER_ID', skip: 0, take: 2000, options: [] });
-    USERS = r.filter(u => u.USER_ID).map(u => ({ id: u.USER_ID, name: `${u.VORNAME || ''} ${u.ZUNAME || ''}`.trim(), abt: u.ABT_ID || '', email: u.EMAIL || '' }))
-      .sort((a, b) => a.name.localeCompare(b.name, 'de'));
-    return USERS;
-  }
+  const loadUsers = once(() => USERS, v => { USERS = v; }, async () =>
+    (await load('MDERRDA', { lookupColumnName: 'BEARBEITER_USER_ID', skip: 0, take: 2000, options: [] }))
+      .filter(u => u.USER_ID).map(u => ({ id: u.USER_ID, name: `${u.VORNAME || ''} ${u.ZUNAME || ''}`.trim(), abt: u.ABT_ID || '', email: u.EMAIL || '' }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'de')));
   const userLabel = id => { const u = (USERS || []).find(x => x.id === id); return u ? `${u.name} (${u.id})` : (id || '–'); };
 
   // Ticket in Zielticket zusammenführen (wie „Zusätze → Tickets zusammenführen…“)
   async function mergeTickets(src, target) {
     if (Number(src.SID) === Number(target.SID)) throw new Error('Quelle und Ziel sind dasselbe Ticket.');
     await exec('MDERRDA', 'Cmd.Ticket.Merge', 'Md_Crm.TicketMerge', { destSID: Number(target.SID), retType: 'JSON', cmdName: 'Cmd.Ticket.Merge' }, { rowIds: [src.ROW_ID] });
+    histOwn(src, {}, { k: '_', label: 'Zusammengeführt', to: `in #${target.SID}` });
     log('Tickets zusammengeführt', `#${src.SID} „${src.TITEL}“ → #${target.SID} „${target.TITEL}“`);
     ticketsChanged(src.SID, target.SID);
   }
@@ -760,32 +804,84 @@
   }
 
   let QUEUES = null;
-  async function loadQueues() {
-    if (QUEUES) return QUEUES;
-    QUEUES = (await load('MDERRDA', { lookupColumnName: 'ERRQ_ID', skip: 0, take: 200, options: [] })).map(q => ({ id: q.ERRQ_ID, name: q.MEMO_FK_DISPLAY || String(q.ERRQ_ID) }));
-    return QUEUES;
-  }
+  const loadQueues = once(() => QUEUES, v => { QUEUES = v; }, async () =>
+    (await load('MDERRDA', { lookupColumnName: 'ERRQ_ID', skip: 0, take: 200, options: [] })).map(q => ({ id: q.ERRQ_ID, name: q.MEMO_FK_DISPLAY || String(q.ERRQ_ID) })));
   const loadChildren = sid => load('MDERRDA', { take: 200, filter: [['MDERRDA_SID', '=', Number(sid)]], sort: [{ selector: 'SID', desc: true }], sqlColumns: TICKET_COLS });
 
   async function updateTicket(t, changes) {
     const saved = await updateRow('MDERRDA', t, changes, TICKET_DETAIL_COLS);
-    if (saved) { log('Ticket geändert', `#${t.SID}: ` + Object.entries(changes).map(([k, v]) => `${k}=${k === 'STATUS' ? statusInfo(v)[1] : v}`).join(', ')); ticketsChanged(t.SID); }
+    if (saved) {
+      histOwn(t, changes);
+      log('Ticket geändert', `#${t.SID}: ` + Object.entries(changes).map(([k, v]) => `${k}=${k === 'STATUS' ? statusInfo(v)[1] : v}`).join(', '));
+      ticketsChanged(t.SID);
+    }
     return saved;
   }
   async function changeFirm(t, adr) {
     await exec('MDERRDA', 'Cmd.Ticket.ChangeAdr', 'Md_WebUser.ChangeTicketAdr', { SID: Number(t.SID), rowId: adr.ROW_ID });
+    histOwn(t, {}, { k: 'MATCHCODE', label: 'Firma', from: histFmt('MATCHCODE', t.MATCHCODE), to: adr.MATCH });
     log('Firma geändert', `#${t.SID}: ${t.MATCHCODE} → ${adr.MATCH}`);
     ticketsChanged(t.SID);
   }
   async function quickClose(t) {
     await exec('MDERRDA', 'IND_TICKET.QuickClose', 'IND_TICKET.QuickClose', { cmdName: 'IND_TICKET.QuickClose' }, { rowIds: [t.ROW_ID] });
+    histOwn(t, {}, { k: '_', label: 'QuickClose' });
     log('QuickClose', `#${t.SID} ${t.TITEL}`);
     ticketsChanged(t.SID);
   }
-  async function createTicket({ adrRowId, title, html, suppressNotify }) {
+
+  // --- Ticket-Verlauf: Änderungen an Status, Bearbeiter, Queue … ---
+  // Änderungen über die Werkbank werden direkt eingetragen. Änderungen in MultiData oder durch Kolleg:innen erkennt die
+  // Werkbank beim Öffnen/Aktualisieren des Tickets durch Vergleich mit dem zuletzt gesehenen Stand (nur in diesem Browser).
+  const HIST_FIELDS = [['STATUS', 'Status'], ['BEARBEITER_USER_ID', 'Bearbeiter'], ['ERRQ_ID', 'Queue'], ['PRIORITY', 'Priorität'],
+    ['MATCHCODE', 'Firma'], ['TITEL', 'Betreff'], ['MDERRDA_SID', 'Parent-Ticket'], ['SUPPRESS_NOTIFY', 'Keine Benachrichtigungen']];
+  const histAll = () => store.get(CFG.store.history, {});
+  const histGet = sid => histAll()[sid] || null;
+  function histSave(sid, h) {
+    const a = histAll(); a[sid] = h;
+    const keys = Object.keys(a);
+    if (keys.length > 400) keys.sort((x, y) => String(a[x].seen || '').localeCompare(String(a[y].seen || ''))).slice(0, keys.length - 400).forEach(k => delete a[k]);
+    store.set(CFG.store.history, a);
+  }
+  const histSnap = t => ({ ...Object.fromEntries(HIST_FIELDS.map(([k]) => [k, t[k] ?? null])), _QUEUE: t.MDERRQ_FK__NAME_KB ?? null });
+  function histFmt(k, v, snap = {}) {
+    if (v == null || v === '') return '–';
+    if (k === 'STATUS') return statusInfo(v)[1];
+    if (k === 'PRIORITY') return prioInfo(v)[1];
+    if (k === 'ERRQ_ID') return snap._QUEUE || ((QUEUES || []).find(q => String(q.id) === String(v)) || {}).name || String(v);
+    if (k === 'BEARBEITER_USER_ID') return userLabel(v);
+    if (k === 'SUPPRESS_NOTIFY') return v == 1 ? 'ja' : 'nein';
+    if (k === 'MATCHCODE') return String(v).replace(/^\d+\s*-\s*/, '');
+    if (k === 'MDERRDA_SID') return '#' + v;
+    return String(v);
+  }
+  function histOwn(t, ch, note = null) {
+    const now = localISO();
+    const h = histGet(t.SID) || { since: now, seen: now, snap: histSnap(t), ch: [] };
+    const next = { ...h.snap, ...ch, ...(ch.MDERRQ_FK__NAME_KB ? { _QUEUE: ch.MDERRQ_FK__NAME_KB } : {}) };
+    for (const [k, label] of HIST_FIELDS) if (k in ch) h.ch.unshift({ at: now, k, label, from: histFmt(k, h.snap[k], h.snap), to: histFmt(k, ch[k], next), src: 'wb', by: ME || '' });
+    if (note) h.ch.unshift({ at: now, src: 'wb', by: ME || '', from: '', to: '', ...note });
+    h.own = Date.now(); h.ch = h.ch.slice(0, 150);
+    histSave(t.SID, h);
+  }
+  // Beim Laden: Unterschiede zum zuletzt gesehenen Stand eintragen
+  function histDetect(t) {
+    const now = localISO(), snap = histSnap(t), h = histGet(t.SID);
+    if (!h) { histSave(t.SID, { since: now, seen: now, snap, ch: [] }); return; }
+    const own = Date.now() - (h.own || 0) < 120000; // eben über die Werkbank geändert
+    for (const [k, label] of HIST_FIELDS) {
+      if (String(h.snap[k] ?? '') === String(snap[k] ?? '')) continue;
+      if (own && h.ch.some(c => c.k === k && c.src === 'wb' && Date.now() - Date.parse(c.at) < 180000)) continue; // schon eingetragen
+      h.ch.unshift({ at: own ? now : (t.DATE_MODIFIED || now), k, label, from: histFmt(k, h.snap[k], h.snap), to: histFmt(k, snap[k], snap),
+        src: own ? 'wb' : 'ext', by: own ? (ME || '') : '', after: own ? null : h.seen });
+    }
+    h.snap = snap; h.seen = now; h.ch = h.ch.slice(0, 150);
+    histSave(t.SID, h);
+  }
+  async function createTicket({ adrRowId, title, html, suppressNotify, priority = null, status = null }) {
     const d = await api('data/InitNewRow/DLG_TICKET_CREATE', { tableName: 'DLG_TICKET_CREATE', values: { MEMO_BATCH: 'true' }, copy: false });
     const r = await exec('DLG_TICKET_CREATE', 'Cmd.CreateTicket', 'Md_WebUser.CreateTicket', {
-      adrRowId, title, theNotiz: html, priority: d.PRIORITY ?? 3, status: d.STATUS ?? 'N', errId: d.ERR_ID ?? 'REQUEST',
+      adrRowId, title, theNotiz: html, priority: priority ?? d.PRIORITY ?? 3, status: status ?? d.STATUS ?? 'N', errId: d.ERR_ID ?? 'REQUEST',
       errqId: d.ERRQ_ID ?? 1, userId: d.BEARBEITER_USER_ID, abtId: null, termin: null, vDate: null,
       supNotify: !!suppressNotify, noSla: false, ticketIdExt: null, prjId: null, Mt_Document: null,
     });
@@ -798,8 +894,15 @@
   }
 
   // --- Kommentare ---
-  const loadComments = sid => load('MDERRDA_MDERRDAC', { take: 1000, filter: [['MDERRDA_SID', '=', Number(sid)]], sort: [{ selector: 'LST_DATUM', desc: true }], sqlColumns: COMMENT_COLS });
-  const commentBySid = async sid => (await load('MDERRDA_MDERRDAC', { filter: [['SID', '=', Number(sid)]], sqlColumns: COMMENT_COLS }))[0];
+  async function loadCommentRows(opts) {
+    if (WEG_OK) {
+      try { return await load('MDERRDA_MDERRDAC', { ...opts, sqlColumns: commentCols() }); }
+      catch (e) { if (!e.status) throw e; WEG_OK = false; console.warn('[Werkbank] Wegzeit/Wegstrecke nicht verfügbar – Vor-Ort-Kennzeichen deaktiviert.', e.message); }
+    }
+    return load('MDERRDA_MDERRDAC', { ...opts, sqlColumns: COMMENT_COLS });
+  }
+  const loadComments = sid => loadCommentRows({ take: 1000, filter: [['MDERRDA_SID', '=', Number(sid)]], sort: [{ selector: 'LST_DATUM', desc: true }] });
+  const commentBySid = async sid => (await loadCommentRows({ filter: [['SID', '=', Number(sid)]] }))[0];
 
   const loadDocs = sid => load('MDERRDA_MDDOC', { take: 500, filter: [['MDERRDA_SID', '=', Number(sid)]], sort: [{ selector: 'DATUM', desc: true }], sqlColumns: DOC_COLS });
 
@@ -816,7 +919,8 @@
 
   // Neuer Kommentar inkl. Zeit. minutes = 0 → reiner Kommentar ohne Zeit.
   // mail = { to[], cc[], bcc[] } → wird als Mail versendet (emailKz). files = File[] → Anhänge.
-  async function addComment(t, { date, minutes, html, kontaktart, billable, abrHours, mail = null, files = [] }) {
+  async function addComment(t, { date, minutes, html, kontaktart, billable, abrHours, mail = null, files = [], onsite = false }) {
+    if (onsite && !WEG_OK) throw new Error('Vor-Ort-Kennzeichen nicht möglich: MultiData liefert die Felder Wegzeit/Wegstrecke nicht. Nichts gespeichert.');
     if (mail) {
       const fresh = await load('MDERRDA', { filter: [['SID', '=', Number(t.SID)]], sqlColumns: ['ROW_ID', 'SID', 'SUPPRESS_NOTIFY'] }).then(r => r[0]);
       if (!fresh) throw new Error(`Ticket #${t.SID} nicht gefunden – Mail nicht gesendet.`);
@@ -852,21 +956,27 @@
       // Beim Anlegen übernimmt MultiData „abrechenbar“ i. d. R. direkt; abweichende Stunden bzw. Fallback über „Manuell“
       c = await commentBySid(cid);
       const want = abrHours ?? c.LFZ_STD;
-      if (Number(c.INABR_STD) !== Number(want)) await updateRow('MDERRDA_MDERRDAC', c, { INABR_STD: want, LFZ_STD_MAN: 1 }, COMMENT_COLS);
+      if (Number(c.INABR_STD) !== Number(want)) await updateRow('MDERRDA_MDERRDAC', c, { INABR_STD: want, LFZ_STD_MAN: 1 }, commentCols());
+    }
+    if (onsite) {
+      c = await commentBySid(cid);
+      if (!WEG_OK || !c) throw new Error('Kommentar angelegt, aber Wegzeit/Wegstrecke konnten nicht gesetzt werden – bitte in MultiData nachtragen.');
+      await updateRow('MDERRDA_MDERRDAC', c, { WEGZEIT: 1, WEGSTRECKE: 1 }, commentCols());
     }
     if (mail) {
       c = await commentBySid(cid);
       log('Mail gesendet', `#${t.SID}: An ${mail.to.join(', ')}${mail.cc.length ? ' · Cc ' + mail.cc.join(', ') : ''}${mail.bcc.length ? ' · Bcc ' + mail.bcc.join(', ') : ''}` +
         `${files.length ? ' · ' + files.length + ' Anhang/Anhänge' : ''} · ${c?.EMAIL_DATUM ? 'versendet ' + fmtDateTime(c.EMAIL_DATUM) : 'Versandzeit noch offen'}`);
     }
-    log('Kommentar angelegt', `#${t.SID}: ${fmtDate(date)} ${minutes} min${billable ? ', abrechenbar ' + fmtH(abrHours ?? minutes / 60) : ''}${files.length ? ', ' + files.length + ' Anhang/Anhänge' : ''}`);
+    log('Kommentar angelegt', `#${t.SID}: ${fmtDate(date)} ${minutes} min${billable ? ', abrechenbar ' + fmtH(abrHours ?? minutes / 60) : ''}${onsite ? ', vor Ort' : ''}${files.length ? ', ' + files.length + ' Anhang/Anhänge' : ''}`);
     ticketsChanged(t.SID);
     return { cid, emailDate: c?.EMAIL_DATUM || null };
   }
 
-  // Kommentar bearbeiten. changes: { html?, date?, from?, to?, manual?, std?, abr?, kontaktart? }
+  // Kommentar bearbeiten. changes: { html?, date?, from?, to?, manual?, std?, abr?, kontaktart?, onsite? }
   async function editComment(c, ch) {
     const v = {};
+    if (ch.onsite != null) { v.WEGZEIT = ch.onsite ? 1 : 0; v.WEGSTRECKE = ch.onsite ? 1 : 0; }
     if (ch.html != null) v.NOTIZ = ch.html;
     if (ch.kontaktart) v.LST_ID = ch.kontaktart;
     if (ch.date && ch.from != null && ch.to != null) {
@@ -874,7 +984,7 @@
     }
     if (ch.manual) { v.LFZ_STD_MAN = 1; if (ch.std != null) v.LFZ_STD = ch.std; if (ch.abr != null) v.INABR_STD = ch.abr; }
     else if (ch.manual === false) { v.LFZ_STD_MAN = 0; }
-    const saved = await updateRow('MDERRDA_MDERRDAC', c, v, COMMENT_COLS);
+    const saved = await updateRow('MDERRDA_MDERRDAC', c, v, commentCols());
     if (!saved) return null;
     log('Kommentar geändert', `#${c.MDERRDA_SID} / K${c.SID}: ` + Object.keys(v).map(k => k === 'NOTIZ' ? 'Text' : `${k}=${v[k]}`).join(', '));
     ticketsChanged(c.MDERRDA_SID);
@@ -887,18 +997,75 @@
   }
 
   let KONTAKTARTEN = null;
-  async function kontaktarten() {
-    if (KONTAKTARTEN) return KONTAKTARTEN;
-    try {
-      const r = await load('MDERRDA_MDERRDAC', { lookupColumnName: 'LST_ID', skip: 0, take: 100, options: [] });
-      KONTAKTARTEN = r.map(x => [x.LST_ID, x.BEZEICHNUNG1 || x.LST_ID]);
-    } catch { KONTAKTARTEN = [['SUPPORT', 'Support'], ['VORORT', 'vor Ort'], ['TELEFON', 'Telefonisch'], ['WARTUNG', 'Wartung'], ['INFO', 'interne Notiz']]; }
-    return KONTAKTARTEN;
-  }
+  const kontaktarten = once(() => KONTAKTARTEN, v => { KONTAKTARTEN = v; }, async () => {
+    try { return (await load('MDERRDA_MDERRDAC', { lookupColumnName: 'LST_ID', skip: 0, take: 100, options: [] })).map(x => [x.LST_ID, x.BEZEICHNUNG1 || x.LST_ID]); }
+    catch { return [['SUPPORT', 'Support'], ['VORORT', 'vor Ort'], ['TELEFON', 'Telefonisch'], ['WARTUNG', 'Wartung'], ['INFO', 'interne Notiz']]; }
+  });
 
   // --- Einstellungen (Signatur, eigene Textbausteine) – nur in diesem Browser ---
   const settings = () => ({ signature: '', autoSignature: true, blocks: [], showMdBlocks: true, ...store.get(CFG.store.settings, {}) });
   const saveSettings = s => store.set(CFG.store.settings, s);
+
+  // --- Internes Zeiten-Ticket (ein Ticket je Monat, z. B. „Zeiten LE NOV 26“) ---
+  const MONTHS_EN = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  const monthKey = d => String(d).slice(0, 7);                       // '2026-11'
+  const prevMonth = k => { let [y, m] = k.split('-').map(Number); if (--m < 1) { m = 12; y--; } return `${y}-${pad(m)}`; };
+  const monthTag = k => `${MONTHS_EN[+k.slice(5, 7) - 1]} ${k.slice(2, 4)}`; // 'NOV 26'
+  const internCfg = () => ({ k: '', pattern: CFG.intern.pattern, firm: null, tickets: {}, ...(settings().intern || {}) });
+  const saveIntern = patch => saveSettings({ ...settings(), intern: { ...internCfg(), ...patch } });
+  // ältere Version: „Fehlzeiten ausgleichen auf Ticket …“ → als Ticket des aktuellen Monats übernehmen
+  if (settings().timesTicket && !internCfg().tickets[monthKey(todayStr())]) {
+    saveIntern({ tickets: { ...internCfg().tickets, [monthKey(todayStr())]: Number(settings().timesTicket) } });
+    const s0 = settings(); delete s0.timesTicket; saveSettings(s0);
+  }
+  async function internKuerzel() {
+    const c = internCfg(); if (c.k) return c.k.trim();
+    const id = await me(), u = (await loadUsers().catch(() => [])).find(x => x.id === id);
+    return (u && u.name ? u.name.split(/\s+/).filter(Boolean).map(w => w[0]).join('') : String(id)).toUpperCase().slice(0, 4);
+  }
+  async function internTitle(k) {
+    return (internCfg().pattern || CFG.intern.pattern).replace('{K}', await internKuerzel()).replace('{MON}', MONTHS_EN[+k.slice(5, 7) - 1])
+      .replace('{YYYY}', k.slice(0, 4)).replace('{YY}', k.slice(2, 4)).replace(/\s+/g, ' ').trim();
+  }
+  // Ticket für einen Monat: zuerst das gemerkte, sonst per Betreff suchen (und merken)
+  async function findInternTicket(k) {
+    const c = internCfg();
+    if (c.tickets[k]) { const t = await ticketBySid(c.tickets[k]); if (t) return t; }
+    const title = await internTitle(k);
+    const rows = await load('MDERRDA', { take: 20, filter: [['TITEL', 'contains', title]], sort: [{ selector: 'SID', desc: true }], sqlColumns: TICKET_COLS });
+    const t = rows.find(r => String(r.TITEL || '').trim().toUpperCase() === title.toUpperCase()) || null;
+    if (t) saveIntern({ tickets: { ...internCfg().tickets, [k]: t.SID } });
+    return t;
+  }
+  async function internAddress() {
+    const c = internCfg(); if (c.firm && c.firm.ROW_ID) return c.firm;
+    const name = String((team().intern[0] || {}).name || '').replace(/^\d+\s*-\s*/, '');
+    if (!name) throw new Error('Bitte unter ⚙ → Internes Zeiten-Ticket die Firma wählen.');
+    const res = await searchAddresses(name);
+    const best = res.find(a => normName(a.MATCH) === normName(name)) || res.find(a => normName(a.MATCH).includes(normName(name)));
+    if (!best) throw new Error(`Firma „${name}“ nicht gefunden – bitte unter ⚙ → Internes Zeiten-Ticket wählen.`);
+    const firm = { ROW_ID: best.ROW_ID, MATCH: best.MATCH }; saveIntern({ firm });
+    return firm;
+  }
+  // Neues Monats-Ticket: Firma (Standard: erste interne Firma), Priorität Niedrig, Status Warten intern; Vormonat per QuickClose schließen
+  async function createInternTicket(k) {
+    const exists = await findInternTicket(k).catch(() => null);
+    if (exists) throw new Error(`Für ${monthTag(k)} gibt es schon #${exists.SID} „${exists.TITEL}“.`);
+    const title = await internTitle(k), firm = await internAddress();
+    const t = await createTicket({ adrRowId: firm.ROW_ID, title, html: `<p>Interne Zeiten ${monthTag(k)}</p>`, suppressNotify: true,
+      priority: CFG.intern.priority, status: CFG.intern.status });
+    const fix = {};
+    if (Number(t.PRIORITY) !== CFG.intern.priority) fix.PRIORITY = CFG.intern.priority;
+    if (t.STATUS !== CFG.intern.status) fix.STATUS = CFG.intern.status;
+    if (t.SUPPRESS_NOTIFY != 1) fix.SUPPRESS_NOTIFY = 1;
+    if (Object.keys(fix).length) await updateTicket(t, fix);
+    saveIntern({ tickets: { ...internCfg().tickets, [k]: t.SID } });
+    let closed = null;
+    const old = await findInternTicket(prevMonth(k)).catch(() => null);
+    if (old && old.STATUS !== 'Z') { await quickClose(old); closed = old; }
+    log('Internes Zeiten-Ticket angelegt', `#${t.SID} ${title}${closed ? ` · #${closed.SID} geschlossen` : ''}`);
+    return { t, closed };
+  }
 
   // Textbausteine aus MultiData (nur HTML-Bausteine; RTF-Bausteine sind für Berichte gedacht)
   let MD_BLOCKS = null;
@@ -1059,16 +1226,32 @@
   #mdqt-panel .card.edit{border-color:#00897b;background:var(--mq-edit)}
   #mdqt-panel .card .meta{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--mq-muted2);align-items:center}
   #mdqt-panel .card .meta b{color:var(--mq-fg)}
-  #mdqt-panel .card .txt{margin-top:4px}
+  #mdqt-panel .card .txt{margin-top:4px;overflow-x:auto;contain:content}
   #mdqt-panel .card .txt p{margin:2px 0}#mdqt-panel .card .txt ul{margin:2px 0 2px 18px;padding:0}
   #mdqt-panel .head{background:var(--mq-soft);border-radius:6px;padding:10px}
-  #mdqt-panel .head h3{margin:0 0 6px;font-size:15px}
+  #mdqt-panel .head h3{margin:0;font-size:15px;white-space:nowrap}
+  #mdqt-panel .head .hrow1{display:flex;gap:8px;align-items:center}
+  #mdqt-panel .head .hrow1 input{font-weight:600;font-size:14px}
+  #mdqt-panel .head .hgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:0 8px;margin-top:2px}
+  #mdqt-panel .head .hgrid .wide{grid-column:span 2}
+  #mdqt-panel .head .hbar{margin-top:8px;align-items:center}
+  #mdqt-panel .sug{position:relative}#mdqt-panel .sug .results{position:absolute;left:0;right:0;top:100%;z-index:6}
+  #mdqt-panel .chg{outline:2px solid #ffb300 !important;outline-offset:-1px}
+  #mdqt-panel label.chk.chg{outline-offset:2px;border-radius:3px}
+  #mdqt-panel .btabs{display:flex;align-items:center;gap:2px;margin-top:14px;border-bottom:2px solid var(--mq-border)}
+  #mdqt-panel .btabs button[data-b]{background:none;border:none;border-bottom:3px solid transparent;margin-bottom:-2px;padding:6px 12px;cursor:pointer;font:600 13px inherit;font-family:inherit;color:var(--mq-muted2)}
+  #mdqt-panel .btabs button[data-b].on{color:var(--mq-accent-fg);border-bottom-color:#00897b}
+  #mdqt-panel .hist td{font-size:12px}#mdqt-panel .hist td.w{white-space:nowrap;color:var(--mq-muted2)}
+  #mdqt-panel .hist .src{font-size:10px;padding:0 4px;border-radius:3px;background:var(--mq-tag);color:var(--mq-muted2);margin-left:4px}
+  #mdqt-panel .hist tr.chgrow td{background:var(--mq-soft)}
+  #mdqt-panel .inl{display:inline-flex;gap:4px;align-items:center}#mdqt-panel .inl input{width:64px !important}
   #mdqt-panel .sums{font-size:12px;color:var(--mq-muted2)}
   #mdqt-panel .results{border:1px solid var(--mq-border);border-radius:4px;max-height:180px;overflow:auto;margin-top:2px;background:var(--mq-bg)}
   #mdqt-panel .results div{padding:5px 8px;cursor:pointer;border-bottom:1px solid var(--mq-line)}
   #mdqt-panel .results div:hover{background:var(--mq-accent-soft)}
   #mdqt-panel .tag{display:inline-block;background:var(--mq-tag);border-radius:3px;padding:0 5px;font-size:11px;color:var(--mq-muted2)}
-  #mdqt-panel .tag.abr{background:var(--mq-bg)3e0;color:#e65100}
+  #mdqt-panel .tag.abr{background:var(--mq-warn-bg);color:#e65100}
+  #mdqt-panel .tag.onsite{background:#e3f2fd;color:#1565c0}#mdqt-panel.dark .tag.onsite{background:#1b2a3a;color:#90caf9}
   #mdqt-panel details summary{cursor:pointer;color:var(--mq-accent-fg);font-weight:600;margin-top:6px}
   #mdqt-panel a.ic{text-decoration:none;display:inline-block}
   #mdqt-panel tr.r td.l{padding:0}
@@ -1099,7 +1282,7 @@
   #mdqt-panel .file{background:var(--mq-tag);border-radius:3px;padding:1px 6px;font-size:12px}
   #mdqt-panel .file b{cursor:pointer;color:#c62828;margin-left:4px}
   #mdqt-panel .mailbox{border-left:3px solid #1e88e5;padding:4px 0 4px 10px;margin-top:8px;background:var(--mq-mail-bg)}
-  #mdqt-panel .warnbox{background:var(--mq-bg)3e0;border:1px solid #ffb74d;border-radius:4px;padding:6px 8px;margin-top:6px;font-size:12px}
+  #mdqt-panel .warnbox{background:var(--mq-warn-bg);border:1px solid #ffb74d;border-radius:4px;padding:6px 8px;margin-top:6px;font-size:12px}
   #mdqt-panel .doc{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--mq-line)}
   #mdqt-panel .doc .nm{flex:1;word-break:break-all}
   #mdqt-panel .mailinfo{font-size:12px;color:var(--mq-link2);margin-top:3px}
@@ -1122,7 +1305,7 @@
   #mdqt-fab .badge:empty{display:none}
   #mdqt-panel .ibx{display:flex;gap:10px;padding:7px 6px;border-bottom:1px solid var(--mq-line);cursor:pointer;align-items:flex-start}
   #mdqt-panel .ibx:hover{background:var(--mq-hover)}
-  #mdqt-panel .ibx.unread{background:var(--mq-bg)df4}
+  #mdqt-panel .ibx.unread{background:var(--mq-unread)}
   #mdqt-panel .ibx.unread .tt{font-weight:700}
   #mdqt-panel .ibx .ty{flex:0 0 150px;font-size:12px;color:var(--mq-muted2)}
   #mdqt-panel .ibx .bd{flex:1;min-width:0}
@@ -1270,11 +1453,11 @@
         <details class="card" data-ref="zPDet"><summary>⚖ Personio-Abgleich <span class="hint" data-ref="zPInfo"></span></summary>
           <div class="drop" data-ref="zDrop">Personio-CSV („Arbeitszeit pro Tag“, Minuten) hierher ziehen oder <u>auswählen</u><input type="file" accept=".csv,text/csv" data-ref="zFile" style="display:none"></div>
           <div class="row" style="margin-top:6px;align-items:center">
-            <label class="chk">Fehlzeiten ausgleichen auf Ticket <input type="text" data-ref="zTicket" style="width:110px" placeholder="Ticket-Nr."></label>
-            <span class="hint" style="flex:1">Gerundet wird pro Tag ab ${CFG.personioRoundMin} Restminuten auf die nächste Viertelstunde. Der Abgleich gilt nur, wenn nur „Ich“ gewählt ist.</span>
+            <span class="hint" style="flex:1">Fehlzeiten werden auf das interne Zeiten-Ticket des jeweiligen Monats gebucht (⚙ Einstellungen). Gerundet wird pro Tag ab ${CFG.personioRoundMin} Restminuten auf die nächste Viertelstunde. Der Abgleich gilt nur, wenn nur „Ich“ gewählt ist.</span>
             <button class="btn sm sec" data-ref="zPClear">Personio-Daten entfernen</button>
           </div>
         </details>
+        <div class="row" style="align-items:center;margin-top:4px"><span class="hint">Restzeit-Ticket:</span><span data-ref="zIntern" class="hint" style="flex:1"></span></div>
         <div class="msg" data-ref="zMsg"></div>
         <div data-ref="zView"></div>
       </section>
@@ -1317,6 +1500,22 @@
         <div style="margin-top:12px"><button class="btn" data-ref="stSave">Einstellungen speichern</button></div>
         <div class="msg" data-ref="stMsg"></div>
 
+        <h3 style="margin:18px 0 6px">Internes Zeiten-Ticket</h3>
+        <div class="hint">Monatliches internes Ticket für übrige Zeit (z. B. „Zeiten LE NOV 26“). Im Zeiten-Tab lässt sich der Rest eines Tages als Kommentar ohne Text darauf buchen – immer auf das Ticket des jeweiligen Monats.</div>
+        <div class="row" style="margin-top:4px">
+          <div class="c s" style="flex-basis:90px"><label class="l">Kürzel</label><input type="text" data-ref="itK" placeholder="z. B. LE"></div>
+          <div class="c" style="flex-basis:220px"><label class="l">Betreff-Muster <span class="hint">{K} Kürzel · {MON} Monat · {YY} Jahr</span></label><input type="text" data-ref="itPat"></div>
+          <div class="c sug" style="flex-basis:260px"><label class="l">Firma für neue Tickets</label><input type="text" data-ref="itFirm" autocomplete="off" placeholder="Firma suchen (mind. 3 Zeichen) …"><div class="results" data-ref="itFirmRes" style="display:none"></div></div>
+        </div>
+        <div class="row" style="margin-top:6px;align-items:flex-end">
+          <div class="c s" style="flex-basis:150px"><label class="l" data-ref="itCurL">Ticket aktueller Monat</label><input type="text" data-ref="itCur" placeholder="Ticket-Nr."></div>
+          <button class="btn sm sec" data-ref="itFind" title="Ticket mit passendem Betreff suchen">🔍 Suchen</button>
+          <button class="btn sm" data-ref="itNew">＋ Neues Ticket anlegen</button>
+          <span class="hint" data-ref="itInfo" style="flex:1"></span>
+        </div>
+        <div class="hint" style="margin-top:4px">Neues Ticket: Firma wie oben, Priorität „Niedrig“, Status „Warten intern“, keine Benachrichtigungen, Bearbeiter = ich. Das Ticket des Vormonats wird dabei per QuickClose geschlossen.</div>
+        <div class="msg" data-ref="itMsg"></div>
+
         <h3 style="margin:18px 0 6px">Team-Konfiguration (Abrechenbarkeit)</h3>
         <div class="hint">Steuert nur den Vorschlag für die Checkbox „abrechenbar“ und die Gruppierung im Zeiten-Tab. Änderungen werden sofort gespeichert.</div>
         <div style="margin-top:8px"><b>Nicht abrechenbar</b> <span class="hint">– Kunden mit Servicevertrag/Pauschale</span></div>
@@ -1344,7 +1543,8 @@
 
       <!-- PROTOKOLL -->
       <section data-tab="log">
-        <div class="row"><span class="hint" style="flex:1">Alle Änderungen, die über die Werkbank gemacht wurden (nur in diesem Browser gespeichert).</span>
+        <div class="row" style="align-items:center"><span class="hint" style="flex:1">Alle Änderungen, die über die Werkbank gemacht wurden (nur in diesem Browser gespeichert). Ticketnummern sind anklickbar (Mittelklick: neuer Tab).</span>
+          <div class="c s" style="flex-basis:220px"><input type="text" data-ref="logFilter" placeholder="Filtern (Text oder Ticket-Nr.) …"></div>
           <button class="btn sm sec" data-ref="logClear">Protokoll leeren</button></div>
         <div data-ref="logView"></div>
       </section>
@@ -1431,7 +1631,7 @@
 
   // Vorschlagsliste unter einem Eingabefeld. source(q) → [{ value, label }].
   // token=true: mehrere Werte mit „;“ – ergänzt wird immer der letzte Eintrag (für Mail-Empfänger).
-  function attachSuggest(input, box, source, { onPick = null, token = false, max = 40 } = {}) {
+  function attachSuggest(input, box, source, { onPick = null, token = false, max = 40, delay = 150 } = {}) {
     let items = [], idx = -1, timer;
     // Ohne eigene Eingabe (Feld zeigt nur den gewählten Wert) → alle Vorschläge zeigen
     // token-Modus: ist der letzte Eintrag schon eine vollständige Adresse, wird ein weiterer Empfänger vorgeschlagen (nicht ersetzt)
@@ -1439,7 +1639,7 @@
     const complete = () => token && validMail(lastTok());
     const current = () => token ? (complete() ? '' : lastTok()) : (input.dataset.typed ? input.value.trim() : '');
     const hide = () => { box.style.display = 'none'; idx = -1; };
-    const mark = () => [...box.children].forEach((d, i) => d.style.background = i === idx ? '#e0f2f1' : '');
+    const mark = () => [...box.children].forEach((d, i) => d.style.background = i === idx ? 'var(--mq-accent-soft)' : '');
     async function show() {
       let list = [];
       try { list = (await source(current().toLowerCase())).slice(0, max); } catch { list = []; }
@@ -1457,7 +1657,7 @@
         input.focus(); show();
       } else { hide(); delete input.dataset.typed; if (onPick) onPick(it); }
     }
-    input.addEventListener('input', () => { input.dataset.typed = '1'; clearTimeout(timer); timer = setTimeout(show, 150); });
+    input.addEventListener('input', () => { input.dataset.typed = '1'; clearTimeout(timer); timer = setTimeout(show, delay); });
     input.addEventListener('focus', show);
     input.addEventListener('blur', () => setTimeout(() => { hide(); delete input.dataset.typed; }, 150));
     input.addEventListener('keydown', e => {
@@ -1467,6 +1667,13 @@
       else if (e.key === 'Enter' && idx >= 0) { pick(idx); e.preventDefault(); e.stopPropagation(); }
       else if (e.key === 'Escape') hide();
     });
+  }
+  // Feld, das einen gewählten Wert hält (Bearbeiter, Firma): Tippen sucht, Verlassen ohne Auswahl zeigt wieder den gewählten Wert
+  function pickField(input, box, source, { label, onPick, delay } = {}) {
+    attachSuggest(input, box, source, { delay, onPick: async it => { await onPick(it); input.value = label(); } });
+    input.value = label();
+    input.addEventListener('focus', () => input.select());
+    input.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== input) input.value = label(); }, 200));
   }
   const userSource = (extra = []) => async q => {
     const users = await loadUsers();
@@ -1485,8 +1692,9 @@
     if (tab === 'inbox') renderInbox();
     if (tab === 'drafts') renderDrafts();
     if (tab === 'settings') renderSettings();
-    if (tab === 'times') { renderTimes(); if (ui.timesStale && tm.data) { ui.timesStale = false; runTimes(); } }
+    if (tab === 'times') { renderTimes(); renderInternInfo(); if (ui.timesStale && tm.data) { ui.timesStale = false; runTimes(); } }
     if (tab === 'search' && ui.searchStale) { ui.searchStale = false; runSearch(true); }
+    if (tab === 'search' && ui.facetsStale) scheduleFacets();
     setRoute(); updateTitle();
   }
   panel.querySelectorAll('.hdr .tab').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
@@ -1494,6 +1702,7 @@
     if (panel.classList.contains('app')) return; // im App-Modus immer offen
     panel.classList.toggle('open');
     if (panel.classList.contains('open') && !ui.initDone) init();
+    else if (panel.classList.contains('open') && ui.tab === 'search' && ui.facetsStale) scheduleFacets();
   }
   fab.addEventListener('click', toggle);
   $('close').addEventListener('click', toggle);
@@ -1607,14 +1816,20 @@
   if (appMode) {
     panel.classList.add('app', 'open'); fab.style.display = 'none';
     // MultiData setzt den Seitentitel selbst neu – wir halten ihn auf dem Werkbank-Titel
-    new MutationObserver(() => { if (ui.title && document.title !== ui.title) document.title = ui.title; })
-      .observe(document.querySelector('title') || document.head, { childList: true, subtree: true, characterData: true });
+    let tFix = 0, tWin = 0;
+    new MutationObserver(() => {
+      if (!ui.title || document.title === ui.title) return;
+      const now = Date.now(); if (now - tWin > 1000) { tWin = now; tFix = 0; }
+      if (++tFix > 10) return; // MultiData setzt den Titel gerade ständig neu → nicht dagegen ankämpfen (sonst friert die Seite ein)
+      document.title = ui.title;
+    }).observe(document.querySelector('title') || document.head, { childList: true, subtree: true, characterData: true });
     setTimeout(() => init(), 0);
   }
 
   async function init() {
     ui.initDone = true;
-    await loadUsers().catch(() => null);
+    if (appMode) { const r0 = tabStore.get('route', null) || {}; if (TAB_NAMES[r0.tab]) ui.tab = r0.tab; }
+    loadUsers().catch(() => null); kontaktarten(); me().catch(() => null); // parallel vorladen, nicht darauf warten
     applyFilterState(tabStore.get('filters', null) || store.get(CFG.store.filters, null) || defaultFilterState());
     renderTemplates();
     if (appMode) {
@@ -1728,8 +1943,14 @@
 
   // Übersicht der Kunden, die in den aktuellen Filtern (Bearbeiter, Queues, Status, Zeitraum, Freitext) vorkommen
   let facetTimer, facetSeq = 0;
-  function scheduleFacets() { clearTimeout(facetTimer); facetTimer = setTimeout(loadFacets, 600); }
+  // Nur wenn die Suche sichtbar ist (die Übersicht wertet bis zu 5000 Tickets aus) – sonst beim nächsten Öffnen der Suche
+  function scheduleFacets() {
+    clearTimeout(facetTimer);
+    if (ui.tab !== 'search' || !panel.classList.contains('open')) { ui.facetsStale = true; return; }
+    ui.facetsStale = false; facetTimer = setTimeout(loadFacets, 600);
+  }
   async function loadFacets() {
+    if (ui.tab !== 'search') { ui.facetsStale = true; return; }
     const seq = ++facetSeq;
     $('sFacetHint').textContent = '(lädt …)';
     try {
@@ -1928,22 +2149,27 @@
   // ================= TICKET =================
   async function openTicket(sid, switchTab = true) {
     if (switchTab) showTab('ticket');
+    const seq = ui.openSeq = (ui.openSeq || 0) + 1;
     if (ui.editing.size && ui.ticket && String(ui.ticket.SID) !== String(sid)) msg('tMsg', 'Hinweis: ungespeicherte Kommentar-Änderungen wurden verworfen.');
     else msg('tMsg', 'Lade …');
-    $('tBanner').style.display = 'none'; ui.ticketSig = null;
+    $('tBanner').style.display = 'none'; ui.ticketSig = null; $('tSid').value = sid;
     try {
-      const t = await ticketBySid(sid);
+      // Alles gleichzeitig anfragen statt nacheinander – spart beim Öffnen mehrere Runden zu MultiData
+      const [t, comments, docs, children] = await Promise.all([ticketBySid(sid), loadComments(sid), loadDocs(sid).catch(() => []),
+        loadChildren(sid).catch(() => []), kontaktarten(), loadUsers().catch(() => null)]);
+      if (seq !== ui.openSeq) return; // inzwischen wurde ein anderes Ticket geöffnet
       if (!t) throw new Error(`Ticket ${sid} nicht gefunden.`);
       ui.ticket = t; ui.editing.clear();
+      [ui.comments, ui.docs, ui.children] = [comments, docs, children];
+      ui.ticketSig = sigOf(t, comments);
+      histDetect(t);
       setRoute(); updateTitle();
-      ticketSignature(t.SID).then(sig => { if (ui.ticket && ui.ticket.SID === t.SID) ui.ticketSig = sig; }).catch(() => null);
-      [ui.comments, ui.docs, ui.children] = await Promise.all([loadComments(sid), loadDocs(sid).catch(() => []), loadChildren(sid).catch(() => [])]);
-      $('tSid').value = t.SID;
       await renderTicket();
-      msg('tMsg', '');
-    } catch (e) { msg('tMsg', '✖ ' + e.message, 'err'); }
+      if (seq === ui.openSeq) msg('tMsg', '');
+    } catch (e) { if (seq === ui.openSeq) msg('tMsg', '✖ ' + e.message, 'err'); }
   }
-  const reloadTicket = () => ui.ticket && openTicket(ui.ticket.SID, false);
+  // Neu laden funktioniert auch, wenn das erste Laden fehlgeschlagen ist
+  const reloadTicket = () => { const sid = ui.ticket ? ui.ticket.SID : $('tSid').value.trim(); return sid ? openTicket(sid, false) : Promise.resolve(); };
   $('tLoad').addEventListener('click', () => { const v = $('tSid').value.trim(); if (v) openTicket(v); });
   $('tSid').addEventListener('keydown', e => { if (e.key === 'Enter') $('tLoad').click(); });
   $('tPage').addEventListener('click', async () => {
@@ -1954,163 +2180,155 @@
 
   async function renderTicket() {
     const t = ui.ticket, view = $('tView');
-    const ka = await kontaktarten();
+    const ka = KONTAKTARTEN || await kontaktarten();
     view.innerHTML = '';
 
-    // --- Kopf ---
+    // --- Kopf: alle Felder werden vorgemerkt (gelb markiert) und gemeinsam mit „Speichern“ übernommen ---
     const head = el('div', { className: 'head' });
     head.innerHTML = `
-      <h3>#${t.SID} <a href="#" data-ref="hOpen" target="_blank" style="font-size:12px;font-weight:400;margin-left:8px" title="Öffnet MultiData mit diesem Ticket in einem neuen Tab">in MultiData öffnen ↗</a>
-        <a href="#" data-ref="hNewTab" style="font-size:12px;font-weight:400;margin-left:8px" title="Dieses Ticket in einem weiteren Werkbank-Tab öffnen">in neuem Tab ⧉</a></h3>
-      <div class="row">
-        <div class="c" style="flex:3"><label class="l">Betreff</label><input type="text" data-ref="hTitle" spellcheck="true" lang="de"></div>
-        <div class="c"><label class="l">Status</label><select data-ref="hStatus"></select></div>
-        <div class="c"><label class="l">Priorität</label><select data-ref="hPrio"></select></div>
-        <div class="c"><label class="l">Queue</label><select data-ref="hQueue"></select></div>
-        <div><button class="btn" data-ref="hSave">Speichern</button></div>
+      <div class="hrow1">
+        <h3>#${t.SID}</h3>
+        <input type="text" data-ref="hTitle" spellcheck="true" lang="de" title="Betreff">
+        <a href="#" data-ref="hOpen" target="_blank" class="btn sm sec" title="Öffnet MultiData mit diesem Ticket in einem neuen Tab">MultiData ↗</a>
+        <a href="#" data-ref="hNewTab" class="btn sm sec" title="Dieses Ticket in einem weiteren Werkbank-Tab öffnen">Neuer Tab ⧉</a>
       </div>
-      <div class="row" style="margin-top:6px;align-items:center">
-        <div class="c" style="flex:3"><label class="l">Firma</label><div><b data-ref="hFirm"></b> <button class="btn sm sec" data-ref="hFirmBtn">ändern …</button></div></div>
-        <div class="c sums" data-ref="hSums"></div>
-        <div><button class="btn warn" data-ref="hQC">QuickClose</button></div>
+      <div class="hgrid">
+        <div><label class="l">Status</label><select data-ref="hStatus"></select></div>
+        <div><label class="l">Priorität</label><select data-ref="hPrio"></select></div>
+        <div><label class="l">Queue</label><select data-ref="hQueue"></select></div>
+        <div class="sug"><label class="l">Bearbeiter</label><input type="text" data-ref="hUser" autocomplete="off" placeholder="Name oder Kürzel …"><div class="results" data-ref="hUserRes" style="display:none"></div></div>
+        <div class="sug wide"><label class="l">Firma</label><input type="text" data-ref="hFirm" autocomplete="off" placeholder="Firma suchen (mind. 3 Zeichen) …"><div class="results" data-ref="hFirmRes" style="display:none"></div></div>
+        <div><label class="l">Parent-Ticket</label><input type="text" data-ref="hParent" placeholder="Ticket-Nr. (leer = keins)"></div>
       </div>
-      <div class="row" style="margin-top:6px;align-items:flex-end">
-        <div class="c" style="max-width:300px;position:relative"><label class="l">Bearbeiter <span class="hint">(suchen, mit „Speichern“ übernehmen)</span></label>
-          <input type="text" data-ref="hUser" autocomplete="off"><div class="results" data-ref="hUserRes" style="display:none;position:absolute;left:0;right:0;z-index:5"></div></div>
-        <label class="chk"><input type="checkbox" data-ref="hNoNotify"> Keine Benachrichtigungen <span class="hint">(gesetzt = keine Mails)</span></label>
-        <div class="c sums" data-ref="hMail"></div>
-      </div>
-      <div class="row" style="margin-top:6px;align-items:flex-end">
-        <div class="c" style="max-width:300px"><label class="l">Parent-Ticket <span class="hint">(Ticket-ID, leer = keins; mit „Speichern“)</span></label>
-          <input type="text" data-ref="hParent" placeholder="Ticket-Nr."></div>
-        <div class="c sums" data-ref="hParentInfo"></div>
+      <div class="row hbar">
+        <label class="chk" style="margin:0" title="Gesetzt = zu diesem Ticket gehen keine Mails raus"><input type="checkbox" data-ref="hNoNotify"> Keine Benachrichtigungen</label>
+        <span class="hint" data-ref="hParentInfo"></span>
         <span style="flex:1"></span>
+        <button class="btn sec" data-ref="hReset" style="display:none" title="Vorgemerkte Änderungen verwerfen">Verwerfen</button>
+        <button class="btn" data-ref="hSave" title="Alle gelb markierten Änderungen übernehmen (Enter im Betreff)">Speichern</button>
+      </div>
+      <div class="warnbox" data-ref="hFirmWarn" style="display:none">Firmenwechsel: MultiData kann dabei abrechenbare Stunden zurücksetzen – bitte nach dem Speichern prüfen.</div>
+      <div class="row hbar">
+        <div class="sums" data-ref="hSums" style="flex:1;min-width:240px"></div>
         <button class="btn sm sec" data-ref="hKids" title="Child-Tickets anzeigen, zuordnen, erstellen">🌿 Child-Tickets</button>
         <button class="btn sm sec" data-ref="hMerge" title="Dieses Ticket in ein anderes zusammenführen">🔀 Zusammenführen</button>
+        <button class="btn sm warn" data-ref="hQC" title="Ticket per QuickClose schließen (erzeugt den Abschlusstext)">QuickClose</button>
       </div>
-      <div data-ref="hExtra"></div>
-      <div data-ref="hFirmBox" style="display:none;margin-top:6px">
-        <input type="text" data-ref="hFirmSearch" placeholder="Neue Firma suchen (mind. 3 Zeichen) …">
-        <div class="results" data-ref="hFirmRes" style="display:none"></div>
-        <div class="msg" data-ref="hFirmMsg"></div>
-      </div>`;
+      <div data-ref="hExtra"></div>`;
     view.appendChild(head);
-    $('hTitle', head).value = t.TITEL || '';
-    const sel = $('hStatus', head);
-    const known = CFG.statuses.some(s => s[0] === t.STATUS);
-    for (const [id, name] of (known ? CFG.statuses : [...CFG.statuses, [t.STATUS, t.STATUS]])) sel.appendChild(el('option', { value: id, textContent: name }));
-    sel.value = t.STATUS;
-    $('hFirm', head).textContent = t.MATCHCODE || t.KND_ID;
-    // Priorität
-    const pSel = $('hPrio', head);
+    const F = { title: $('hTitle', head), status: $('hStatus', head), prio: $('hPrio', head), queue: $('hQueue', head), user: $('hUser', head),
+      firm: $('hFirm', head), parent: $('hParent', head), nn: $('hNoNotify', head) };
+    const orig = { title: t.TITEL || '', status: t.STATUS, prio: String(t.PRIORITY ?? ''), queue: String(t.ERRQ_ID ?? ''), user: t.BEARBEITER_USER_ID || null,
+      parent: String(t.MDERRDA_SID || ''), nn: t.SUPPRESS_NOTIFY == 1 };
+    let newUser = orig.user, newFirm = null;
+    F.title.value = orig.title;
+    for (const [id, name] of (CFG.statuses.some(s => s[0] === t.STATUS) ? CFG.statuses : [...CFG.statuses, [t.STATUS, t.STATUS]])) F.status.appendChild(el('option', { value: id, textContent: name }));
+    F.status.value = t.STATUS;
     for (const [v, n] of (CFG.priorities.some(x => x[0] === Number(t.PRIORITY)) || t.PRIORITY == null ? CFG.priorities : [...CFG.priorities, [t.PRIORITY, String(t.PRIORITY)]]))
-      pSel.appendChild(el('option', { value: v, textContent: n }));
-    pSel.value = t.PRIORITY ?? '';
-    const syncPrio = () => { pSel.style.borderLeft = `6px solid ${prioInfo(pSel.value)[2]}`; };
-    pSel.addEventListener('change', syncPrio); syncPrio();
-    // Queue
-    const qSel = $('hQueue', head);
+      F.prio.appendChild(el('option', { value: v, textContent: n }));
+    F.prio.value = orig.prio;
+    const queueName = () => t.MDERRQ_FK__NAME_KB || String(t.ERRQ_ID ?? '–');
     loadQueues().then(qs => {
-      if (!qs.some(q => String(q.id) === String(t.ERRQ_ID))) qs = [...qs, { id: t.ERRQ_ID, name: String(t.ERRQ_ID ?? '–') }];
-      for (const q of qs) qSel.appendChild(el('option', { value: q.id, textContent: q.name }));
-      qSel.value = t.ERRQ_ID;
-    }).catch(() => qSel.appendChild(el('option', { value: t.ERRQ_ID, textContent: String(t.ERRQ_ID) })));
+      if (!qs.some(q => String(q.id) === orig.queue)) qs = [...qs, { id: t.ERRQ_ID ?? '', name: queueName() }];
+      for (const q of qs) F.queue.appendChild(el('option', { value: q.id, textContent: q.name }));
+    }).catch(() => F.queue.appendChild(el('option', { value: t.ERRQ_ID ?? '', textContent: queueName() })))
+      .finally(() => { F.queue.value = orig.queue; F.queue.dataset.ready = '1'; refreshDirty(); });
+    // Bearbeiter und Firma: suchen, auswählen, mit „Speichern“ übernehmen
+    pickField(F.user, $('hUserRes', head), userSource([{ value: '__ME__', label: '👤 Mir zuweisen' }]), {
+      label: () => newUser ? userLabel(newUser) : '',
+      onPick: async it => { newUser = it.value === '__ME__' ? await me() : it.value; setTimeout(refreshDirty, 0); },
+    });
+    const firmLabel = () => newFirm ? newFirm.MATCH : (t.MATCHCODE || String(t.KND_ID || ''));
+    pickField(F.firm, $('hFirmRes', head), async () => {
+      const q = F.firm.value.trim();
+      return q.length < 3 ? [] : (await searchAddresses(q)).map(a => ({ value: a, label: (a.IMAGE_NR === 36 ? '🏢 ' : '👤 ') + a.MATCH }));
+    }, { label: firmLabel, delay: 350, onPick: it => { newFirm = it.value; setTimeout(refreshDirty, 0); } });
+    loadUsers().then(() => {
+      if (document.activeElement !== F.user) F.user.value = newUser ? userLabel(newUser) : '';
+      const cr = $('hCreator', head); if (cr && t.ANLAGE_USER_ID) cr.textContent = userLabel(t.ANLAGE_USER_ID); // MultiData-Feld „Ersteller“
+    }).catch(() => null);
     // Parent
-    $('hParent', head).value = t.MDERRDA_SID || '';
+    F.parent.value = orig.parent;
     if (t.MDERRDA_SID) ticketBySid(t.MDERRDA_SID).then(p => {
       const info = $('hParentInfo', head); info.innerHTML = '';
       if (!p) { info.textContent = 'Parent nicht gefunden'; return; }
       const a = wbLink(el('a', { textContent: `↑ #${p.SID} ${p.TITEL}` }), ticketRoute(p.SID), () => openTicket(p.SID));
       info.appendChild(a); info.appendChild(document.createTextNode(` · ${statusInfo(p.STATUS)[1]}`));
     }).catch(() => null);
-    $('hNoNotify', head).checked = t.SUPPRESS_NOTIFY == 1;
-    let newUser = t.BEARBEITER_USER_ID || null;
-    wbLink($('hNewTab', head), ticketRoute(t.SID), () => openInNewTab(ticketRoute(t.SID)));
-    const hUser = $('hUser', head);
-    loadUsers().then(() => {
-      hUser.value = t.BEARBEITER_USER_ID ? userLabel(t.BEARBEITER_USER_ID) : '';
-      if (t.ANLAGE_USER_ID) $('hCreator', head).textContent = userLabel(t.ANLAGE_USER_ID); // Ersteller (MultiData-Feld „Ersteller“)
-    }).catch(() => { hUser.value = t.BEARBEITER_USER_ID || ''; });
-    attachSuggest(hUser, $('hUserRes', head), userSource([{ value: '__ME__', label: '👤 Mir zuweisen' }]), {
-      onPick: async it => {
-        newUser = it.value === '__ME__' ? await me() : it.value;
-        hUser.value = userLabel(newUser);
-        hUser.style.outline = newUser !== t.BEARBEITER_USER_ID ? '2px solid #ffb300' : '';
-      },
+    F.nn.checked = orig.nn;
+    function refreshDirty() {
+      const d = {
+        title: F.title.value.trim() !== orig.title, status: F.status.value !== orig.status, prio: F.prio.value !== orig.prio,
+        queue: !!F.queue.dataset.ready && F.queue.value !== '' && F.queue.value !== orig.queue, user: (newUser || null) !== orig.user, firm: !!newFirm,
+        parent: F.parent.value.trim() !== orig.parent, nn: F.nn.checked !== orig.nn,
+      };
+      for (const [k, v] of Object.entries(d)) (k === 'nn' ? F.nn.closest('label') : F[k]).classList.toggle('chg', v);
+      const n = Object.values(d).filter(Boolean).length;
+      $('hSave', head).textContent = n ? `Speichern (${n})` : 'Speichern';
+      $('hReset', head).style.display = n ? '' : 'none';
+      $('hFirmWarn', head).style.display = d.firm ? '' : 'none';
+      F.prio.style.borderLeft = `6px solid ${prioInfo(F.prio.value)[2]}`;
+      return n;
+    }
+    for (const k of ['title', 'parent']) {
+      F[k].addEventListener('input', refreshDirty);
+      F[k].addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('hSave', head).click(); } });
+    }
+    for (const k of ['status', 'prio', 'queue', 'nn']) F[k].addEventListener('change', refreshDirty);
+    $('hReset', head).addEventListener('click', () => {
+      F.title.value = orig.title; F.status.value = orig.status; F.prio.value = orig.prio; if (F.queue.dataset.ready) F.queue.value = orig.queue;
+      newUser = orig.user; F.user.value = newUser ? userLabel(newUser) : ''; newFirm = null; F.firm.value = firmLabel();
+      F.parent.value = orig.parent; F.nn.checked = orig.nn; refreshDirty();
     });
-    hUser.addEventListener('focus', () => hUser.select());
-    $('hMail', head).textContent = `An: ${t.EMAIL_TO || '–'}${t.EMAIL_CC ? ' · Cc: ' + t.EMAIL_CC : ''}`;
-    $('hSums', head).innerHTML = `Angelegt ${fmtDate(t.ANLAGE_DATUM)} von <b data-ref="hCreator">${esc(t.ANLAGE_USER_ID || '–')}</b> · Bearbeiter ${esc(t.BEARBEITER_USER_ID || '–')}<br>
-      Stunden <b>${fmtH(t.SUM_STD)}</b> · abrechenbar <b>${fmtH(t.MEMO_SUM_ABRSTD)}</b>`;
+    refreshDirty();
+    wbLink($('hNewTab', head), ticketRoute(t.SID), () => openInNewTab(ticketRoute(t.SID)));
+    $('hSums', head).innerHTML = `Angelegt ${fmtDateTime(t.ANLAGE_DATUM)} von <b data-ref="hCreator">${esc(t.ANLAGE_USER_ID || '–')}</b> · Stunden <b>${fmtH(t.SUM_STD)}</b> · abrechenbar <b>${fmtH(t.MEMO_SUM_ABRSTD)}</b><br>` +
+      `An: ${esc(t.EMAIL_TO || '–')}${t.EMAIL_CC ? ' · Cc: ' + esc(t.EMAIL_CC) : ''}`;
     $('hOpen', head).href = mdTicketUrl(t.SID); // immer neuer Tab (Linksklick: wechseln, Mittelklick: im Hintergrund)
     $('hSave', head).addEventListener('click', ev => busy(ev.target, async () => {
+      const done = [];
       try {
         const ch = {};
-        const title = $('hTitle', head).value.trim();
+        const title = F.title.value.trim();
         if (!title) throw new Error('Betreff darf nicht leer sein.');
-        if (title !== t.TITEL) ch.TITEL = title;
-        if (sel.value !== t.STATUS) ch.STATUS = sel.value;
-        if (newUser && newUser !== t.BEARBEITER_USER_ID) ch.BEARBEITER_USER_ID = newUser;
-        if (pSel.value && Number(pSel.value) !== Number(t.PRIORITY)) ch.PRIORITY = Number(pSel.value);
-        if (qSel.value && String(qSel.value) !== String(t.ERRQ_ID)) {
-          ch.ERRQ_ID = Number(qSel.value);
-          const qn = (QUEUES || []).find(q => String(q.id) === String(qSel.value)); if (qn) ch.MDERRQ_FK__NAME_KB = qn.name;
+        if (title !== orig.title) ch.TITEL = title;
+        if (F.status.value !== orig.status) ch.STATUS = F.status.value;
+        if (newUser && newUser !== orig.user) ch.BEARBEITER_USER_ID = newUser;
+        if (F.prio.value && F.prio.value !== orig.prio) ch.PRIORITY = Number(F.prio.value);
+        if (F.queue.dataset.ready && F.queue.value && F.queue.value !== orig.queue) {
+          ch.ERRQ_ID = Number(F.queue.value);
+          const qn = (QUEUES || []).find(q => String(q.id) === F.queue.value); if (qn) ch.MDERRQ_FK__NAME_KB = qn.name;
         }
-        const par = $('hParent', head).value.trim();
-        if (par !== String(t.MDERRDA_SID || '')) {
+        const par = F.parent.value.trim();
+        if (par !== orig.parent) {
           if (par && !/^\d+$/.test(par)) throw new Error('Parent: bitte eine Ticket-ID eingeben.');
           if (par && Number(par) === Number(t.SID)) throw new Error('Ein Ticket kann nicht sein eigenes Parent sein.');
           if (par && !(await ticketBySid(par))) throw new Error(`Parent-Ticket ${par} nicht gefunden.`);
           ch.MDERRDA_SID = par ? Number(par) : null;
         }
-        const nn = $('hNoNotify', head).checked ? 1 : 0;
-        if (nn !== (t.SUPPRESS_NOTIFY == 1 ? 1 : 0)) ch.SUPPRESS_NOTIFY = nn;
-        if (!Object.keys(ch).length) { msg('tMsg', 'Keine Änderungen.'); return; }
-        await updateTicket(t, ch);
+        const nn = F.nn.checked ? 1 : 0;
+        if (nn !== (orig.nn ? 1 : 0)) ch.SUPPRESS_NOTIFY = nn;
+        if (!Object.keys(ch).length && !newFirm) { msg('tMsg', 'Keine Änderungen.'); return; }
+        if (Object.keys(ch).length) { await updateTicket(t, ch); done.push(...HIST_FIELDS.filter(([k]) => k in ch).map(([, l]) => l)); }
+        if (newFirm) { await changeFirm(t, newFirm); done.push('Firma'); }
         await reloadTicket();
-        msg('tMsg', '✔ Ticket gespeichert.', 'ok');
-      } catch (e) { msg('tMsg', '✖ ' + e.message, 'err'); }
+        msg('tMsg', `✔ Gespeichert: ${done.join(', ')}.${newFirm ? ' Bitte abrechenbare Stunden prüfen.' : ''}`, 'ok');
+      } catch (e) {
+        if (done.length) await reloadTicket().catch(() => null);
+        msg('tMsg', '✖ ' + (done.length ? `Gespeichert: ${done.join(', ')} – danach Fehler: ` : '') + e.message, 'err');
+      }
     }));
     confirmBtn($('hQC', head), 'Wirklich schließen?', async () => {
       try { await quickClose(t); await reloadTicket(); msg('tMsg', '✔ Per QuickClose geschlossen.', 'ok'); }
       catch (e) { msg('tMsg', '✖ ' + e.message, 'err'); }
     });
 
-    // Firma ändern
-    $('hFirmBtn', head).addEventListener('click', () => { const b = $('hFirmBox', head); b.style.display = b.style.display ? '' : 'none'; $('hFirmSearch', head).focus(); });
-    let ft;
-    $('hFirmSearch', head).addEventListener('input', () => {
-      clearTimeout(ft);
-      const q = $('hFirmSearch', head).value.trim(), box = $('hFirmRes', head);
-      if (q.length < 3) { box.style.display = 'none'; return; }
-      ft = setTimeout(async () => {
-        try {
-          const res = await searchAddresses(q);
-          box.innerHTML = ''; box.style.display = '';
-          for (const a of res) {
-            const d = el('div'); d.textContent = (a.IMAGE_NR === 36 ? '🏢 ' : '👤 ') + a.MATCH;
-            d.addEventListener('click', () => {
-              box.style.display = 'none';
-              const m = $('hFirmMsg', head); m.className = 'msg'; m.innerHTML = '';
-              m.appendChild(document.createTextNode(`Firma ändern auf „${a.MATCH}“? Abrechenbare Stunden können dabei zurückgesetzt werden. `));
-              const b = el('button', { className: 'btn sm warn', textContent: 'Firma ändern' }); m.appendChild(b);
-              confirmBtn(b, 'Wirklich ändern?', async () => {
-                try { await changeFirm(t, a); await reloadTicket(); msg('tMsg', `✔ Firma geändert auf ${a.MATCH}. Bitte abrechenbare Stunden prüfen.`, 'ok'); }
-                catch (e) { m.textContent = '✖ ' + e.message; m.className = 'msg err'; toast(e.message); }
-              });
-            });
-            box.appendChild(d);
-          }
-          if (!res.length) box.innerHTML = '<div><small>Keine Treffer</small></div>';
-        } catch (e) { $('hFirmMsg', head).textContent = '✖ ' + e.message; toast(e.message); }
-      }, 300);
-    });
-
-    // --- Anlagetext ---
     const anl = el('details', { className: 'card' });
     anl.innerHTML = `<summary>📄 Anlagetext</summary><div class="txt"></div>`;
     persistDetails(anl, 'ticket.anlagetext', true);
-    anl.querySelector('.txt').innerHTML = t.ANLAGE_NOTIZ ? sanitize(t.ANLAGE_NOTIZ) : '<span class="hint">– kein Anlagetext –</span>';
+    const fillAnl = () => { if (anl.dataset.filled) return; anl.dataset.filled = '1'; fillHtml(anl.querySelector('.txt'), t.ANLAGE_NOTIZ, '<span class="hint">– kein Anlagetext –</span>'); };
+    if (anl.open) fillAnl();
+    anl.addEventListener('toggle', () => { if (anl.open) fillAnl(); });
     if (t.ANLAGE_NOTIZ && t.EMAIL_TO) {
       const bar = el('div', { className: 'row' }); bar.style.marginTop = '6px';
       const srcA = { inbound: true, from: t.EMAIL_TO, cc: t.EMAIL_CC, date: t.ANLAGE_DATUM, subject: t.TITEL, html: t.ANLAGE_NOTIZ };
@@ -2235,7 +2453,7 @@
     persistDetails(add, 'ticket.neuerKommentar', false);
     const form = timeForm({
       billableDefault: billableDefault({ kndId: t.KND_ID, name: t.MATCHCODE }), allowZero: true, kontaktarten: ka,
-      allowMail: true, allowFiles: true, kndId: t.KND_ID,
+      allowMail: true, allowFiles: true, kndId: t.KND_ID, allowOnsite: true,
       mailDefaults: { to: t.EMAIL_TO, cc: t.EMAIL_CC, more: ui.comments.flatMap(c => [...splitMails(c.EMAIL_TO), ...splitMails(c.EMAIL_CC)]) }, suppressNotify: t.SUPPRESS_NOTIFY == 1,
       onRemoveSuppress: async () => { await updateTicket(t, { SUPPRESS_NOTIFY: 0 }); t.SUPPRESS_NOTIFY = 0; $('hNoNotify', head).checked = false; },
       ticketDocs: ui.docs || [],
@@ -2254,7 +2472,7 @@
     // Antworten / Allen antworten / Weiterleiten (aus Kommentar oder Anlagetext)
     // Ungespeicherte Eingaben? Dann bei Änderungen von außen nicht automatisch neu laden, sondern Hinweis zeigen.
     ui.form = form; ui.addBox = add; ui.draftSeen = (drafts.get('ticket:' + t.SID) || {}).savedAt || null;
-    ui.isDirty = () => ui.editing.size > 0 || !form.state().empty || $('hTitle', head).value.trim() !== (t.TITEL || '') || sel.value !== t.STATUS;
+    ui.isDirty = () => ui.editing.size > 0 || !form.state().empty || refreshDirty() > 0;
     ui.reply = (src, mode) => {
       const inbound = src.inbound;
       const from = inbound ? src.from : (src.fromLabel || userLabel(src.user));
@@ -2303,18 +2521,100 @@
     }, e => msg('tMsg', '✖ ' + e.message, 'err'), 6000);
     view.appendChild(add);
 
-    // --- Kommentare ---
-    const h = el('div', { className: 'row' }); h.style.marginTop = '12px';
-    h.innerHTML = `<b style="flex:1">Kommentare (${ui.comments.length})</b>
-      <button class="btn sm sec" data-ref="cAllOpen">▾ alle aufklappen</button><button class="btn sm sec" data-ref="cAllClose">▸ alle einklappen</button>`;
-    view.appendChild(h);
-    const setAll = open => { setAllComments(!open); view.querySelectorAll('.card[data-csid]').forEach(cd => cd.classList.toggle('collapsed', !open)); };
-    $('cAllOpen', h).addEventListener('click', () => setAll(true));
-    $('cAllClose', h).addEventListener('click', () => setAll(false));
-    for (const c of ui.comments) view.appendChild(commentCard(c, ka));
+    // --- Reiter unten: Kommentare | Verlauf ---
+    const bt = el('div', { className: 'btabs' });
+    bt.innerHTML = `<button data-b="c">💬 Kommentare (${ui.comments.length})</button><button data-b="h" title="Änderungen an Status, Bearbeiter, Queue … sowie Kommentare, Mails und Anhänge in zeitlicher Reihenfolge">🕘 Verlauf</button>
+      <span style="flex:1"></span><span data-ref="cTools"><button class="btn sm sec" data-ref="cAllOpen">▾ alle aufklappen</button> <button class="btn sm sec" data-ref="cAllClose">▸ alle einklappen</button></span>`;
+    view.appendChild(bt);
+    const cBox = el('div'), hBox = el('div');
+    view.append(cBox, hBox);
+    const showBottom = b => {
+      bt.querySelectorAll('[data-b]').forEach(x => x.classList.toggle('on', x.dataset.b === b));
+      cBox.style.display = b === 'c' ? '' : 'none'; hBox.style.display = b === 'h' ? '' : 'none'; $('cTools', bt).style.display = b === 'c' ? '' : 'none';
+      if (b === 'h') renderHistory(hBox, t);
+    };
+    bt.querySelectorAll('[data-b]').forEach(x => x.addEventListener('click', () => { secSet('ticket.bottom', x.dataset.b); showBottom(x.dataset.b); }));
+    const setAll = open => { setAllComments(!open); cBox.querySelectorAll('.card[data-csid]').forEach(cd => { cd.classList.toggle('collapsed', !open); if (open && cd.fill) cd.fill(); }); };
+    $('cAllOpen', bt).addEventListener('click', () => setAll(true));
+    $('cAllClose', bt).addEventListener('click', () => setAll(false));
+    // aus dem Verlauf zu einem Kommentar springen
+    ui.showComment = csid => {
+      showBottom('c');
+      const cd = cBox.querySelector(`.card[data-csid="${csid}"]`); if (!cd) return;
+      cd.classList.remove('collapsed'); if (cd.fill) cd.fill();
+      cd.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      cd.style.outline = '2px solid #00897b'; setTimeout(() => { cd.style.outline = ''; }, 2000);
+    };
+    showBottom(secGet('ticket.bottom', 'c'));
+    // Kommentare in Portionen aufbauen: der Tab bleibt bedienbar, auch bei sehr vielen/großen Kommentaren
+    const rseq = ui.renderSeq = (ui.renderSeq || 0) + 1;
+    // Inhalte aufgeklappter Kommentare erst aufbauen, wenn sie in die Nähe des sichtbaren Bereichs gescrollt werden
+    if (ui.commentIO) ui.commentIO.disconnect();
+    const io = ui.commentIO = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
+      for (const e of entries) if (e.isIntersecting) { io.unobserve(e.target); if (e.target.fill) e.target.fill(); }
+    }, { root: panel.querySelector('.body'), rootMargin: '1500px 0px' }) : null;
+    (async () => {
+      const list = ui.comments;
+      for (let i = 0; i < list.length; i += CFG.commentBatch) {
+        if (i) { await sleep(0); if (rseq !== ui.renderSeq) return; }
+        const frag = document.createDocumentFragment();
+        for (const c of list.slice(i, i + CFG.commentBatch)) frag.appendChild(commentCard(c, ka, io));
+        cBox.appendChild(frag);
+      }
+      if (!list.length) cBox.innerHTML = '<div class="hint" style="margin-top:8px">Noch keine Kommentare.</div>';
+    })();
   }
 
-  function commentCard(c, ka) {
+  // HTML-Inhalt anzeigen; sehr große Inhalte (z. B. viele eingebettete Bilder) erst auf Klick
+  function fillHtml(box, html, empty = '') {
+    html = html || '';
+    if (!html) { box.innerHTML = empty; return; }
+    if (html.length > CFG.bigHtmlMB * 1048576) {
+      box.innerHTML = `<div class="hint">Umfangreicher Inhalt (${(html.length / 1048576).toFixed(1).replace('.', ',')} MB, z. B. viele eingebettete Bilder). <button class="btn sm sec">Anzeigen</button></div>`;
+      box.querySelector('button').addEventListener('click', ev => { ev.stopPropagation(); box.innerHTML = showHtml(html); });
+    } else box.innerHTML = showHtml(html);
+  }
+
+  // Verlauf: Anlage, Feldänderungen, Kommentare, Mails, Anhänge – neueste zuerst
+  function renderHistory(box, t) {
+    const h = histGet(t.SID) || { ch: [], since: null };
+    const who = id => id ? userLabel(id) : '–';
+    const ev = [{ at: t.ANLAGE_DATUM, icon: '🆕', who: who(t.ANLAGE_USER_ID), what: 'Ticket angelegt', kind: 'x' }];
+    for (const c of ui.comments || []) {
+      const inbound = c.MEMO_IA == '1';
+      const parts = [kontaktLabel(c.LST_ID), Number(c.LFZ_STD) ? fmtH(c.LFZ_STD) + ' h' : '', Number(c.INABR_STD) ? 'abr. ' + fmtH(c.INABR_STD) : '', isOnsite(c) ? '🚗 vor Ort' : ''].filter(Boolean);
+      ev.push({ at: (inbound && c.EMAIL_DATUM) || c.LST_DATUM, icon: inbound ? '📥' : c.EMAIL_TO ? '✉' : '💬', who: inbound ? (c.EMAIL_TO || '–') : who(c.BEARBEITER_USER_ID),
+        what: (inbound ? 'Mail eingegangen' : c.EMAIL_TO ? `Mail an ${c.EMAIL_TO}` : 'Kommentar') + (parts.length ? ' · ' + parts.join(' · ') : ''), csid: c.SID, kind: 'c' });
+    }
+    for (const d of ui.docs || []) ev.push({ at: d.DATUM, icon: '📎', who: d.CREATED_BY || '–', what: 'Anhang: ' + (d.DOCUMENT_NAME || '(ohne Namen)'), kind: 'd' });
+    for (const c of h.ch || []) ev.push({ at: c.at, icon: c.src === 'wb' ? '✎' : '↻', who: c.src === 'wb' ? who(c.by) : '–', kind: 'f', src: c.src, after: c.after,
+      what: c.from || c.to ? `${c.label}: ${c.from || '–'} → ${c.to || '–'}` : c.label });
+    ev.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+    const onlyCh = secGet('ticket.histOnly', false);
+    box.innerHTML = `<div class="row" style="align-items:center;margin-top:6px"><label class="chk" style="margin:0"><input type="checkbox" data-ref="hiOnly"> nur Feldänderungen</label>
+      <span class="hint" style="flex:1;text-align:right">${h.since ? `Feldänderungen werden seit ${fmtDateTime(h.since)} erfasst (beim Öffnen in der Werkbank, nur in diesem Browser).` : ''}</span></div>`;
+    $('hiOnly', box).checked = onlyCh;
+    $('hiOnly', box).addEventListener('change', () => { secSet('ticket.histOnly', $('hiOnly', box).checked); renderHistory(box, t); });
+    const tbl = el('table', { className: 'hist' });
+    tbl.innerHTML = '<thead><tr><th>Zeit</th><th>Wer</th><th>Was</th></tr></thead>';
+    const tb = el('tbody'); tbl.appendChild(tb);
+    for (const e of ev.filter(e => !onlyCh || e.kind === 'f')) {
+      const tr = el('tr', { className: e.kind === 'f' ? 'chgrow' : e.csid ? 'r' : '' });
+      tr.innerHTML = `<td class="w"></td><td class="w"></td><td></td>`;
+      tr.children[0].textContent = fmtDateTime(e.at);
+      if (e.kind === 'f' && e.src === 'ext' && e.after) tr.children[0].title = `Erkannt beim Öffnen: geändert zwischen ${fmtDateTime(e.after)} und ${fmtDateTime(e.at)} (Zeit = letzte Änderung laut MultiData)`;
+      tr.children[1].textContent = e.who;
+      tr.children[2].textContent = `${e.icon} ${e.what}`;
+      if (e.kind === 'f') tr.children[2].appendChild(el('span', { className: 'src', textContent: e.src === 'wb' ? 'Werkbank' : 'MultiData / Kolleg:in' }));
+      if (e.csid) { tr.title = 'Klick: zum Kommentar'; tr.addEventListener('click', () => ui.showComment(e.csid)); }
+      tb.appendChild(tr);
+    }
+    if (!tb.children.length) tb.innerHTML = '<tr><td colspan="3" class="hint">Noch keine Feldänderungen erfasst.</td></tr>';
+    box.appendChild(tbl);
+  }
+  const kontaktLabel = id => ((KONTAKTARTEN || []).find(k => k[0] === id) || [id, id || ''])[1];
+
+  function commentCard(c, ka, io = null) {
     const card = el('div', { className: 'card' + (commentCollapsed(c.SID) ? ' collapsed' : '') });
     card.dataset.csid = c.SID;
     const kaName = (ka.find(k => k[0] === c.LST_ID) || [c.LST_ID, c.LST_ID])[1];
@@ -2326,6 +2626,7 @@
         <span>Std. <b>${fmtH(c.LFZ_STD)}</b></span>
         <span class="tag ${c.INABR_STD ? 'abr' : ''}">abr. ${fmtH(c.INABR_STD)}</span>
         ${c.LFZ_STD_MAN == 1 ? '<span class="tag">manuell</span>' : ''}
+        ${isOnsite(c) ? `<span class="tag onsite" title="Wegzeit ${esc(c.WEGZEIT ?? '–')} · Wegstrecke ${esc(c.WEGSTRECKE ?? '–')}">🚗 vor Ort</span>` : ''}
         <span style="flex:1"></span>
         ${(c.EMAIL_TO || c.MEMO_IA == '1') ? `<button class="btn sm sec" data-r="one" title="Antworten">↩</button><button class="btn sm sec" data-r="all" title="Allen antworten">↩↩</button><button class="btn sm sec" data-r="fwd" title="Weiterleiten">↪</button>` : ''}
         <button class="btn sm sec" data-ref="cEdit">✎ Bearbeiten</button>
@@ -2333,7 +2634,9 @@
       </div>
       <div class="mailinfo" data-ref="cMail" style="display:none"></div>
       <div class="txt"></div>`;
-    card.querySelector('.txt').innerHTML = sanitize(c.NOTIZ);
+    // Inhalt erst aufbauen, wenn der Kommentar aufgeklappt ist (eingeklappte kosten so fast nichts)
+    card.fill = () => { if (card.dataset.filled) return; card.dataset.filled = '1'; fillHtml(card.querySelector('.txt'), c.NOTIZ); };
+    if (!card.classList.contains('collapsed')) { if (io) io.observe(card); else card.fill(); }
     if (c.EMAIL_TO || c.EMAIL_DATUM || c.MEMO_IA == '1') {
       const mi = $('cMail', card); mi.style.display = '';
       mi.textContent = c.MEMO_IA == '1' ? `📥 Eingehende Mail von ${c.EMAIL_TO || '–'}${c.EMAIL_CC ? ' · Cc: ' + c.EMAIL_CC : ''}` :
@@ -2346,6 +2649,7 @@
     $('cHead', card).addEventListener('click', e => {
       if (e.target.closest('button')) return;
       const col = card.classList.toggle('collapsed');
+      if (!col) card.fill();
       setCommentCollapsed(c.SID, col);
     });
     confirmBtn($('cDel', card), 'Wirklich löschen?', async () => {
@@ -2377,6 +2681,7 @@
         <div class="c s"><label class="l">abr. Stunden</label><input type="text" data-ref="eAbr"></div>
         <div class="c"><div class="hint" data-ref="eHint"></div></div>
       </div>
+      ${WEG_OK ? '<label class="chk" title="Wegzeit und Wegstrecke = 1 (Kennzeichen für die Buchhaltung)"><input type="checkbox" data-ref="eOnsite"> 🚗 Vor-Ort-Termin</label>' : ''}
       <label class="l">Text</label>
       <div class="rte" contenteditable="true" spellcheck="true" lang="de" data-ref="eTxt"></div>
       <div class="row" style="margin-top:8px">
@@ -2391,6 +2696,7 @@
     $('eMan', card).checked = c.LFZ_STD_MAN == 1;
     $('eStd', card).value = c.LFZ_STD ?? '';
     $('eAbr', card).value = c.INABR_STD ?? '';
+    if (WEG_OK) $('eOnsite', card).checked = isOnsite(c);
     $('eTxt', card).innerHTML = sanitize(c.NOTIZ);
     const origHtml = $('eTxt', card).innerHTML;
     const sync = () => {
@@ -2407,6 +2713,7 @@
         const html = $('eTxt', card).innerHTML;
         if (html !== origHtml) ch.html = sanitize(html);
         if ($('eKa', card).value !== c.LST_ID) ch.kontaktart = $('eKa', card).value;
+        if (WEG_OK && $('eOnsite', card).checked !== isOnsite(c)) ch.onsite = $('eOnsite', card).checked;
         const d = $('eDate', card).value, f = $('eFrom', card).value, t = $('eTo', card).value;
         if (d !== date || f !== (c.LFZ_VON || '').slice(11, 16) || t !== (c.LFZ_BIS || '').slice(11, 16)) {
           if (!d || !f || !t) throw new Error('Datum, von und bis ausfüllen.');
@@ -2431,8 +2738,9 @@
 
   // Wiederverwendbares Formular: Datum/Dauer/Kontaktart, Text-Editor, Abrechenbar, optional Mail & Anhänge
   function timeForm({ billableDefault: bd = false, allowZero = false, kontaktarten: ka = [], allowMail = false, allowFiles = false,
-    mailDefaults = {}, kndId = null, suppressNotify = false, onRemoveSuppress = null, ticketDocs = [], onChange = null }) {
+    mailDefaults = {}, kndId = null, suppressNotify = false, onRemoveSuppress = null, ticketDocs = [], onChange = null, allowOnsite = false }) {
     const w = el('div');
+    allowOnsite = allowOnsite && WEG_OK;
     w.innerHTML = `
       <div class="row">
         <div class="c s" style="flex-basis:150px"><label class="l">Datum</label><input type="date" data-ref="fDate"></div>
@@ -2443,6 +2751,7 @@
       <div class="hint" data-ref="fCalc"></div>
       <label class="chk"><input type="checkbox" data-ref="fBill"> Abrechenbar</label>
       <span data-ref="fAbrBox" style="display:none"><label class="chk">abr. Stunden (leer = wie gebucht) <input type="text" data-ref="fAbr" style="width:80px"></label></span>
+      ${allowOnsite ? '<label class="chk" style="margin-left:12px" title="Setzt im Kommentar Wegzeit und Wegstrecke auf 1 (Kennzeichen für die Buchhaltung)"><input type="checkbox" data-ref="fOnsite"> 🚗 Vor-Ort-Termin</label>' : ''}
       ${allowMail ? `<label class="chk" style="margin-left:12px"><input type="checkbox" data-ref="fMailOn"> <b>✉ Als Mail senden</b> („Antwort sofort senden“)</label>
       <div class="mailbox" data-ref="fMailBox" style="display:none">
         <div class="warnbox" data-ref="fSupp" style="display:none">Am Ticket ist „Keine Benachrichtigungen“ gesetzt – so geht keine Mail raus.
@@ -2507,7 +2816,12 @@
     const saveSel = () => { const sel = getSelection(); if (sel.rangeCount && rte.contains(sel.anchorNode)) savedRange = sel.getRangeAt(0).cloneRange(); };
     const restoreSel = () => { rte.focus(); if (savedRange) { const sel = getSelection(); sel.removeAllRanges(); sel.addRange(savedRange); } };
     ['keyup', 'mouseup', 'input'].forEach(t => rte.addEventListener(t, saveSel));
-    document.addEventListener('selectionchange', () => { if (rte.contains(getSelection().anchorNode)) saveSel(); });
+    let shown = false;
+    const onSelChange = () => {
+      if (w.isConnected) shown = true; else if (shown) { document.removeEventListener('selectionchange', onSelChange); return; }
+      if (rte.contains(getSelection().anchorNode)) saveSel();
+    };
+    document.addEventListener('selectionchange', onSelChange); // meldet sich ab, sobald das Formular nicht mehr angezeigt wird
     const cmd = (c, v = null) => { restoreSel(); document.execCommand('styleWithCSS', false, true); document.execCommand(c, false, v); saveSel(); };
     w.querySelectorAll('.tb button[data-cmd]').forEach(b => b.addEventListener('mousedown', e => { e.preventDefault(); cmd(b.dataset.cmd); }));
     $('fFont', w).addEventListener('change', e => cmd('fontName', e.target.value));
@@ -2636,10 +2950,12 @@
         }
         // Grundschrift (Standard Arial) für Mails mitgeben, damit der Empfänger sie so sieht
         if (mail) html = `<div style="font-family:${CFG.defaultFont}, sans-serif;font-size:${CFG.defaultFontSize}pt">${html}</div>`;
-        return { date, minutes, html, kontaktart: $('fKa', w).value, billable, abrHours: billable ? parseHours($('fAbr', w).value) : null, mail, files: [...files] };
+        return { date, minutes, html, kontaktart: $('fKa', w).value, billable, abrHours: billable ? parseHours($('fAbr', w).value) : null, mail, files: [...files],
+          onsite: allowOnsite && $('fOnsite', w).checked };
       },
       reset() {
         $('fDur', w).value = ''; rte.innerHTML = ''; $('fAbr', w).value = ''; files = []; renderFiles(); calc();
+        if (allowOnsite) $('fOnsite', w).checked = false;
         if (allowMail) { $('fMailOn', w).checked = false; toggleMail(); }
       },
       setBillable(v) { $('fBill', w).checked = v; sync(); },
@@ -2647,12 +2963,14 @@
       state() {
         return { date: $('fDate', w).value, dur: $('fDur', w).value, ka: $('fKa', w).value, bill: $('fBill', w).checked, abr: $('fAbr', w).value, html: rte.innerHTML,
           mailOn: allowMail ? $('fMailOn', w).checked : false, to: allowMail ? $('fTo', w).value : '', cc: allowMail ? $('fCc', w).value : '', bcc: allowMail ? $('fBcc', w).value : '',
+          onsite: allowOnsite ? $('fOnsite', w).checked : false,
           empty: !rte.innerText.trim() && !/<img|<table/i.test(rte.innerHTML) && !$('fDur', w).value };
       },
       restore(d) {
         if (!d) return;
         $('fDate', w).value = d.date || todayStr(); $('fDur', w).value = d.dur || ''; if (d.ka) $('fKa', w).value = d.ka;
         $('fBill', w).checked = !!d.bill; $('fAbr', w).value = d.abr || ''; sync(); calc();
+        if (allowOnsite) $('fOnsite', w).checked = !!d.onsite;
         rte.innerHTML = sanitize(d.html || '');
         if (allowMail && d.mailOn) { $('fMailOn', w).checked = true; $('fTo', w).value = d.to || ''; $('fCc', w).value = d.cc || ''; $('fBcc', w).value = d.bcc || ''; toggleMail(true); }
       },
@@ -2708,7 +3026,7 @@
   let newForm = null;
   async function ensureNewForm() {
     if (newForm) return;
-    newForm = timeForm({ billableDefault: false, kontaktarten: await kontaktarten(), onChange: () => saveNewDraft() });
+    newForm = timeForm({ billableDefault: false, kontaktarten: await kontaktarten(), onChange: () => saveNewDraft(), allowOnsite: true });
     $('nTimeBox').appendChild(newForm.el);
   }
   $('nWithTime').addEventListener('change', async () => { await ensureNewForm(); $('nTimeBox').style.display = $('nWithTime').checked ? '' : 'none'; saveNewDraft(); });
@@ -2890,8 +3208,52 @@
     const box = $('stBlocks'); box.innerHTML = '';
     (st.blocks || []).forEach(b => addBlockEditor(b));
     if (!(st.blocks || []).length) box.innerHTML = '<div class="hint" data-empty="1">Noch keine eigenen Bausteine.</div>';
-    renderTeam();
+    renderTeam(); renderIntern();
   }
+
+  // --- Internes Zeiten-Ticket ---
+  async function renderIntern() {
+    const c = internCfg(), k = monthKey(todayStr());
+    $('itPat').value = c.pattern || CFG.intern.pattern;
+    $('itCurL').textContent = `Ticket ${monthTag(k)}`;
+    $('itCur').value = c.tickets[k] || '';
+    $('itNew').textContent = `＋ Neues Ticket für ${monthTag(k)}`;
+    $('itFirm').value = c.firm ? c.firm.MATCH : '';
+    $('itFirm').placeholder = c.firm ? '' : `Standard: erste interne Firma (${String((team().intern[0] || {}).name || '–').replace(/^\d+\s*-\s*/, '')})`;
+    $('itK').value = c.k || '';
+    $('itK').placeholder = await internKuerzel().catch(() => 'z. B. LE');
+    $('itInfo').textContent = '';
+    if (c.tickets[k]) ticketBySid(c.tickets[k]).then(t => { $('itInfo').textContent = t ? `„${t.TITEL}“ · ${statusInfo(t.STATUS)[1]}` : 'Ticket nicht gefunden'; }).catch(() => null);
+  }
+  $('itK').addEventListener('change', () => { saveIntern({ k: $('itK').value.trim().toUpperCase() }); renderIntern(); renderInternInfo(); });
+  $('itPat').addEventListener('change', () => { saveIntern({ pattern: $('itPat').value.trim() || CFG.intern.pattern }); renderIntern(); renderInternInfo(); });
+  $('itCur').addEventListener('change', async () => {
+    const v = $('itCur').value.trim(), k = monthKey(todayStr()), tk = { ...internCfg().tickets };
+    if (v && !/^\d+$/.test(v)) { msg('itMsg', '✖ Bitte eine Ticket-Nr. eingeben.', 'err'); return; }
+    if (v) tk[k] = Number(v); else delete tk[k];
+    saveIntern({ tickets: tk }); renderIntern(); renderInternInfo();
+  });
+  pickField($('itFirm'), $('itFirmRes'), async () => {
+    const q = $('itFirm').value.trim();
+    return q.length < 3 ? [] : (await searchAddresses(q)).map(a => ({ value: a, label: (a.IMAGE_NR === 36 ? '🏢 ' : '👤 ') + a.MATCH }));
+  }, { label: () => (internCfg().firm || {}).MATCH || '', delay: 350, onPick: it => { saveIntern({ firm: { ROW_ID: it.value.ROW_ID, MATCH: it.value.MATCH } }); msg('itMsg', '✔ Firma übernommen.', 'ok'); } });
+  $('itFind').addEventListener('click', ev => busy(ev.target, async () => {
+    const k = monthKey(todayStr());
+    try {
+      const tk = { ...internCfg().tickets }; delete tk[k]; saveIntern({ tickets: tk }); // gemerktes ignorieren, neu suchen
+      const t = await findInternTicket(k);
+      msg('itMsg', t ? `✔ Gefunden: #${t.SID} „${t.TITEL}“.` : `Kein Ticket „${await internTitle(k)}“ gefunden.`, t ? 'ok' : '');
+      renderIntern(); renderInternInfo();
+    } catch (e) { msg('itMsg', '✖ ' + e.message, 'err'); }
+  }));
+  confirmBtn($('itNew'), () => `Wirklich anlegen? (Vormonat wird geschlossen)`, async () => {
+    try {
+      msg('itMsg', 'Lege an …');
+      const { t, closed } = await createInternTicket(monthKey(todayStr()));
+      msg('itMsg', `✔ #${t.SID} „${t.TITEL}“ angelegt${closed ? `, #${closed.SID} „${closed.TITEL}“ per QuickClose geschlossen` : ''}.`, 'ok');
+      renderIntern(); renderInternInfo();
+    } catch (e) { msg('itMsg', '✖ ' + e.message, 'err'); }
+  }, e => msg('itMsg', '✖ ' + e.message, 'err'), 5000);
 
   // --- Team-Konfiguration ---
   const custSource = async q => {
@@ -3057,7 +3419,6 @@
     $('zFrom').value = z.from || first; $('zTo').value = z.to || todayStr();
     $('zColor').checked = z.color !== false; $('zWeekend').checked = z.weekend !== false; $('zDetails').checked = !!z.details;
     $('zLow').value = z.low ?? CFG.dayColors.low;
-    $('zTicket').value = settings().timesTicket || '';
     const box = $('zRanges'), t = todayStr();
     const mon = s => addDays(s, -((weekday(s) + 6) % 7));
     const lastOfMonth = (y, m) => addDays(`${m === 11 ? y + 1 : y}-${pad((m + 1) % 12 + 1)}-01`, -1);
@@ -3071,7 +3432,32 @@
   })();
   const saveTimesView = () => store.set(CFG.store.timesView, { from: $('zFrom').value, to: $('zTo').value, color: $('zColor').checked, weekend: $('zWeekend').checked, details: $('zDetails').checked, low: +$('zLow').value || CFG.dayColors.low });
   ['zColor', 'zWeekend', 'zDetails', 'zLow'].forEach(r => $(r).addEventListener('change', () => { saveTimesView(); renderTimes(); }));
-  $('zTicket').addEventListener('change', () => saveSettings({ ...settings(), timesTicket: $('zTicket').value.trim() }));
+  // Hinweis, auf welches interne Ticket gebucht wird (je Monat im gewählten Zeitraum)
+  async function renderInternInfo() {
+    const box = $('zIntern'); if (!box) return;
+    const from = $('zFrom').value || todayStr(), to = $('zTo').value || todayStr();
+    const months = []; for (let k = monthKey(to); k >= monthKey(from) && months.length < 7; k = prevMonth(k)) months.unshift(k);
+    box.innerHTML = '';
+    for (const k of months) {
+      const span = el('span'); span.style.marginRight = '14px'; box.appendChild(span);
+      span.textContent = `${monthTag(k)}: …`;
+      try {
+        const t = await findInternTicket(k);
+        span.textContent = `${monthTag(k)}: `;
+        if (t) { span.appendChild(wbLink(el('a', { textContent: `#${t.SID} ${t.TITEL}` }), ticketRoute(t.SID), () => openTicket(t.SID))); if (t.STATUS === 'Z') span.appendChild(document.createTextNode(' (abgeschlossen)')); }
+        else if (k === monthKey(todayStr())) {
+          span.appendChild(document.createTextNode('noch kein Ticket '));
+          const b = el('button', { className: 'btn sm sec', textContent: '＋ anlegen' });
+          confirmBtn(b, 'Anlegen? (Vormonat wird geschlossen)', async () => {
+            try { const { t: n, closed } = await createInternTicket(k); msg('zMsg', `✔ #${n.SID} „${n.TITEL}“ angelegt${closed ? `, #${closed.SID} geschlossen` : ''}.`, 'ok'); renderInternInfo(); }
+            catch (e) { msg('zMsg', '✖ ' + e.message, 'err'); }
+          });
+          span.appendChild(b);
+        } else span.appendChild(document.createTextNode('kein Ticket gefunden'));
+      } catch (e) { span.textContent = `${monthTag(k)}: ✖ ${e.message}`; }
+    }
+  }
+  ['zFrom', 'zTo'].forEach(r => $(r).addEventListener('change', () => { if (ui.tab === 'times') renderInternInfo(); }));
 
   async function runTimes() {
     const from = $('zFrom').value, to = $('zTo').value;
@@ -3107,15 +3493,17 @@
     $('zPClear').addEventListener('click', () => { store.set(CFG.store.personio, {}); renderTimes(); });
   }
 
-  // Ausgleich: Differenz Personio − gebucht auf das Sammelticket buchen
+  // Rest/Fehlzeit als Kommentar ohne Text auf das interne Ticket des jeweiligen Monats buchen. days = [{ date, diff (h) }]
   async function bookBalance(days) {
-    const sid = $('zTicket').value.trim();
-    if (!/^\d+$/.test(sid)) throw new Error('Bitte zuerst ein Ticket für den Ausgleich eintragen.');
-    const t = await ticketBySid(sid); if (!t) throw new Error(`Ticket ${sid} nicht gefunden.`);
+    const done = [];
     for (const d of days) {
-      await addComment(t, { date: d.date, minutes: Math.round(d.diff * 60), html: '<p>Interne Nacharbeiten und Abgleich der Arbeitszeit.</p>', kontaktart: CFG.defaultKontaktart, billable: false });
+      const k = monthKey(d.date), t = await findInternTicket(k);
+      if (!t) throw new Error(`Kein internes Zeiten-Ticket für ${monthTag(k)} – unter ⚙ Einstellungen anlegen oder eintragen.${done.length ? ` (bereits gebucht: ${done.length} Tag(e))` : ''}`);
+      await addComment(t, { date: d.date, minutes: roundUp(Math.round(d.diff * 60)), html: '', kontaktart: CFG.defaultKontaktart, billable: false });
+      done.push(`${fmtDate(d.date)} ${fmtH(d.diff)} h → #${t.SID}`);
     }
-    log('Zeitausgleich gebucht', `#${sid}: ` + days.map(d => `${fmtDate(d.date)} ${fmtH(d.diff)} h`).join(', '));
+    log('Restzeit intern gebucht', done.join(', '));
+    return done;
   }
 
   function renderTimes() {
@@ -3169,18 +3557,45 @@
     box.appendChild(kpi);
     if (hasP && all.diffPlus.length) {
       const bar = el('div', { className: 'row' }); bar.style.margin = '6px 0';
-      const b = el('button', { className: 'btn sm', textContent: `Alle Fehlzeiten ausgleichen (${all.diffPlus.length} Tage, ${fmtH(sumDiff)} h)` });
-      confirmBtn(b, () => { if (!/^\d+$/.test($('zTicket').value.trim())) throw new Error('Bitte zuerst ein Ticket für den Ausgleich eintragen.'); return `Wirklich ${fmtH(sumDiff)} h auf #${$('zTicket').value.trim()} buchen?`; },
-        async () => { try { msg('zMsg', 'Buche …'); await bookBalance(all.diffPlus); await runTimes(); msg('zMsg', '✔ Ausgleich gebucht.', 'ok'); } catch (e) { msg('zMsg', '✖ ' + e.message, 'err'); } },
+      const b = el('button', { className: 'btn sm', textContent: `Alle Fehlzeiten intern buchen (${all.diffPlus.length} Tage, ${fmtH(sumDiff)} h)`, title: 'Je Tag die Differenz zu Personio als Kommentar ohne Text auf das interne Zeiten-Ticket des Monats buchen' });
+      confirmBtn(b, `Wirklich ${fmtH(sumDiff)} h intern buchen?`,
+        async () => { try { msg('zMsg', 'Buche …'); const d = await bookBalance(all.diffPlus); await runTimes(); msg('zMsg', `✔ Gebucht: ${d.join(', ')}.`, 'ok'); } catch (e) { msg('zMsg', '✖ ' + e.message, 'err'); await runTimes().catch(() => null); } },
         e => msg('zMsg', '✖ ' + e.message, 'err'), 6000);
       bar.appendChild(b); box.appendChild(bar);
     }
+    // Rest eines Tages intern buchen: Vorschlag = Differenz zu Personio, sonst Stunden selbst eintragen
+    const restCell = (cell, d, preset) => {
+      const b = el('button', { className: 'btn sm sec', textContent: preset ? `+${fmtH(preset)} h intern` : '＋ intern',
+        title: 'Rest als Kommentar ohne Text auf das interne Zeiten-Ticket des Monats buchen' });
+      b.addEventListener('click', ev => {
+        ev.stopPropagation();
+        const f = el('span', { className: 'inl' });
+        f.innerHTML = `<input type="text" placeholder="h" title="Stunden, z. B. 1,5 oder 0:45"> <button class="btn sm">Buchen</button> <button class="btn sm sec" title="Abbrechen">×</button>`;
+        const [inp, go, x] = [f.querySelector('input'), ...f.querySelectorAll('button')];
+        inp.value = preset ? String(preset).replace('.', ',') : '';
+        x.addEventListener('click', e2 => { e2.stopPropagation(); f.replaceWith(b); });
+        f.addEventListener('click', e2 => e2.stopPropagation());
+        inp.addEventListener('keydown', e2 => { if (e2.key === 'Enter') go.click(); if (e2.key === 'Escape') x.click(); });
+        confirmBtn(go, () => {
+          const m = roundUp(parseMinutes(inp.value));
+          if (!m || isNaN(m)) throw new Error('Bitte die Stunden eingeben, z. B. 1,5.');
+          if (m > CFG.maxHours * 60) throw new Error(`Mehr als ${CFG.maxHours} h – bitte prüfen.`);
+          return `${fmtH(m / 60)} h buchen?`;
+        }, async () => {
+          try { const done = await bookBalance([{ date: d, diff: roundUp(parseMinutes(inp.value)) / 60 }]); await runTimes(); msg('zMsg', `✔ Gebucht: ${done.join(', ')}.`, 'ok'); }
+          catch (e) { msg('zMsg', '✖ ' + e.message, 'err'); }
+        }, e => msg('zMsg', '✖ ' + e.message, 'err'));
+        b.replaceWith(f); inp.focus(); inp.select();
+      });
+      cell.appendChild(b);
+    };
 
     // Tagesliste
     const tbl = el('table', { className: 'ztbl' });
-    tbl.innerHTML = `<thead><tr><th>Tag / Ticket</th><th>Kunde</th><th class="n">Std.</th><th class="n">abr.</th>${hasP ? '<th class="n">Personio</th><th class="n">Diff.</th><th></th>' : ''}</tr></thead>`;
+    const act = single; // Spalte „intern buchen“ nur bei den eigenen Zeiten
+    tbl.innerHTML = `<thead><tr><th>Tag / Ticket</th><th>Kunde</th><th class="n">Std.</th><th class="n">abr.</th>${hasP ? '<th class="n">Personio</th><th class="n">Diff.</th>' : ''}${act ? '<th></th>' : ''}</tr></thead>`;
     const tb = el('tbody'); tbl.appendChild(tb);
-    const colN = hasP ? 7 : 4;
+    const pad3 = (hasP ? '<td></td><td></td>' : '') + (act ? '<td></td>' : '');
     for (const d of dayList) {
       const day = days[d], wd = isWorkday(d);
       if (!day && !wd && $('zWeekend').checked) continue;
@@ -3192,25 +3607,20 @@
       const tr = el('tr', { className: cls });
       tr.innerHTML = `<td><b>${WD[weekday(d)]} ${fmtDate(d)}</b>${!wd && day ? ' <span class="tag">Wochenende</span>' : ''}${std > 10 ? ' <span class="tag abr">über 10 h</span>' : ''}${soll === 0 ? ' <span class="tag">frei laut Personio</span>' : ''}</td><td></td>
         <td class="n"><b>${fmtH(std)}</b></td><td class="n">${fmtH(day?.abr || 0)}</td>` +
-        (hasP ? `<td class="n">${soll == null ? '–' : fmtH(soll)}</td><td class="n ${diff > 0 ? 'neg' : diff < 0 ? 'pos' : ''}">${diff == null || diff === 0 ? (diff === 0 ? '✓' : '') : (diff > 0 ? '−' : '+') + fmtH(Math.abs(diff))}</td><td></td>` : '');
-      if (hasP && diff > 0) {
-        const b = el('button', { className: 'btn sm sec', textContent: `+${fmtH(diff)} h buchen`, title: 'Fehlende Zeit auf das Ausgleichs-Ticket buchen' });
-        confirmBtn(b, () => { if (!/^\d+$/.test($('zTicket').value.trim())) throw new Error('Bitte zuerst ein Ticket für den Ausgleich eintragen.'); return `Auf #${$('zTicket').value.trim()}?`; },
-          async () => { try { await bookBalance([{ date: d, diff }]); await runTimes(); msg('zMsg', `✔ ${fmtH(diff)} h am ${fmtDate(d)} gebucht.`, 'ok'); } catch (e) { msg('zMsg', '✖ ' + e.message, 'err'); } },
-          e => msg('zMsg', '✖ ' + e.message, 'err'));
-        tr.lastElementChild.appendChild(b);
-      }
+        (hasP ? `<td class="n">${soll == null ? '–' : fmtH(soll)}</td><td class="n ${diff > 0 ? 'neg' : diff < 0 ? 'pos' : ''}">${diff == null || diff === 0 ? (diff === 0 ? '✓' : '') : (diff > 0 ? '−' : '+') + fmtH(Math.abs(diff))}</td>` : '') +
+        (act ? '<td style="white-space:nowrap"></td>' : '');
+      if (act && d <= todayStr() && soll !== 0 && (wd || day)) restCell(tr.lastElementChild, d, hasP && diff > 0 ? diff : null);
       tb.appendChild(tr);
       if (!day) continue;
       for (const g of ['Kunde', 'Intern']) {
         const rows = Object.values(day.groups[g]); if (!rows.length) continue;
         const gs = rows.reduce((a, r) => ({ std: a.std + r.std, abr: a.abr + r.abr }), { std: 0, abr: 0 });
         const gh = el('tr', { className: 'zgrp' });
-        gh.innerHTML = `<td style="padding-left:14px">${g === 'Intern' ? '🏠 Intern' : '🏢 Kunde'}</td><td></td><td class="n">${fmtH(gs.std)}</td><td class="n">${fmtH(gs.abr)}</td>${hasP ? '<td></td><td></td><td></td>' : ''}`;
+        gh.innerHTML = `<td style="padding-left:14px">${g === 'Intern' ? '🏠 Intern' : '🏢 Kunde'}</td><td></td><td class="n">${fmtH(gs.std)}</td><td class="n">${fmtH(gs.abr)}</td>${pad3}`;
         tb.appendChild(gh);
         for (const r of rows.sort((a, b) => b.std - a.std)) {
           const trt = el('tr', { className: 'r zt' });
-          trt.innerHTML = `<td style="padding-left:28px"><b>#${r.t.SID}</b> <span></span></td><td class="hint"></td><td class="n">${fmtH(r.std)}</td><td class="n">${fmtH(r.abr)}</td>${hasP ? '<td></td><td></td><td></td>' : ''}`;
+          trt.innerHTML = `<td style="padding-left:28px"><b>#${r.t.SID}</b> <span></span></td><td class="hint"></td><td class="n">${fmtH(r.std)}</td><td class="n">${fmtH(r.abr)}</td>${pad3}`;
           trt.querySelector('span').textContent = r.t.TITEL || '';
           trt.children[1].textContent = (r.t.MATCHCODE || '').replace(/^\d+\s*-\s*/, '');
           wbRow(trt, ticketRoute(r.t.SID), () => openTicket(r.t.SID));
@@ -3218,7 +3628,7 @@
           if (showDetails) for (const c of r.items) {
             const tri = el('tr', { className: 'zi' });
             const von = (c.LFZ_VON || '').slice(11, 16), bis = (c.LFZ_BIS || '').slice(11, 16);
-            tri.innerHTML = `<td style="padding-left:44px" colspan="2" class="hint"></td><td class="n hint">${fmtH(c.LFZ_STD)}</td><td class="n hint">${fmtH(c.INABR_STD)}</td>${hasP ? '<td></td><td></td><td></td>' : ''}`;
+            tri.innerHTML = `<td style="padding-left:44px" colspan="2" class="hint"></td><td class="n hint">${fmtH(c.LFZ_STD)}</td><td class="n hint">${fmtH(c.INABR_STD)}</td>${pad3}`;
             tri.firstElementChild.textContent = `${von ? von + '–' + bis + ' · ' : ''}${users.length > 1 ? c.BEARBEITER_USER_ID + ' · ' : ''}${htmlToText(c.NOTIZ).slice(0, 140)}`;
             tb.appendChild(tri);
           }
@@ -3227,7 +3637,7 @@
     }
     const tf = el('tr', { className: 'tsum' });
     tf.innerHTML = `<td><b>Summe</b></td><td></td><td class="n"><b>${fmtH(all.std)}</b></td><td class="n"><b>${fmtH(all.abr)}</b></td>` +
-      (hasP ? `<td class="n"><b>${fmtH(all.soll)}</b></td><td class="n"><b>${sumDiff ? '−' + fmtH(sumDiff) : '✓'}</b></td><td></td>` : '');
+      (hasP ? `<td class="n"><b>${fmtH(all.soll)}</b></td><td class="n"><b>${sumDiff ? '−' + fmtH(sumDiff) : '✓'}</b></td>` : '') + (act ? '<td></td>' : '');
     tb.appendChild(tf);
     box.appendChild(tbl);
 
@@ -3268,10 +3678,14 @@
 
   // ================= SYNCHRONISATION ZWISCHEN TABS & ÄNDERUNGEN VON AUSSEN =================
   // Kurzer „Fingerabdruck“ eines Tickets, um Änderungen in MultiData oder von Kolleg:innen zu erkennen
+  const sigOf = (t, cs) => JSON.stringify([t && [t.DATE_MODIFIED, t.STATUS, t.SUM_STD, t.MEMO_SUM_ABRSTD, t.BEARBEITER_USER_ID, t.TITEL, t.PRIORITY, t.ERRQ_ID],
+    cs.length, cs.reduce((m, c) => Math.max(m, c.SID), 0)]);
   async function ticketSignature(sid) {
-    const [t] = await load('MDERRDA', { filter: [['SID', '=', Number(sid)]], sqlColumns: ['SID', 'DATE_MODIFIED', 'STATUS', 'SUM_STD', 'MEMO_SUM_ABRSTD', 'BEARBEITER_USER_ID', 'TITEL', 'PRIORITY', 'ERRQ_ID'] });
-    const cs = await load('MDERRDA_MDERRDAC', { take: 3000, filter: [['MDERRDA_SID', '=', Number(sid)]], sqlColumns: ['SID'] });
-    return JSON.stringify([t && [t.DATE_MODIFIED, t.STATUS, t.SUM_STD, t.MEMO_SUM_ABRSTD, t.BEARBEITER_USER_ID, t.TITEL, t.PRIORITY, t.ERRQ_ID], cs.length, Math.max(0, ...cs.map(c => c.SID))]);
+    const [[t], cs] = await Promise.all([
+      load('MDERRDA', { filter: [['SID', '=', Number(sid)]], sqlColumns: ['SID', 'DATE_MODIFIED', 'STATUS', 'SUM_STD', 'MEMO_SUM_ABRSTD', 'BEARBEITER_USER_ID', 'TITEL', 'PRIORITY', 'ERRQ_ID'] }),
+      load('MDERRDA_MDERRDAC', { take: 1000, filter: [['MDERRDA_SID', '=', Number(sid)]], sqlColumns: ['SID'] }),
+    ]);
+    return sigOf(t, cs);
   }
   function ticketChangedElsewhere(where) {
     if (ui.isDirty && ui.isDirty()) {
@@ -3347,18 +3761,29 @@
   // ================= PROTOKOLL =================
   function renderLog() {
     const box = $('logView'); box.innerHTML = '';
-    const l = store.get(CFG.store.log, []);
-    if (!l.length) { box.innerHTML = '<div class="hint" style="margin-top:8px">Noch keine Einträge.</div>'; return; }
+    const q = $('logFilter').value.trim().toLowerCase();
+    const l = store.get(CFG.store.log, []).filter(e => !q || `${e.action} ${e.detail}`.toLowerCase().includes(q));
+    if (!l.length) { box.innerHTML = `<div class="hint" style="margin-top:8px">${q ? 'Keine passenden Einträge.' : 'Noch keine Einträge.'}</div>`; return; }
     const tbl = el('table');
     tbl.innerHTML = '<thead><tr><th>Zeit</th><th>Aktion</th><th>Details</th></tr></thead>';
     const tb = el('tbody'); tbl.appendChild(tb);
     for (const e of l) {
       const tr = el('tr'); const d = new Date(e.t);
-      tr.innerHTML = `<td style="white-space:nowrap">${d.toLocaleDateString('de-DE')} ${d.toLocaleTimeString('de-DE').slice(0, 5)}</td><td>${esc(e.action)}</td><td>${esc(e.detail)}</td>`;
+      tr.innerHTML = `<td style="white-space:nowrap">${d.toLocaleDateString('de-DE')} ${d.toLocaleTimeString('de-DE').slice(0, 5)}</td><td>${esc(e.action)}</td><td></td>`;
+      linkTickets(tr.lastElementChild, e.detail);
       tb.appendChild(tr);
     }
     box.appendChild(tbl);
   }
+  // „#123456“ im Text als Link auf das Ticket (Linksklick: hier öffnen, Mittelklick: neuer Tab)
+  function linkTickets(node, text) {
+    for (const part of String(text || '').split(/(#\d{4,})/)) {
+      if (/^#\d{4,}$/.test(part)) { const sid = part.slice(1); node.appendChild(wbLink(el('a', { textContent: part, title: 'Ticket öffnen · Mittelklick: in neuem Tab' }), ticketRoute(sid), () => openTicket(sid))); }
+      else if (part) node.appendChild(document.createTextNode(part));
+    }
+  }
+  let logT;
+  $('logFilter').addEventListener('input', () => { clearTimeout(logT); logT = setTimeout(renderLog, 200); });
   confirmBtn($('logClear'), 'Wirklich leeren?', async () => { store.set(CFG.store.log, []); renderLog(); });
   } // main
 })();
