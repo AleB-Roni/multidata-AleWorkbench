@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.6.1.7
+// @version      1.6.1.8
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -828,6 +828,24 @@
     histOwn(t, {}, { k: '_', label: 'QuickClose' });
     log('QuickClose', `#${t.SID} ${t.TITEL}`);
     ticketsChanged(t.SID);
+  }
+
+  // --- MultiData-Protokoll (Reiter „Protokoll“ im Ticket): wer hat wann welches Feld geändert ---
+  // FIELDS/INFO sind HTML mit einer Zeile je Feld („Bearbeiter<br>Abteilung“ ↔ „A -> B<br>C -> D“)
+  async function loadProtocol(sid) {
+    const rows = await load('MDERRDA_MDERRDAP', { take: 500, sort: [{ selector: 'LOG_TIME', desc: true }], filter: [['MDERRDA_SID', '=', Number(sid)]],
+      sqlColumns: ['ROW_ID', 'MDERRDA_SID', 'LOG_TIME', 'USER_ID', 'FIELDS', 'INFO'] });
+    const lines = h => String(h || '').split(/<br\s*\/?>/i).map(htmlToText);
+    const out = [];
+    for (const r of rows) {
+      const f = lines(r.FIELDS), i = lines(r.INFO);
+      for (let k = 0; k < Math.max(f.length, i.length); k++) {
+        if (!f[k] && !i[k]) continue;
+        const [from, to] = String(i[k] || '').split(/\s*->\s*/), v = x => (x === 'Undefined' ? '' : x); // „Undefined“ = leer
+        out.push({ at: String(r.LOG_TIME || '').slice(0, 19), user: r.USER_ID || '', label: f[k] || 'Änderung', from: to === undefined ? '' : v(from), to: v(to === undefined ? (i[k] || '') : to) });
+      }
+    }
+    return out;
   }
 
   // --- Ticket-Verlauf: Änderungen an Status, Bearbeiter, Queue … ---
@@ -1778,6 +1796,15 @@
   const ticketRoute = sid => ({ tab: 'ticket', sid: String(sid) });
   // „In MultiData öffnen“: neuer Tab mit MultiData, dort wird das Ticket über die MultiData-Navigation geöffnet
   const mdTicketUrl = sid => location.origin + '/mdweb/rwi/HOME/0#mdopen/' + Number(sid);
+  // Originale MultiData-Adresse eines Tickets (zum Weitergeben): …/mdweb/rwi/MDERRDA/%7B%22SID%22:808626%7D
+  const mdShareUrl = sid => location.origin + '/mdweb/rwi/MDERRDA/' + encodeURIComponent(JSON.stringify({ SID: Number(sid) })).replace(/%3A/gi, ':');
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return; } catch { /* Fallback unten */ }
+    const ta = Object.assign(document.createElement('textarea'), { value: text }); ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy'); ta.remove();
+    if (!ok) throw new Error('Zwischenablage nicht verfügbar');
+  }
   const mdOpen = (START_HASH.match(/^#mdopen\/(\d+)/) || [])[1];
   if (mdOpen) {
     try { history.replaceState(history.state, '', location.pathname + location.search); } catch { /* ignore */ }
@@ -2191,6 +2218,7 @@
         <input type="text" data-ref="hTitle" spellcheck="true" lang="de" title="Betreff">
         <a href="#" data-ref="hOpen" target="_blank" class="btn sm sec" title="Öffnet MultiData mit diesem Ticket in einem neuen Tab">MultiData ↗</a>
         <a href="#" data-ref="hNewTab" class="btn sm sec" title="Dieses Ticket in einem weiteren Werkbank-Tab öffnen">Neuer Tab ⧉</a>
+        <button class="btn sm sec" data-ref="hShare" title="MultiData-Link des Tickets kopieren (Umschalt+Klick: „#Nr. Betreff“ + Link)">🔗 Teilen</button>
       </div>
       <div class="hgrid">
         <div><label class="l">Status</label><select data-ref="hStatus"></select></div>
@@ -2285,6 +2313,11 @@
     $('hSums', head).innerHTML = `Angelegt ${fmtDateTime(t.ANLAGE_DATUM)} von <b data-ref="hCreator">${esc(t.ANLAGE_USER_ID || '–')}</b> · Stunden <b>${fmtH(t.SUM_STD)}</b> · abrechenbar <b>${fmtH(t.MEMO_SUM_ABRSTD)}</b><br>` +
       `An: ${esc(t.EMAIL_TO || '–')}${t.EMAIL_CC ? ' · Cc: ' + esc(t.EMAIL_CC) : ''}`;
     $('hOpen', head).href = mdTicketUrl(t.SID); // immer neuer Tab (Linksklick: wechseln, Mittelklick: im Hintergrund)
+    $('hShare', head).addEventListener('click', async ev => {
+      const url = mdShareUrl(t.SID), text = ev.shiftKey ? `#${t.SID} ${t.TITEL || ''}\n${url}` : url;
+      try { await copyText(text); const b = ev.currentTarget || $('hShare', head); b.textContent = '✔ Kopiert'; setTimeout(() => { b.textContent = '🔗 Teilen'; }, 1800); msg('tMsg', `✔ In die Zwischenablage kopiert: ${text.replace('\n', ' · ')}`, 'ok'); }
+      catch (e) { msg('tMsg', '✖ Kopieren nicht möglich: ' + e.message + ' – Link: ' + url, 'err'); }
+    });
     $('hSave', head).addEventListener('click', ev => busy(ev.target, async () => {
       const done = [];
       try {
@@ -2575,8 +2608,13 @@
     } else box.innerHTML = showHtml(html);
   }
 
-  // Verlauf: Anlage, Feldänderungen, Kommentare, Mails, Anhänge – neueste zuerst
-  function renderHistory(box, t) {
+  // Verlauf: Anlage, Feldänderungen (MultiData-Protokoll), Kommentare, Mails, Anhänge – neueste zuerst
+  async function renderHistory(box, t) {
+    const seq = box.dataset.seq = String(Number(box.dataset.seq || 0) + 1);
+    if (!box.children.length) box.innerHTML = '<div class="hint" style="margin-top:8px">Lade Protokoll …</div>';
+    let proto = null, protoErr = null;
+    try { proto = await loadProtocol(t.SID); } catch (e) { protoErr = e; }
+    if (box.dataset.seq !== seq || !box.isConnected) return;
     const h = histGet(t.SID) || { ch: [], since: null };
     const who = id => id ? userLabel(id) : '–';
     const ev = [{ at: t.ANLAGE_DATUM, icon: '🆕', who: who(t.ANLAGE_USER_ID), what: 'Ticket angelegt', kind: 'x' }];
@@ -2587,12 +2625,14 @@
         what: (inbound ? 'Mail eingegangen' : c.EMAIL_TO ? `Mail an ${c.EMAIL_TO}` : 'Kommentar') + (parts.length ? ' · ' + parts.join(' · ') : ''), csid: c.SID, kind: 'c' });
     }
     for (const d of ui.docs || []) ev.push({ at: d.DATUM, icon: '📎', who: d.CREATED_BY || '–', what: 'Anhang: ' + (d.DOCUMENT_NAME || '(ohne Namen)'), kind: 'd' });
-    for (const c of h.ch || []) ev.push({ at: c.at, icon: c.src === 'wb' ? '✎' : '↻', who: c.src === 'wb' ? who(c.by) : '–', kind: 'f', src: c.src, after: c.after,
+    if (proto) for (const c of proto) ev.push({ at: c.at, icon: '✎', who: who(c.user), kind: 'f', src: 'md', what: c.from || c.to ? `${c.label}: ${c.from || '–'} → ${c.to || '–'}` : c.label });
+    else for (const c of h.ch || []) ev.push({ at: c.at, icon: c.src === 'wb' ? '✎' : '↻', who: c.src === 'wb' ? who(c.by) : '–', kind: 'f', src: c.src, after: c.after,
       what: c.from || c.to ? `${c.label}: ${c.from || '–'} → ${c.to || '–'}` : c.label });
     ev.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
     const onlyCh = secGet('ticket.histOnly', false);
     box.innerHTML = `<div class="row" style="align-items:center;margin-top:6px"><label class="chk" style="margin:0"><input type="checkbox" data-ref="hiOnly"> nur Feldänderungen</label>
-      <span class="hint" style="flex:1;text-align:right">${h.since ? `Feldänderungen werden seit ${fmtDateTime(h.since)} erfasst (beim Öffnen in der Werkbank, nur in diesem Browser).` : ''}</span></div>`;
+      <span class="hint" style="flex:1;text-align:right">${proto ? 'Feldänderungen aus dem MultiData-Protokoll.'
+        : `MultiData-Protokoll nicht abrufbar (${esc(protoErr && protoErr.message || '')}) – angezeigt werden die Änderungen, die die Werkbank selbst erkannt hat${h.since ? ` (seit ${fmtDateTime(h.since)})` : ''}.`}</span></div>`;
     $('hiOnly', box).checked = onlyCh;
     $('hiOnly', box).addEventListener('change', () => { secSet('ticket.histOnly', $('hiOnly', box).checked); renderHistory(box, t); });
     const tbl = el('table', { className: 'hist' });
@@ -2605,11 +2645,11 @@
       if (e.kind === 'f' && e.src === 'ext' && e.after) tr.children[0].title = `Erkannt beim Öffnen: geändert zwischen ${fmtDateTime(e.after)} und ${fmtDateTime(e.at)} (Zeit = letzte Änderung laut MultiData)`;
       tr.children[1].textContent = e.who;
       tr.children[2].textContent = `${e.icon} ${e.what}`;
-      if (e.kind === 'f') tr.children[2].appendChild(el('span', { className: 'src', textContent: e.src === 'wb' ? 'Werkbank' : 'MultiData / Kolleg:in' }));
+      if (e.kind === 'f' && e.src !== 'md') tr.children[2].appendChild(el('span', { className: 'src', textContent: e.src === 'wb' ? 'Werkbank' : 'erkannt' }));
       if (e.csid) { tr.title = 'Klick: zum Kommentar'; tr.addEventListener('click', () => ui.showComment(e.csid)); }
       tb.appendChild(tr);
     }
-    if (!tb.children.length) tb.innerHTML = '<tr><td colspan="3" class="hint">Noch keine Feldänderungen erfasst.</td></tr>';
+    if (!tb.children.length) tb.innerHTML = '<tr><td colspan="3" class="hint">Keine Feldänderungen protokolliert.</td></tr>';
     box.appendChild(tbl);
   }
   const kontaktLabel = id => ((KONTAKTARTEN || []).find(k => k[0] === id) || [id, id || ''])[1];
