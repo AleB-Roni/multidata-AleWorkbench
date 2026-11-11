@@ -9,9 +9,13 @@ Das Skript nutzt die gleiche interne Schnittstelle wie die MultiData-Weboberflä
 1. Die Browser-Erweiterung **Tampermonkey** installieren (Chrome/Edge Web Store).
 2. Nur Chrome/Edge: Unter `chrome://extensions` bei Tampermonkey **„Details“ → „Nutzerskripts zulassen“** (bzw. den Entwicklermodus) aktivieren, sonst laufen keine Skripte.
 3. Diesen Link öffnen, dann in Tampermonkey auf **Installieren** klicken:
-   **https://raw.githubusercontent.com/lukasebner1998-ship-it/multidata-werkbank/main/stable/multidata-werkbank.user.js**
+   **https://raw.githubusercontent.com/AleB-Roni/multidata-AleWorkbench/main/stable/multidata-werkbank.user.js**
 4. MultiData neu laden. Unten rechts erscheint **⚡ Werkbank** (oder Alt+Q).
 5. Beim ersten Start unter **⚙ → Team-Konfiguration** die Datei importieren, die im Team geteilt wird. Alternativ selbst festlegen, welche Kunden nicht abrechenbar bzw. intern sind.
+
+## Neu in 1.8 (Beta)
+
+- **Modernisierte Oberfläche:** neue Kopfzeile mit Logo und Reitern als Pillen (bei schmalem Fenster seitlich scrollbar; Hell/Dunkel, Vollbild und Schließen bleiben sichtbar), einheitliche Design-Tokens für Farben, Abstände und Radien, überarbeitete Knöpfe, Eingabefelder mit Fokus-Ring, Karten, Tabellen, KPI-Kacheln, Editor-Werkzeugleiste und Dark Mode. Alle Funktionen, Tastenkürzel und gespeicherten Einstellungen bleiben unverändert.
 
 ## Neu in 1.7
 
