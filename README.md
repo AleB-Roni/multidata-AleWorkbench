@@ -25,6 +25,8 @@ Das Skript nutzt die gleiche interne Schnittstelle wie die MultiData-Weboberflä
   - *Buchen:* Die Dauer-Schnellwerte (0,25 h … 4 h) stecken im ▾ am Dauer-Feld. „Abrechenbar“, „Vor Ort“ und „Als Mail senden“ sind Umschalt-Pillen in einer Zeile. Die abrechenbaren Stunden trägt man direkt an der Abrechenbar-Pille ein (leer = wie gebucht).
   - *Texteditor:* Die Tabellen-Befehle (neue Tabelle, Zeile/Spalte einfügen oder löschen) stecken im Menü ⊞ ▾. Format entfernen (✕), Signatur (✍) und die Listen sind Symbolknöpfe mit Tooltip.
 
+- **Zeiten wochenweise:** Beim ersten Öffnen lädt der Zeiten-Tab automatisch die aktuelle Woche (Montag bis heute). Mit **‹** und **›** blättert man eine Woche zurück bzw. vor (Montag–Sonntag; nicht über die laufende Woche hinaus), **Heute** springt zurück zur aktuellen Woche. Über den Feldern steht die Kalenderwoche (z. B. „KW 46“). Eigene Zeiträume gehen weiterhin über von/bis oder das Menü „Zeitraum“.
+
 ## Neu in 1.7
 
 - **Personio mit einem Klick:** „⟳ Aus Personio holen“ im Zeiten-Tab übernimmt die Arbeitszeiten direkt aus Personio, ohne CSV-Download (siehe [Personio-Abgleich](#personio-abgleich)). Der CSV-Import versteht jetzt auch den aktuellen Export „Stundenzettel exportieren“.

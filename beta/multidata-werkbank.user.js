@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.4
+// @version      1.8.0.5
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1429,6 +1429,10 @@
   #mdqt-panel .tgrp .abr{display:inline-flex;align-items:center;gap:4px;margin-left:-1px}
   #mdqt-panel .tgrp .abr input{width:84px;min-height:28px;border-radius:0 999px 999px 0 !important;padding:2px 10px !important;font-size:12px}
   #mdqt-panel .tgrp:has(.abr:not([style*="none"])) .chk.tgl{border-radius:999px 0 0 999px}
+  #mdqt-panel .wk{display:flex}
+  #mdqt-panel .wk .btn{border-radius:0;margin-left:-1px;box-shadow:none;padding:5px 10px}
+  #mdqt-panel .wk .btn:first-child{border-radius:var(--mq-r) 0 0 var(--mq-r);margin-left:0;font-size:16px;line-height:1}
+  #mdqt-panel .wk .btn:last-child{border-radius:0 var(--mq-r) var(--mq-r) 0;font-size:16px;line-height:1}
   #mdqt-panel .inpdd{display:flex}
   #mdqt-panel .inpdd>input{border-top-right-radius:0 !important;border-bottom-right-radius:0 !important;min-width:0}
   #mdqt-panel .inpdd .ddb{border-top-left-radius:0;border-bottom-left-radius:0;margin-left:-1px;min-height:30px;padding:0 9px;box-shadow:none}
@@ -1751,6 +1755,8 @@
           <div class="c" style="max-width:320px"><label class="l">Bearbeiter</label><div data-ref="zUsers"></div></div>
           <div class="c s" style="flex-basis:140px"><label class="l">von</label><input type="date" data-ref="zFrom"></div>
           <div class="c s" style="flex-basis:140px"><label class="l">bis</label><input type="date" data-ref="zTo"></div>
+          <div><label class="l" data-ref="zWk" style="text-align:center">&nbsp;</label>
+            <div class="wk"><button class="btn sec" data-ref="zPrev" title="Eine Woche zurück">‹</button><button class="btn sec" data-ref="zNow" title="Aktuelle Woche">Heute</button><button class="btn sec" data-ref="zNext" title="Eine Woche vor">›</button></div></div>
           <div class="dd" data-dd="zrange">
             <button type="button" class="btn sec ddb" title="Schnellwahl Zeitraum">Zeitraum <span class="car">▾</span></button>
             <div class="ddm"><div class="ddh">Zeitraum</div><div class="chips list" data-ref="zRanges"></div></div>
@@ -2030,7 +2036,11 @@
     if (tab === 'inbox') renderInbox();
     if (tab === 'drafts') renderDrafts();
     if (tab === 'settings') renderSettings();
-    if (tab === 'times') { renderTimes(); renderInternInfo(); if (ui.timesStale && tm.data) { ui.timesStale = false; runTimes(); } }
+    if (tab === 'times') {
+      // Beim ersten Öffnen automatisch die aktuelle Woche laden
+      if (!ui.timesAuto) { ui.timesAuto = true; ui.timesStale = false; setWeek(weekStart(todayStr())); }
+      else { renderTimes(); renderInternInfo(); if (ui.timesStale && tm.data) { ui.timesStale = false; runTimes(); } }
+    }
     if (tab === 'search' && ui.searchStale) { ui.searchStale = false; runSearch(true); }
     if (tab === 'search' && ui.facetsStale) scheduleFacets();
     setRoute(); updateTitle();
@@ -4258,15 +4268,47 @@
   ['zFrom', 'zTo'].forEach(r => $(r).addEventListener('change', () => { if (ui.tab === 'times') renderInternInfo(); }));
 
   async function runTimes() {
+    updWeek();
     const from = $('zFrom').value, to = $('zTo').value;
     if (!from || !to || to < from) { msg('zMsg', 'Bitte einen gültigen Zeitraum wählen.', 'err'); return; }
     if ((new Date(to) - new Date(from)) / 864e5 > 186) { msg('zMsg', 'Zeitraum bitte auf max. 6 Monate begrenzen.', 'err'); return; }
     saveTimesView();
     msg('zMsg', 'Lade Zeiten …');
-    try { tm.data = await loadTimes({ users: timesUserPick.get(), from, to }); tm.from = from; tm.to = to; renderTimes(); msg('zMsg', ''); }
-    catch (e) { msg('zMsg', '✖ ' + e.message, 'err'); }
+    const seq = tm.seq = (tm.seq || 0) + 1; // schnelles Blättern: nur die letzte Anfrage zählt
+    try {
+      const data = await loadTimes({ users: timesUserPick.get(), from, to });
+      if (seq !== tm.seq) return;
+      tm.data = data; tm.from = from; tm.to = to; renderTimes(); msg('zMsg', '');
+    } catch (e) { if (seq === tm.seq) msg('zMsg', '✖ ' + e.message, 'err'); }
   }
   $('zGo').addEventListener('click', ev => busy(ev.target, runTimes));
+
+  // Wochenweise blättern: Montag–Sonntag, die laufende Woche nur bis heute
+  const weekStart = s => addDays(s, -((weekday(s) + 6) % 7));
+  const isoWeek = s => {
+    const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
+    const j4 = new Date(d.getFullYear(), 0, 4, 12);
+    return 1 + Math.round(((d - j4) / 864e5 - 3 + (j4.getDay() + 6) % 7) / 7);
+  };
+  function updWeek() {
+    const f = $('zFrom').value, t = $('zTo').value, cur = weekStart(todayStr());
+    const isWeek = f && t && weekStart(f) === f && t >= f && t <= addDays(f, 6);
+    $('zWk').textContent = isWeek ? `KW ${isoWeek(f)}` : '\u00a0';
+    $('zNext').disabled = !!f && weekStart(f) >= cur;
+    $('zNow').disabled = isWeek && f === cur;
+  }
+  function setWeek(monday) {
+    const cur = weekStart(todayStr()); if (monday > cur) monday = cur;
+    const sun = addDays(monday, 6);
+    $('zFrom').value = monday; $('zTo').value = sun > todayStr() ? todayStr() : sun;
+    renderInternInfo();
+    return runTimes();
+  }
+  const weekBase = () => weekStart($('zFrom').value || todayStr());
+  $('zPrev').addEventListener('click', () => setWeek(addDays(weekBase(), -7)));
+  $('zNext').addEventListener('click', () => setWeek(addDays(weekBase(), 7)));
+  $('zNow').addEventListener('click', () => setWeek(weekStart(todayStr())));
+  ['zFrom', 'zTo'].forEach(r => $(r).addEventListener('change', updWeek));
 
   // --- Personio: Arbeitsminuten je Tag (aus „⟳ Aus Personio holen“ oder der CSV „Stundenzettel exportieren“) ---
   const personioBase = () => {
