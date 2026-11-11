@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.2
+// @version      1.8.0.3
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1415,6 +1415,14 @@
   #mdqt-panel .ddm .chk.blk{display:flex;margin:4px 0}
   #mdqt-panel .ddm .btn.mi{display:flex;width:100%;justify-content:flex-start;border:none;box-shadow:none;background:transparent;color:var(--mq-fg);font-weight:500;font-size:13px;min-height:30px}
   #mdqt-panel .ddm .btn.mi:hover{background:var(--mq-soft2);color:var(--mq-fg)}
+  #mdqt-panel .tb .ddm button.mi{display:flex;width:100%;justify-content:flex-start;border:none;background:transparent;font-size:13px;padding:5px 8px;min-height:28px}
+  #mdqt-panel .tb .ddm button.mi:hover{background:var(--mq-soft2)}
+  #mdqt-panel .tb .dd .ddm{padding:6px}
+  #mdqt-panel .tb .dd.open>.ddb{background:var(--mq-accent-soft);border-color:var(--mq-accent)}
+  #mdqt-panel .inpdd{display:flex}
+  #mdqt-panel .inpdd>input{border-top-right-radius:0 !important;border-bottom-right-radius:0 !important;min-width:0}
+  #mdqt-panel .inpdd .ddb{border-top-left-radius:0;border-bottom-left-radius:0;margin-left:-1px;min-height:30px;padding:0 9px;box-shadow:none}
+  #mdqt-panel .chips.list .chip.mi{font-variant-numeric:tabular-nums}
 
   /* ---------- Knöpfe ---------- */
   #mdqt-panel .btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:5px 12px;min-height:30px;border:1px solid transparent;border-radius:var(--mq-r);
@@ -1540,7 +1548,8 @@
     transition:background .1s,border-color .1s}
   #mdqt-panel .tb button:hover{background:var(--mq-btn);border-color:var(--mq-border2)}
   #mdqt-panel .tb button.on{background:var(--mq-accent-soft);border-color:var(--mq-accent);color:var(--mq-accent-fg)}
-  #mdqt-panel .tb select,#mdqt-panel .tb input[type=number]{width:auto !important;min-height:26px;padding:1px 4px !important;font-size:12px !important}
+  #mdqt-panel .tb select,#mdqt-panel .tb input[type=number]{width:auto !important;min-height:24px;padding:0 4px !important;font-size:12px !important}
+  #mdqt-panel .tb [data-ref=fFont]{max-width:120px}#mdqt-panel .tb [data-ref=tbSel]{max-width:140px}
   #mdqt-panel .tb .sep{display:inline-block;width:1px;height:18px;background:var(--mq-border2);margin:0 4px;vertical-align:middle}
   #mdqt-panel .rte table td,#mdqt-panel .rte table th{border:1px solid #999}
   #mdqt-panel .rte img{max-width:100%}
@@ -2182,6 +2191,7 @@
     if (mi && !mi.hasAttribute('data-keep')) closeDds();
   });
   document.addEventListener('mousedown', e => { if (!e.target.closest || !e.target.closest('#mdqt-panel .dd')) closeDds(); }, true);
+  panel.addEventListener('mousedown', e => { if (e.target.closest('.tb .ddb')) e.preventDefault(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && panel.querySelector('.dd.open')) { e.stopPropagation(); closeDds(); } }, true);
   // Kurztext im Menüknopf aktuell halten (z. B. „Status: offene“); set = Filter weicht von „alle“ ab → Knopf hervorheben
   function ddSummary(ref, fn, watch) {
@@ -3493,14 +3503,14 @@
     }
     return um;
   }
-  const LIST_BTNS = `<button type="button" data-li="ul" title="Aufzählung ein/aus">• Liste</button><button type="button" data-li="ol" title="Nummerierung ein/aus">1. Liste</button>
+  const LIST_BTNS = `<button type="button" data-li="ul" title="Aufzählung ein/aus">•≡</button><button type="button" data-li="ol" title="Nummerierung ein/aus">1≡</button>
     <button type="button" data-li="out" title="Einzug verringern (Umschalt+Tab; am Anfang eines Punkts auch Rücktaste)">⇤</button><button type="button" data-li="in" title="Einzug vergrößern (Tab)">⇥</button>`;
   // Kleine Werkzeugleiste für Kommentar bearbeiten, Signatur, Textbausteine
   function rteBar(rte, sizeKey = null) {
     const tb = el('div', { className: 'tb' });
     tb.innerHTML = `<button type="button" data-cmd="bold" title="Fett (Strg+B)"><b>F</b></button><button type="button" data-cmd="italic" title="Kursiv (Strg+I)"><i>K</i></button>
       <button type="button" data-cmd="underline" title="Unterstrichen (Strg+U)"><u>U</u></button><span class="sep"></span>${LIST_BTNS}<span class="sep"></span>
-      <button type="button" data-cmd="removeFormat" title="Formatierung entfernen">✕ Format</button>`;
+      <button type="button" data-cmd="removeFormat" title="Formatierung entfernen">✕</button>`;
     rte.before(tb);
     const um = setupRte(rte, { toolbar: tb, sizeKey });
     tb.querySelectorAll('button[data-cmd]').forEach(b => b.addEventListener('mousedown', e => {
@@ -3517,9 +3527,11 @@
     w.innerHTML = `
       <div class="row">
         <div class="c s" style="flex-basis:150px"><label class="l">Datum</label><input type="date" data-ref="fDate"></div>
-        <div class="c s" style="flex-basis:150px"><label class="l">Dauer in h (0,25 · 1,5 · 1:10 · 20m${allowZero ? ' · 0 = ohne Zeit' : ''})</label><input type="text" data-ref="fDur"></div>
+        <div class="c s" style="flex-basis:170px"><label class="l" title="Stunden: 0,25 · 1,5 · 1:10 · Minuten: 20m${allowZero ? ' · 0 = ohne Zeit' : ''}">Dauer (h)</label>
+          <div class="inpdd"><input type="text" data-ref="fDur" placeholder="0,25 · 1:10 · 20m${allowZero ? ' · 0' : ''}">
+            <div class="dd r"><button type="button" class="btn sec ddb" title="Schnellwahl Dauer"><span class="car">▾</span></button>
+              <div class="ddm" style="min-width:120px"><div class="chips list" data-ref="fChips"></div></div></div></div></div>
         <div class="c s" style="flex-basis:170px"><label class="l">Kontaktart</label><select data-ref="fKa"></select></div>
-        <div class="c"><div class="chips" data-ref="fChips"></div></div>
       </div>
       <div class="hint" data-ref="fCalc"></div>
       <label class="chk"><input type="checkbox" data-ref="fBill"> Abrechenbar</label>
@@ -3539,19 +3551,24 @@
         </div>
         <div class="hint" data-ref="fSugg"></div>
       </div>` : ''}
-      <label class="l">Text <span class="hint">(Formatierung und eingefügte Bilder werden übernommen)</span></label>
+      <label class="l" title="Formatierung und eingefügte Bilder werden übernommen">Text</label>
       <div class="tb">
         <select data-ref="fFont" title="Schriftart">${CFG.fonts.map(f => `<option value="${f}"${f === CFG.defaultFont ? ' selected' : ''}>${f}</option>`).join('')}</select>
         <select data-ref="fSize" title="Schriftgröße">${CFG.fontSizes.map(z => `<option value="${z}"${z === CFG.defaultFontSize ? ' selected' : ''}>${z} pt</option>`).join('')}</select>
         <button type="button" data-cmd="bold" title="Fett"><b>F</b></button><button type="button" data-cmd="italic" title="Kursiv"><i>K</i></button>
         <button type="button" data-cmd="underline" title="Unterstrichen"><u>U</u></button>
         <span class="sep"></span>${LIST_BTNS}<span class="sep"></span>
-        <button type="button" data-ref="tblBtn" title="Tabelle einfügen">⊞ Tabelle</button>
-        <button type="button" data-tbl="row+" title="Zeile unter der aktuellen Zelle einfügen">+Zeile</button><button type="button" data-tbl="col+" title="Spalte rechts einfügen">+Spalte</button>
-        <button type="button" data-tbl="row-" title="Aktuelle Zeile löschen">−Zeile</button><button type="button" data-tbl="col-" title="Aktuelle Spalte löschen">−Spalte</button>
-        <button type="button" data-cmd="removeFormat" title="Formatierung entfernen">✕ Format</button>
-        <button type="button" data-ref="sigBtn" title="Signatur einfügen (⚙ Einstellungen)">✍ Signatur</button>
-        <select data-ref="tbSel" title="Textbaustein einfügen"><option value="">📋 Textbaustein …</option></select>
+        <div class="dd"><button type="button" class="ddb" title="Tabelle einfügen oder bearbeiten">⊞ <span class="car">▾</span></button>
+          <div class="ddm" style="min-width:210px">
+            <button type="button" class="mi" data-ref="tblBtn" title="Tabelle einfügen">⊞ Neue Tabelle …</button>
+            <div class="ddsep"></div>
+            <button type="button" class="mi" data-tbl="row+" title="Zeile unter der aktuellen Zelle einfügen">＋ Zeile darunter</button><button type="button" class="mi" data-tbl="col+" title="Spalte rechts einfügen">＋ Spalte rechts</button>
+            <button type="button" class="mi" data-tbl="row-" title="Aktuelle Zeile löschen">− Zeile löschen</button><button type="button" class="mi" data-tbl="col-" title="Aktuelle Spalte löschen">− Spalte löschen</button>
+          </div></div>
+        <span class="sep"></span>
+        <button type="button" data-cmd="removeFormat" title="Formatierung entfernen">✕</button>
+        <button type="button" data-ref="sigBtn" title="Signatur einfügen (⚙ Einstellungen)">✍</button>
+        <select data-ref="tbSel" title="Textbaustein einfügen"><option value="">📋 Baustein …</option></select>
       </div>
       <div class="tb" data-ref="tblPop" style="display:none;align-items:center">Tabelle: <input type="number" data-ref="tblR" value="3" min="1" max="50" style="width:50px"> Zeilen ×
         <input type="number" data-ref="tblC" value="3" min="1" max="20" style="width:50px"> Spalten <label class="chk" style="margin:0 6px"><input type="checkbox" data-ref="tblH" checked> Kopfzeile</label>
@@ -3577,7 +3594,7 @@
     $('fDur', w).addEventListener('input', calc);
     for (const m of [15, 30, 45, 60, 90, 120, 240]) {
       const hv = String(m / 60).replace('.', ',');
-      const c = el('button', { className: 'chip', textContent: `${hv} h` });
+      const c = el('button', { type: 'button', className: 'chip mi', textContent: `${hv} h` });
       c.addEventListener('click', () => { $('fDur', w).value = hv; calc(); });
       $('fChips', w).appendChild(c);
     }

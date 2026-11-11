@@ -22,6 +22,8 @@ Das Skript nutzt die gleiche interne Schnittstelle wie die MultiData-Weboberflä
   - *Inbox:* Typen.
   - *Ticket:* „⋯“ enthält In MultiData öffnen, In neuem Tab, Link kopieren, Child-Tickets und Zusammenführen.
   - *Einstellungen:* Abschnitte sind einklappbar; die Werkbank merkt sich, welche offen sind.
+  - *Buchen:* Die Dauer-Schnellwerte (0,25 h … 4 h) stecken im ▾ am Dauer-Feld.
+  - *Texteditor:* Die Tabellen-Befehle (neue Tabelle, Zeile/Spalte einfügen oder löschen) stecken im Menü ⊞ ▾. Format entfernen (✕), Signatur (✍) und die Listen sind Symbolknöpfe mit Tooltip.
 
 ## Neu in 1.7
 
