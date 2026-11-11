@@ -4,6 +4,7 @@
 #   @name     „MultiData Werkbank (Beta)“ → „MultiData Werkbank“
 #   @version  1.5.0.3 → 1.5.0   (4. Stelle = Beta-Zähler entfällt)
 #   URLs      /beta/ → /stable/
+# Release-Notes kommen aus docs/releases/v<Version>.md (falls vorhanden, z. B. mit Vorher/Nachher-Bildern).
 name: Beta freigeben
 
 on:
@@ -61,4 +62,13 @@ jobs:
           git commit -m "Release v${VER}${NOTES:+ – $NOTES}"
           git tag "v${VER}"
           git push origin HEAD --tags
-          gh release create "v${VER}" stable/multidata-werkbank.user.js --title "v${VER}" --notes "${NOTES:-Freigabe aus Beta}"
+          # Release-Notes: docs/releases/v<Version>.md (mit Bildern), falls vorhanden – sonst die Notiz aus dem Formular.
+          # Relative Bildpfade (./…) werden auf die Dateien im Tag umgeschrieben, damit sie im Release angezeigt werden.
+          notes_file=$(mktemp)
+          if [ -f "docs/releases/v${VER}.md" ]; then
+            sed "s#](\./#](https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/v${VER}/docs/releases/#g" "docs/releases/v${VER}.md" > "$notes_file"
+            if [ -n "$NOTES" ]; then printf '\n\n%s\n' "$NOTES" >> "$notes_file"; fi
+          else
+            printf '%s\n' "${NOTES:-Freigabe aus Beta}" > "$notes_file"
+          fi
+          gh release create "v${VER}" stable/multidata-werkbank.user.js --title "v${VER}" --notes-file "$notes_file"

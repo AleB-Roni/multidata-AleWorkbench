@@ -55,7 +55,7 @@ Bitte **nicht beide** gleichzeitig aktiv haben; es läuft ohnehin nur die zuerst
 3. Freigeben: **Actions → „Beta freigeben“ → Run workflow** (optional mit kurzer Notiz). Der Workflow
    - kopiert die Beta nach `stable/`,
    - setzt `@name` ohne „(Beta)“, `@version` ohne die 4. Stelle (`1.5.1.3` → `1.5.1`) und die Update-URLs auf `stable/`,
-   - legt einen Git-Tag und ein GitHub-Release an.
+   - legt einen Git-Tag und ein GitHub-Release an. Gibt es `docs/releases/v<Version>.md` (z. B. `v1.8.0.md`), wird sie als Release-Text verwendet, mit Bildern aus demselben Ordner (relativ verlinkt: `./v1.8/bild.png`). Sonst gilt die Notiz aus dem Formular.
    Er bricht ab, wenn die Stable-Version nicht höher würde.
 4. Kolleg:innen erhalten das Update automatisch über Tampermonkey.
 
