@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.3
+// @version      1.8.0.4
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1419,6 +1419,16 @@
   #mdqt-panel .tb .ddm button.mi:hover{background:var(--mq-soft2)}
   #mdqt-panel .tb .dd .ddm{padding:6px}
   #mdqt-panel .tb .dd.open>.ddb{background:var(--mq-accent-soft);border-color:var(--mq-accent)}
+  #mdqt-panel .togs{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}
+  #mdqt-panel .chk.tgl{margin:0;padding:3px 10px 3px 8px;min-height:28px;border:1px solid var(--mq-border2);border-radius:999px;background:var(--mq-btn);font-size:12px;font-weight:500;
+    transition:background .12s,border-color .12s,color .12s}
+  #mdqt-panel .chk.tgl input{width:14px;height:14px}
+  #mdqt-panel .chk.tgl:hover{border-color:var(--mq-accent)}
+  #mdqt-panel .chk.tgl:has(input:checked){background:var(--mq-accent-soft);border-color:var(--mq-accent);color:var(--mq-accent-fg)}
+  #mdqt-panel .tgrp{display:inline-flex;align-items:center}
+  #mdqt-panel .tgrp .abr{display:inline-flex;align-items:center;gap:4px;margin-left:-1px}
+  #mdqt-panel .tgrp .abr input{width:84px;min-height:28px;border-radius:0 999px 999px 0 !important;padding:2px 10px !important;font-size:12px}
+  #mdqt-panel .tgrp:has(.abr:not([style*="none"])) .chk.tgl{border-radius:999px 0 0 999px}
   #mdqt-panel .inpdd{display:flex}
   #mdqt-panel .inpdd>input{border-top-right-radius:0 !important;border-bottom-right-radius:0 !important;min-width:0}
   #mdqt-panel .inpdd .ddb{border-top-left-radius:0;border-bottom-left-radius:0;margin-left:-1px;min-height:30px;padding:0 9px;box-shadow:none}
@@ -3080,7 +3090,7 @@
         <div class="c s"><label class="l">abr. Stunden</label><input type="text" data-ref="eAbr"></div>
         <div class="c"><div class="hint" data-ref="eHint"></div></div>
       </div>
-      ${WEG_OK ? '<label class="chk" title="Wegzeit und Wegstrecke = 1 (Kennzeichen für die Buchhaltung)"><input type="checkbox" data-ref="eOnsite"> 🚗 Vor-Ort-Termin</label>' : ''}
+      ${WEG_OK ? '<div class="togs"><label class="chk tgl" title="Vor-Ort-Termin: Wegzeit und Wegstrecke = 1 (Kennzeichen für die Buchhaltung)"><input type="checkbox" data-ref="eOnsite"> 🚗 Vor Ort</label></div>' : ''}
       <label class="l">Text</label>
       <div class="rte" contenteditable="true" spellcheck="true" lang="de" data-ref="eTxt"></div>
       <div class="row" style="margin-top:8px">
@@ -3534,10 +3544,12 @@
         <div class="c s" style="flex-basis:170px"><label class="l">Kontaktart</label><select data-ref="fKa"></select></div>
       </div>
       <div class="hint" data-ref="fCalc"></div>
-      <label class="chk"><input type="checkbox" data-ref="fBill"> Abrechenbar</label>
-      <span data-ref="fAbrBox" style="display:none"><label class="chk">abr. Stunden (leer = wie gebucht) <input type="text" data-ref="fAbr" style="width:80px"></label></span>
-      ${allowOnsite ? '<label class="chk" style="margin-left:12px" title="Setzt im Kommentar Wegzeit und Wegstrecke auf 1 (Kennzeichen für die Buchhaltung)"><input type="checkbox" data-ref="fOnsite"> 🚗 Vor-Ort-Termin</label>' : ''}
-      ${allowMail ? `<label class="chk" style="margin-left:12px"><input type="checkbox" data-ref="fMailOn"> <b>✉ Als Mail senden</b> („Antwort sofort senden“)</label>
+      <div class="togs">
+        <span class="tgrp"><label class="chk tgl" title="Zeit abrechenbar buchen"><input type="checkbox" data-ref="fBill"> 💶 Abrechenbar</label><span data-ref="fAbrBox" class="abr" style="display:none"><input type="text" data-ref="fAbr" placeholder="= gebucht" title="Abrechenbare Stunden – leer = wie gebucht"><span class="hint">h</span></span></span>
+        ${allowOnsite ? '<label class="chk tgl" title="Vor-Ort-Termin: setzt im Kommentar Wegzeit und Wegstrecke auf 1 (Kennzeichen für die Buchhaltung)"><input type="checkbox" data-ref="fOnsite"> 🚗 Vor Ort</label>' : ''}
+        ${allowMail ? '<label class="chk tgl" title="Als Mail an den Kunden senden („Antwort sofort senden“)"><input type="checkbox" data-ref="fMailOn"> ✉ Als Mail senden</label>' : ''}
+      </div>
+      ${allowMail ? `
       <div class="mailbox" data-ref="fMailBox" style="display:none">
         <div class="warnbox" data-ref="fSupp" style="display:none">Am Ticket ist „Keine Benachrichtigungen“ gesetzt – so geht keine Mail raus.
           <button class="btn sm" data-ref="fSuppBtn">Haken am Ticket entfernen</button></div>

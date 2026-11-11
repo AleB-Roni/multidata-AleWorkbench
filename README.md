@@ -22,7 +22,7 @@ Das Skript nutzt die gleiche interne Schnittstelle wie die MultiData-Weboberflä
   - *Inbox:* Typen.
   - *Ticket:* „⋯“ enthält In MultiData öffnen, In neuem Tab, Link kopieren, Child-Tickets und Zusammenführen.
   - *Einstellungen:* Abschnitte sind einklappbar; die Werkbank merkt sich, welche offen sind.
-  - *Buchen:* Die Dauer-Schnellwerte (0,25 h … 4 h) stecken im ▾ am Dauer-Feld.
+  - *Buchen:* Die Dauer-Schnellwerte (0,25 h … 4 h) stecken im ▾ am Dauer-Feld. „Abrechenbar“, „Vor Ort“ und „Als Mail senden“ sind Umschalt-Pillen in einer Zeile. Die abrechenbaren Stunden trägt man direkt an der Abrechenbar-Pille ein (leer = wie gebucht).
   - *Texteditor:* Die Tabellen-Befehle (neue Tabelle, Zeile/Spalte einfügen oder löschen) stecken im Menü ⊞ ▾. Format entfernen (✕), Signatur (✍) und die Listen sind Symbolknöpfe mit Tooltip.
 
 ## Neu in 1.7
@@ -66,7 +66,7 @@ Kundenspezifisches (welche Kunden nicht abrechenbar bzw. intern sind) steht **ni
 - **Meldungen:** Fehler und Warnungen (z. B. „keine Zeit eingetragen“) erscheinen zusätzlich als Pop-up unten in der Werkbank, egal wie weit man gescrollt hat. Ein Klick schließt sie; nach einigen Sekunden verschwinden sie von selbst.
 - **Kopfzeile:** Angelegt am … von *Ersteller* (MultiData-Feld „Ersteller“), Stunden und abrechenbare Stunden.
 - **Kopf:** Betreff, Status, Priorität, Queue, Bearbeiter, Firma, Parent-Ticket und „Keine Benachrichtigungen“ werden nur vorgemerkt (gelb markiert) und gemeinsam mit **Speichern** übernommen; **Verwerfen** stellt den alten Stand wieder her. Bearbeiter und Firma sucht man direkt im Feld. Beim Firmenwechsel kann MultiData abrechenbare Stunden zurücksetzen – die Werkbank weist darauf hin.
-- **🚗 Vor-Ort-Termin:** Haken beim Buchen (oder beim Bearbeiten eines Kommentars) setzt im Kommentar *Wegzeit* und *Wegstrecke* auf 1 – das Kennzeichen für die Buchhaltung. Solche Kommentare tragen das Etikett „🚗 vor Ort“.
+- **🚗 Vor Ort** (Vor-Ort-Termin): Haken beim Buchen (oder beim Bearbeiten eines Kommentars) setzt im Kommentar *Wegzeit* und *Wegstrecke* auf 1 – das Kennzeichen für die Buchhaltung. Solche Kommentare tragen das Etikett „🚗 vor Ort“.
 - **Reiter unten:** *💬 Kommentare* und *🕘 Verlauf*. Der Verlauf zeigt Anlage, Kommentare, Mails, Anhänge und alle Feldänderungen aus dem MultiData-Protokoll (Tabelle `MDERRDA_MDERRDAP`: wer, wann, Feld, alt → neu – dasselbe wie der Reiter „Protokoll“ in MultiData). Ist das Protokoll nicht abrufbar, zeigt die Werkbank ersatzweise die Änderungen, die sie selbst erkannt hat.
 - **Texteditor** (Kommentar, Kommentar bearbeiten, Signatur, Textbausteine):
   - Die **Rechtschreibprüfung** des Browsers ist in allen Textfeldern aktiv (Deutsch; Korrekturvorschläge per Rechtsklick).
