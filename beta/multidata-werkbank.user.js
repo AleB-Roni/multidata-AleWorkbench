@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.1
+// @version      1.8.0.2
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1306,19 +1306,19 @@
   #mdqt-panel ::-webkit-scrollbar-track{background:transparent}
 
   /* ---------- Kopfzeile mit Reitern ---------- */
-  #mdqt-panel .hdr{display:flex;align-items:center;gap:2px;padding:8px 8px 8px 14px;background:var(--mq-hdr);color:var(--mq-hdr-fg);
-    border-bottom:1px solid var(--mq-border);flex:none;min-height:52px}
+  #mdqt-panel .hdr{display:flex;align-items:center;gap:2px;padding:5px 6px 5px 12px;background:var(--mq-hdr);color:var(--mq-hdr-fg);
+    border-bottom:1px solid var(--mq-border);flex:none;min-height:44px}
   #mdqt-panel .hdr .tabs{display:flex;align-items:center;gap:2px;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
   #mdqt-panel .hdr .tabs::-webkit-scrollbar{display:none}
-  #mdqt-panel .hdr .brand{display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:14px;color:var(--mq-fg);margin-right:12px;white-space:nowrap;user-select:none}
-  #mdqt-panel .hdr .brand i{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:8px;font-style:normal;font-size:14px;
+  #mdqt-panel .hdr .brand{display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:14px;color:var(--mq-fg);margin-right:8px;white-space:nowrap;user-select:none}
+  #mdqt-panel .hdr .brand i{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:7px;font-style:normal;font-size:13px;
     background:linear-gradient(135deg,#14b8a6,#0f766e);color:#fff;box-shadow:0 2px 6px -1px rgba(13,148,136,.5)}
-  #mdqt-panel .hdr button.tab{display:inline-flex;align-items:center;gap:6px;background:none;border:none;color:var(--mq-hdr-fg);padding:7px 12px;border-radius:var(--mq-r);
+  #mdqt-panel .hdr button.tab{display:inline-flex;align-items:center;gap:6px;background:none;border:none;color:var(--mq-hdr-fg);padding:6px 10px;border-radius:var(--mq-r);
     cursor:pointer;font:600 13px/1 var(--mq-font);white-space:nowrap;transition:background .12s,color .12s}
   #mdqt-panel .hdr button.tab:hover{background:var(--mq-soft2);color:var(--mq-fg)}
   #mdqt-panel .hdr button.tab.active{background:var(--mq-accent-soft);color:var(--mq-accent-fg)}
   #mdqt-panel .hdr .sp{flex:1;min-width:8px}
-  #mdqt-panel .hdr .ic,#mdqt-panel .hdr .x{display:inline-grid;place-items:center;width:32px;height:32px;padding:0;background:none;border:none;border-radius:var(--mq-r);
+  #mdqt-panel .hdr .ic,#mdqt-panel .hdr .x{display:inline-grid;place-items:center;width:30px;height:30px;padding:0;background:none;border:none;border-radius:var(--mq-r);
     color:var(--mq-hdr-fg);font-size:15px;cursor:pointer;flex:none;text-decoration:none;transition:background .12s,color .12s}
   #mdqt-panel .hdr .x{font-size:20px}
   #mdqt-panel .hdr .ic:hover,#mdqt-panel .hdr .x:hover{background:var(--mq-soft2);color:var(--mq-fg)}
@@ -1326,37 +1326,45 @@
   #mdqt-panel.dark .hdr .x:hover{background:#3b1d1d;color:#fca5a5}
 
   /* ---------- Inhalt ---------- */
-  #mdqt-panel .body{flex:1;overflow:auto;padding:16px 18px;background:var(--mq-bg)}
+  #mdqt-panel .body{flex:1;overflow:auto;padding:12px 14px;background:var(--mq-bg)}
   #mdqt-panel section{display:none}#mdqt-panel section.active{display:block;animation:mqFade .12s ease-out}
   @keyframes mqFade{from{opacity:.4}to{opacity:1}}
   #mdqt-panel h3{font-size:14px;font-weight:700;letter-spacing:-.005em;color:var(--mq-fg)}
-  #mdqt-panel section[data-tab=settings] h3{padding-top:14px;border-top:1px solid var(--mq-border)}
-  #mdqt-panel section[data-tab=settings] h3:first-child{padding-top:0;border-top:none}
-  #mdqt-panel label.l{display:block;margin:10px 0 4px;color:var(--mq-muted2);font-size:12px;font-weight:600}
+  #mdqt-panel details.set{margin-top:6px;padding:0;box-shadow:none}
+  #mdqt-panel details.set:first-child{margin-top:0}
+  #mdqt-panel details.set>summary{margin:0;padding:9px 12px;color:var(--mq-fg);font-size:13px;list-style:none;display:flex;align-items:center;gap:8px;border-radius:var(--mq-r)}
+  #mdqt-panel details.set>summary::-webkit-details-marker{display:none}
+  #mdqt-panel details.set>summary::before{content:'▸';color:var(--mq-muted);font-size:11px;width:10px;transition:transform .12s}
+  #mdqt-panel details.set[open]>summary::before{transform:rotate(90deg)}
+  #mdqt-panel details.set>summary:hover{background:var(--mq-soft)}
+  #mdqt-panel details.set[open]{padding:0 12px 10px}
+  #mdqt-panel details.set[open]>summary{margin:0 -12px 4px;border-bottom:1px solid var(--mq-line);border-radius:var(--mq-r) var(--mq-r) 0 0}
+  #mdqt-panel h4{margin:12px 0 4px;font-size:13px}
+  #mdqt-panel label.l{display:block;margin:7px 0 3px;color:var(--mq-muted2);font-size:12px;font-weight:600}
   #mdqt-panel label.l .hint{font-weight:400}
 
   /* ---------- Eingabefelder ---------- */
   #mdqt-panel input[type=text],#mdqt-panel input[type=date],#mdqt-panel input[type=time],#mdqt-panel input[type=number],#mdqt-panel select,#mdqt-panel textarea,#mdqt-panel .rte{
-    width:100%;border:1px solid var(--mq-border2);border-radius:var(--mq-r);padding:6px 9px;font:13px/1.4 var(--mq-font);background:var(--mq-input) !important;color:var(--mq-fg) !important;
-    min-height:34px;transition:border-color .12s,box-shadow .12s}
+    width:100%;border:1px solid var(--mq-border2);border-radius:var(--mq-r);padding:4px 8px;font:13px/1.4 var(--mq-font);background:var(--mq-input) !important;color:var(--mq-fg) !important;
+    min-height:30px;transition:border-color .12s,box-shadow .12s}
   #mdqt-panel input:hover:not(:disabled),#mdqt-panel select:hover:not(:disabled),#mdqt-panel textarea:hover{border-color:var(--mq-muted)}
   #mdqt-panel input[type=text]:focus,#mdqt-panel input[type=date]:focus,#mdqt-panel input[type=time]:focus,#mdqt-panel input[type=number]:focus,#mdqt-panel select:focus,#mdqt-panel textarea:focus,#mdqt-panel .rte:focus{
     outline:none;border-color:var(--mq-accent);box-shadow:0 0 0 3px var(--mq-ring)}
   #mdqt-panel input::placeholder,#mdqt-panel textarea::placeholder{color:var(--mq-muted);opacity:.85}
-  #mdqt-panel textarea{min-height:72px;resize:vertical}
-  #mdqt-panel .rte{min-height:76px;max-height:300px;overflow:auto;resize:vertical;padding:8px 10px}
+  #mdqt-panel textarea{min-height:64px;resize:vertical}
+  #mdqt-panel .rte{min-height:70px;max-height:300px;overflow:auto;resize:vertical;padding:8px 10px}
   #mdqt-panel input[type=checkbox]{appearance:auto !important;-webkit-appearance:checkbox !important;width:16px;height:16px;margin:0;accent-color:var(--mq-accent);flex:none;cursor:pointer}
 
   /* ---------- Layout-Helfer ---------- */
-  #mdqt-panel .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+  #mdqt-panel .row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
   #mdqt-panel .row>.c{flex:1;min-width:120px}
   #mdqt-panel .row>.c.s{flex:0 0 110px;min-width:0}
-  #mdqt-panel .chk{display:inline-flex;gap:7px;align-items:center;margin:8px 14px 0 0;cursor:pointer;user-select:none}
+  #mdqt-panel .chk{display:inline-flex;gap:6px;align-items:center;margin:6px 12px 0 0;cursor:pointer;user-select:none}
 
   /* ---------- Chips (Filter, Status, Vorlagen) ---------- */
   #mdqt-panel .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
   #mdqt-panel .chip{display:inline-flex;align-items:center;border:1px solid var(--mq-border2);color:var(--mq-muted2);background:var(--mq-bg);border-radius:999px;
-    padding:3px 11px;cursor:pointer;font:500 12px/1.5 var(--mq-font);transition:background .12s,border-color .12s,color .12s}
+    padding:2px 10px;cursor:pointer;font:500 12px/1.5 var(--mq-font);transition:background .12s,border-color .12s,color .12s}
   #mdqt-panel .chip:hover{border-color:var(--mq-accent);color:var(--mq-accent-fg);background:var(--mq-accent-soft)}
   #mdqt-panel .chip.sel{background:var(--mq-accent);border-color:var(--mq-accent);color:var(--mq-on-accent)}
   #mdqt-panel .chip.sel:hover{background:var(--mq-accent-h);border-color:var(--mq-accent-h);color:var(--mq-on-accent)}
@@ -1365,18 +1373,51 @@
   #mdqt-panel .chip.sel .dot{box-shadow:0 0 0 2px rgba(255,255,255,.85)}
 
   /* ---------- Mehrfachauswahl (Bearbeiter, Kunden, Queues) ---------- */
-  #mdqt-panel .mp{position:relative;display:flex;flex-wrap:wrap;gap:4px;align-items:center;border:1px solid var(--mq-border2);border-radius:var(--mq-r);padding:3px 5px;
-    background:var(--mq-input);min-height:34px;cursor:text;transition:border-color .12s,box-shadow .12s}
+  #mdqt-panel .mp{position:relative;display:flex;flex-wrap:wrap;gap:4px;align-items:center;border:1px solid var(--mq-border2);border-radius:var(--mq-r);padding:2px 4px;
+    background:var(--mq-input);min-height:30px;cursor:text;transition:border-color .12s,box-shadow .12s}
   #mdqt-panel .mp:focus-within{border-color:var(--mq-accent);box-shadow:0 0 0 3px var(--mq-ring)}
   #mdqt-panel .mp .pill{background:var(--mq-accent-soft2);color:var(--mq-accent-fg);border-radius:999px;padding:2px 4px 2px 10px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:2px;max-width:100%}
   #mdqt-panel .mp .pill span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #mdqt-panel .mp .pill b{cursor:pointer;padding:0 5px;font-weight:700;border-radius:999px;opacity:.7}
   #mdqt-panel .mp .pill b:hover{opacity:1;background:rgba(0,0,0,.08)}
-  #mdqt-panel .mp input[type=text]{border:none !important;box-shadow:none !important;flex:1;min-width:120px;min-height:26px;padding:3px !important;outline:none}
+  #mdqt-panel .mp input[type=text]{border:none !important;box-shadow:none !important;flex:1;min-width:120px;min-height:24px;padding:2px !important;outline:none}
   #mdqt-panel .mp .results{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:6}
 
+  /* ---------- Aufklappmenüs ---------- */
+  #mdqt-panel .row.bar{align-items:center}
+  #mdqt-panel .row.bar input[type=text]{min-height:32px}
+  #mdqt-panel .row.fbar{align-items:center;margin-top:8px;gap:6px}
+  #mdqt-panel .row.fbar .chk{margin:0 0 0 6px}
+  #mdqt-panel .dd{position:relative;flex:none}
+  #mdqt-panel .ddb .car{font-size:10px;opacity:.6;margin-left:2px}
+  #mdqt-panel .ddb b{font-weight:600;color:var(--mq-muted2);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #mdqt-panel .ddb.set{border-color:var(--mq-accent);background:var(--mq-accent-soft);color:var(--mq-accent-fg)}
+  #mdqt-panel .ddb.set b{color:var(--mq-accent-fg)}
+  #mdqt-panel .dd.open>.ddb{border-color:var(--mq-accent);box-shadow:0 0 0 3px var(--mq-ring)}
+  #mdqt-panel .ddm{display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:30;min-width:240px;max-width:min(520px,calc(100vw - 40px));max-height:min(420px,60vh);overflow:auto;
+    background:var(--mq-bg);border:1px solid var(--mq-border);border-radius:var(--mq-r-lg);box-shadow:0 16px 36px -10px rgba(15,23,42,.3),0 2px 6px rgba(15,23,42,.08);padding:8px 10px 10px}
+  #mdqt-panel.dark .ddm{box-shadow:0 16px 36px -10px rgba(0,0,0,.7)}
+  #mdqt-panel .dd.r>.ddm{left:auto;right:0}
+  #mdqt-panel .dd.open>.ddm{display:block;animation:mqFade .1s ease-out}
+  #mdqt-panel .ddh{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--mq-muted);margin:2px 2px 6px}
+  #mdqt-panel .ddsep{height:1px;background:var(--mq-line);margin:8px -10px}
+  #mdqt-panel .chips.list{flex-direction:column;flex-wrap:nowrap;gap:1px;margin:0}
+  #mdqt-panel .chips.list .chip{border:none;border-radius:var(--mq-r-sm);background:transparent;color:var(--mq-fg);padding:5px 8px;width:100%;justify-content:flex-start;text-align:left;font-size:13px}
+  #mdqt-panel .chips.list .chip:hover{background:var(--mq-soft2);color:var(--mq-fg)}
+  #mdqt-panel .chips.list .chip b{margin-left:auto !important;opacity:.5;padding:0 4px}
+  #mdqt-panel .chips.list .chip b:hover{opacity:1;color:var(--mq-danger)}
+  #mdqt-panel .chips.list.check .chip::before{content:'';flex:none;width:14px;height:14px;margin-right:8px;border:1.5px solid var(--mq-border2);border-radius:4px;
+    display:inline-grid;place-items:center;font-size:10px;line-height:1;color:var(--mq-on-accent)}
+  #mdqt-panel .chips.list.check .chip.sel{background:transparent;color:var(--mq-fg)}
+  #mdqt-panel .chips.list.check .chip.sel:hover{background:var(--mq-soft2)}
+  #mdqt-panel .chips.list.check .chip.sel::before{content:'✓';background:var(--mq-accent);border-color:var(--mq-accent)}
+  #mdqt-panel .chips.list.check .chip.sel .dot{box-shadow:none}
+  #mdqt-panel .ddm .chk.blk{display:flex;margin:4px 0}
+  #mdqt-panel .ddm .btn.mi{display:flex;width:100%;justify-content:flex-start;border:none;box-shadow:none;background:transparent;color:var(--mq-fg);font-weight:500;font-size:13px;min-height:30px}
+  #mdqt-panel .ddm .btn.mi:hover{background:var(--mq-soft2);color:var(--mq-fg)}
+
   /* ---------- Knöpfe ---------- */
-  #mdqt-panel .btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:7px 14px;min-height:34px;border:1px solid transparent;border-radius:var(--mq-r);
+  #mdqt-panel .btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:5px 12px;min-height:30px;border:1px solid transparent;border-radius:var(--mq-r);
     background:var(--mq-accent);color:var(--mq-on-accent);font:600 13px/1.2 var(--mq-font);cursor:pointer;white-space:nowrap;
     box-shadow:var(--mq-shadow-sm);transition:background .12s,border-color .12s,box-shadow .12s,transform .06s}
   #mdqt-panel .btn:hover:not(:disabled){background:var(--mq-accent-h)}
@@ -1387,7 +1428,7 @@
   #mdqt-panel .btn.sec:hover:not(:disabled){background:var(--mq-accent-soft);border-color:var(--mq-accent);color:var(--mq-accent-fg)}
   #mdqt-panel .btn.warn{background:var(--mq-danger);color:#fff}
   #mdqt-panel .btn.warn:hover:not(:disabled){background:var(--mq-danger-h)}
-  #mdqt-panel .btn.sm{padding:3px 10px;min-height:28px;font-size:12px;border-radius:var(--mq-r-sm)}
+  #mdqt-panel .btn.sm{padding:2px 9px;min-height:26px;font-size:12px;border-radius:var(--mq-r-sm)}
   #mdqt-panel .btn:disabled{opacity:.5;cursor:default;box-shadow:none}
   #mdqt-panel a.btn{text-decoration:none}
 
@@ -1407,11 +1448,11 @@
   #mdqt-panel .warnbox{background:var(--mq-warn-bg);border:1px solid var(--mq-warn-bd);border-left:4px solid var(--mq-amber);border-radius:var(--mq-r);padding:8px 12px;margin-top:8px;font-size:12px}
 
   /* ---------- Tabellen ---------- */
-  #mdqt-panel table{width:100%;border-collapse:separate;border-spacing:0;margin-top:10px;color:var(--mq-fg);font-size:inherit}
+  #mdqt-panel table{width:100%;border-collapse:separate;border-spacing:0;margin-top:8px;color:var(--mq-fg);font-size:inherit}
   #mdqt-panel th{text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--mq-muted);
-    border-bottom:1px solid var(--mq-border);padding:8px;cursor:pointer;white-space:nowrap;position:sticky;top:-16px;background:var(--mq-bg);z-index:1}
+    border-bottom:1px solid var(--mq-border);padding:6px 8px;cursor:pointer;white-space:nowrap;position:sticky;top:-12px;background:var(--mq-bg);z-index:1}
   #mdqt-panel th:hover{color:var(--mq-fg)}
-  #mdqt-panel td{border-bottom:1px solid var(--mq-line);padding:7px 8px;vertical-align:top}
+  #mdqt-panel td{border-bottom:1px solid var(--mq-line);padding:5px 8px;vertical-align:top}
   #mdqt-panel tr.r td{transition:background .08s}
   #mdqt-panel tr.r:hover td{background:var(--mq-hover);cursor:pointer}
   #mdqt-panel td.n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -1421,10 +1462,10 @@
   #mdqt-panel tr.gsum td{color:var(--mq-muted);border-bottom:1px solid var(--mq-border2);font-size:12px}
   #mdqt-panel tr.tsum td{border-top:2px solid var(--mq-border2);font-weight:600}
   #mdqt-panel tr.r td.l{padding:0}
-  #mdqt-panel a.rl{display:block;padding:7px 8px;color:inherit;text-decoration:none;min-height:1em}
+  #mdqt-panel a.rl{display:block;padding:5px 8px;color:inherit;text-decoration:none;min-height:1em}
 
   /* ---------- Karten (Kommentare, Anhänge, Abschnitte) ---------- */
-  #mdqt-panel .card{border:1px solid var(--mq-border);border-radius:var(--mq-r-lg);padding:10px 14px;margin-top:10px;background:var(--mq-bg);box-shadow:var(--mq-shadow-sm)}
+  #mdqt-panel .card{border:1px solid var(--mq-border);border-radius:var(--mq-r);padding:8px 12px;margin-top:8px;background:var(--mq-bg);box-shadow:var(--mq-shadow-sm)}
   #mdqt-panel .card.edit{border-color:var(--mq-accent);background:var(--mq-edit);box-shadow:0 0 0 3px var(--mq-ring)}
   #mdqt-panel .card .meta{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--mq-muted2);align-items:center}
   #mdqt-panel .card .meta b{color:var(--mq-fg)}
@@ -1443,20 +1484,20 @@
   #mdqt-panel details[open]>summary{margin-bottom:6px}
 
   /* ---------- Ticket-Kopf ---------- */
-  #mdqt-panel .head{background:var(--mq-soft);border:1px solid var(--mq-border);border-radius:var(--mq-r-lg);padding:14px 16px}
+  #mdqt-panel .head{background:var(--mq-soft);border:1px solid var(--mq-border);border-radius:var(--mq-r);padding:10px 12px}
   #mdqt-panel .head h3{margin:0;font-size:16px;white-space:nowrap;color:var(--mq-accent-fg);font-variant-numeric:tabular-nums}
   #mdqt-panel .head .hrow1{display:flex;gap:10px;align-items:center}
-  #mdqt-panel .head .hrow1 input{font-weight:600;font-size:15px;min-height:38px}
-  #mdqt-panel .head .hgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:0 10px;margin-top:4px}
+  #mdqt-panel .head .hrow1 input{font-weight:600;font-size:14px;min-height:32px}
+  #mdqt-panel .head .hgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:0 8px;margin-top:2px}
   #mdqt-panel .head .hgrid .wide{grid-column:span 2}
-  #mdqt-panel .head .hbar{margin-top:10px;align-items:center}
+  #mdqt-panel .head .hbar{margin-top:8px;align-items:center}
   #mdqt-panel .sug{position:relative}#mdqt-panel .sug .results{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:6}
   #mdqt-panel .chg{outline:2px solid var(--mq-amber) !important;outline-offset:-1px;background:var(--mq-unread) !important}
   #mdqt-panel label.chk.chg{outline-offset:2px;border-radius:4px}
 
   /* ---------- Unter-Reiter (Kommentare / Verlauf) ---------- */
-  #mdqt-panel .btabs{display:flex;align-items:center;gap:4px;margin-top:18px;border-bottom:1px solid var(--mq-border)}
-  #mdqt-panel .btabs button[data-b]{background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;padding:8px 12px;cursor:pointer;
+  #mdqt-panel .btabs{display:flex;align-items:center;gap:4px;margin-top:12px;border-bottom:1px solid var(--mq-border)}
+  #mdqt-panel .btabs button[data-b]{background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;padding:6px 10px;cursor:pointer;
     font:600 13px/1.2 var(--mq-font);color:var(--mq-muted2);transition:color .12s,border-color .12s}
   #mdqt-panel .btabs button[data-b]:hover{color:var(--mq-fg)}
   #mdqt-panel .btabs button[data-b].on{color:var(--mq-accent-fg);border-bottom-color:var(--mq-accent)}
@@ -1494,8 +1535,8 @@
   #mdqt-panel.full .body>section,#mdqt-panel.app .body>section{max-width:1400px;margin-left:auto;margin-right:auto}
 
   /* ---------- Texteditor ---------- */
-  #mdqt-panel .tb{display:flex;flex-wrap:wrap;align-items:center;gap:3px;margin-bottom:4px;padding:4px;background:var(--mq-soft);border:1px solid var(--mq-border);border-radius:var(--mq-r)}
-  #mdqt-panel .tb button{border:1px solid transparent;background:transparent;border-radius:var(--mq-r-sm);padding:3px 8px;min-height:26px;cursor:pointer;font:12px/1.2 var(--mq-font);color:var(--mq-fg);
+  #mdqt-panel .tb{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin-bottom:4px;padding:3px;background:var(--mq-soft);border:1px solid var(--mq-border);border-radius:var(--mq-r)}
+  #mdqt-panel .tb button{border:1px solid transparent;background:transparent;border-radius:var(--mq-r-sm);padding:2px 7px;min-height:24px;cursor:pointer;font:12px/1.2 var(--mq-font);color:var(--mq-fg);
     transition:background .1s,border-color .1s}
   #mdqt-panel .tb button:hover{background:var(--mq-btn);border-color:var(--mq-border2)}
   #mdqt-panel .tb button.on{background:var(--mq-accent-soft);border-color:var(--mq-accent);color:var(--mq-accent-fg)}
@@ -1506,7 +1547,7 @@
   #mdqt-panel .txt img{max-width:100%}
 
   /* ---------- Dateien / Anhänge / Mail ---------- */
-  #mdqt-panel .drop{border:2px dashed var(--mq-border2);border-radius:var(--mq-r-lg);padding:12px;text-align:center;color:var(--mq-muted2);margin-top:8px;cursor:pointer;
+  #mdqt-panel .drop{border:2px dashed var(--mq-border2);border-radius:var(--mq-r);padding:8px;text-align:center;color:var(--mq-muted2);margin-top:6px;cursor:pointer;
     transition:background .12s,border-color .12s,color .12s}
   #mdqt-panel .drop:hover,#mdqt-panel .drop.over{background:var(--mq-accent-soft);border-color:var(--mq-accent);color:var(--mq-accent-fg)}
   #mdqt-panel .files{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
@@ -1519,10 +1560,10 @@
   #mdqt-panel .mailinfo{font-size:12px;color:var(--mq-link2);margin-top:4px}
 
   /* ---------- Zeiten ---------- */
-  #mdqt-panel .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:10px 0}
-  #mdqt-panel .kpi{background:var(--mq-soft);border:1px solid var(--mq-border);border-radius:var(--mq-r-lg);padding:10px 14px}
+  #mdqt-panel .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:8px 0}
+  #mdqt-panel .kpi{background:var(--mq-soft);border:1px solid var(--mq-border);border-radius:var(--mq-r);padding:7px 12px}
   #mdqt-panel .kpi .kl{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--mq-muted)}
-  #mdqt-panel .kpi .kv{font-size:20px;font-weight:700;letter-spacing:-.01em;margin-top:2px;font-variant-numeric:tabular-nums}
+  #mdqt-panel .kpi .kv{font-size:17px;font-weight:700;letter-spacing:-.01em;margin-top:2px;font-variant-numeric:tabular-nums}
   #mdqt-panel .kpi .ks{font-size:11px;color:var(--mq-muted);margin-top:2px}
   #mdqt-panel .ztbl tr.zday td{border-top:1px solid var(--mq-border2);padding-top:8px;background:var(--mq-soft)}
   #mdqt-panel .ztbl tr.z-red td{background:#fee2e2}#mdqt-panel .ztbl tr.z-yellow td{background:#fef9c3}#mdqt-panel .ztbl tr.z-green td{background:#dcfce7}
@@ -1541,7 +1582,7 @@
   #mdqt-fab .badge:empty{display:none}
 
   /* ---------- Inbox ---------- */
-  #mdqt-panel .ibx{display:flex;gap:12px;padding:9px 10px;border-bottom:1px solid var(--mq-line);cursor:pointer;align-items:flex-start;border-radius:var(--mq-r);transition:background .08s}
+  #mdqt-panel .ibx{display:flex;gap:12px;padding:6px 8px;border-bottom:1px solid var(--mq-line);cursor:pointer;align-items:flex-start;border-radius:var(--mq-r);transition:background .08s}
   #mdqt-panel .ibx:hover{background:var(--mq-hover)}
   #mdqt-panel .ibx.unread{background:var(--mq-unread);box-shadow:inset 3px 0 0 var(--mq-amber)}
   #mdqt-panel .ibx.unread .tt{font-weight:700}
@@ -1600,37 +1641,55 @@
         <button class="btn sm" data-ref="teamHintGo">Zu den Einstellungen</button> <button class="btn sm sec" data-ref="teamHintNo">Später</button></div>
       <!-- SUCHE -->
       <section data-tab="search" class="active">
-        <div class="row" style="align-items:center">
-          <span class="hint">Vorlagen:</span><div class="chips" data-ref="sTpl" style="flex:1;margin:0"></div>
-          <span data-ref="sTplNew" style="display:none"><input type="text" data-ref="sTplName" placeholder="Name der Vorlage" style="width:200px"> <button class="btn sm" data-ref="sTplOk">Speichern</button></span>
-          <button class="btn sm sec" data-ref="sTplAdd" title="Aktuelle Filter (Bearbeiter, Kunden, Queues, Status, Zeitraum, Freitext) als Vorlage speichern">＋ Als Vorlage</button>
-        </div>
-        <div class="row">
-          <div class="c"><label class="l">Freitext (Betreff oder Ticket-ID)</label><input type="text" data-ref="sText" placeholder="z. B. Exchange oder Ticket-Nr."></div>
+        <div class="row bar">
+          <div class="c"><input type="text" data-ref="sText" placeholder="🔎 Betreff oder Ticket-Nr. …" title="Freitext: Betreff oder Ticket-ID"></div>
+          <div class="dd r" data-dd="tpl">
+            <button type="button" class="btn sec ddb" title="Gespeicherte Filter-Vorlagen">☆ Vorlagen <span class="car">▾</span></button>
+            <div class="ddm">
+              <div class="ddh">Vorlage anwenden</div>
+              <div class="chips list" data-ref="sTpl"></div>
+              <div class="ddsep"></div>
+              <div data-ref="sTplNew" style="display:none;margin-bottom:6px"><div class="row" style="align-items:center;gap:6px"><div class="c"><input type="text" data-ref="sTplName" placeholder="Name der Vorlage"></div><button class="btn sm" data-ref="sTplOk">Speichern</button></div></div>
+              <button class="btn sm sec" data-ref="sTplAdd" title="Aktuelle Filter (Bearbeiter, Kunden, Queues, Status, Zeitraum, Freitext) als Vorlage speichern">＋ Aktuelle Filter als Vorlage</button>
+            </div>
+          </div>
+          <button class="btn sec" data-ref="sReset" title="Zurücksetzen: Bearbeiter Ich · nur offene · alle Kunden · Freitext und Zeitraum leeren">↺</button>
+          <button class="btn" data-ref="sGo">Suchen</button>
         </div>
         <div class="row" style="align-items:flex-start">
-          <div class="c"><label class="l">Bearbeiter <span class="hint">(leer = alle · „ohne“ = nicht zugewiesen)</span></label><div data-ref="sUsers"></div></div>
-          <div class="c"><label class="l">Kunden <span class="hint">(suchen oder unten wählen – leer = alle)</span></label><div data-ref="sCusts"></div></div>
-          <div class="c"><label class="l">Queues <span class="hint">(leer = alle · „ohne“ = keine Queue)</span></label><div data-ref="sQueues"></div></div>
+          <div class="c"><label class="l" title="leer = alle · „ohne“ = nicht zugewiesen">Bearbeiter</label><div data-ref="sUsers"></div></div>
+          <div class="c"><label class="l" title="suchen oder über „Kunden-Übersicht“ wählen – leer = alle">Kunden</label><div data-ref="sCusts"></div></div>
+          <div class="c"><label class="l" title="leer = alle · „ohne“ = keine Queue">Queues</label><div data-ref="sQueues"></div></div>
         </div>
-        <label class="l" style="display:flex;align-items:center;gap:8px">Kunden in den aktuellen Filtern <span class="hint" data-ref="sFacetHint" style="flex:1"></span>
-          <select data-ref="sFacetSort" style="width:auto;font-size:12px;padding:2px 4px" title="Reihenfolge der Kunden">
-            <option value="n-desc">Anzahl Tickets ↓</option><option value="n-asc">Anzahl Tickets ↑</option>
-            <option value="name-asc">Name A–Z</option><option value="name-desc">Name Z–A</option></select></label>
-        <div class="chips" data-ref="sFacets"><span class="hint">…</span></div>
-        <label class="l">Status <span class="hint">(nichts gewählt = alle)</span>
-          <button class="btn sm sec" data-ref="sOpen">nur offene</button> <button class="btn sm sec" data-ref="sAll">alle</button></label>
-        <div class="chips" data-ref="sStatus"></div>
-        <div class="row">
-          <div class="c s" style="flex-basis:190px"><label class="l">Zeitraum bezieht sich auf</label>
-            <select data-ref="sDateMode"><option value="none">– kein Zeitraum –</option><option value="created">Anlagedatum</option><option value="booked">Gebuchte Zeit</option></select></div>
-          <div class="c s" style="flex-basis:150px"><label class="l">von</label><input type="date" data-ref="sFrom"></div>
-          <div class="c s" style="flex-basis:150px"><label class="l">bis</label><input type="date" data-ref="sTo"></div>
-          <div class="c"><div class="chips" data-ref="sRanges"></div></div>
-          <div><button class="btn sec" data-ref="sReset" title="Bearbeiter: Ich · nur offene · alle Kunden · Freitext und Zeitraum leeren">↺ Zurücksetzen</button>
-            <button class="btn" data-ref="sGo">Suchen</button></div>
+        <div class="row fbar">
+          <div class="dd" data-dd="status">
+            <button type="button" class="btn sm sec ddb">Status: <b data-ref="ddStatus">–</b> <span class="car">▾</span></button>
+            <div class="ddm">
+              <div class="row" style="gap:6px;margin-bottom:6px;align-items:center"><span class="ddh" style="flex:1;margin:0">Status</span><button class="btn sm sec" data-ref="sOpen">nur offene</button><button class="btn sm sec" data-ref="sAll">alle</button></div>
+              <div class="chips list check" data-ref="sStatus"></div>
+            </div>
+          </div>
+          <div class="dd" data-dd="range">
+            <button type="button" class="btn sm sec ddb">Zeitraum: <b data-ref="ddRange">–</b> <span class="car">▾</span></button>
+            <div class="ddm" style="width:320px">
+              <label class="l" style="margin-top:0">Bezieht sich auf</label>
+              <select data-ref="sDateMode"><option value="none">– kein Zeitraum –</option><option value="created">Anlagedatum</option><option value="booked">Gebuchte Zeit</option></select>
+              <div class="row" style="gap:6px"><div class="c"><label class="l">von</label><input type="date" data-ref="sFrom"></div><div class="c"><label class="l">bis</label><input type="date" data-ref="sTo"></div></div>
+              <div class="chips" data-ref="sRanges" style="margin-top:8px"></div>
+            </div>
+          </div>
+          <div class="dd" data-dd="facets">
+            <button type="button" class="btn sm sec ddb" title="Kunden, die in den aktuellen Filtern vorkommen – Klick wählt aus/ab">Kunden-Übersicht <b data-ref="ddFacets"></b> <span class="car">▾</span></button>
+            <div class="ddm" style="width:460px">
+              <div class="row" style="align-items:center;gap:6px;margin-bottom:6px"><span class="hint" data-ref="sFacetHint" style="flex:1"></span>
+                <select data-ref="sFacetSort" style="width:auto" title="Reihenfolge der Kunden">
+                  <option value="n-desc">Anzahl ↓</option><option value="n-asc">Anzahl ↑</option>
+                  <option value="name-asc">Name A–Z</option><option value="name-desc">Name Z–A</option></select></div>
+              <div class="chips" data-ref="sFacets"><span class="hint">…</span></div>
+            </div>
+          </div>
+          <label class="chk" title="Sortierung gilt innerhalb der Gruppen"><input type="checkbox" data-ref="sGroup"> Nach Priorität gruppieren</label>
         </div>
-        <label class="chk"><input type="checkbox" data-ref="sGroup"> Nach Priorität gruppieren <span class="hint">(Sortierung gilt innerhalb der Gruppen)</span></label>
         <div class="msg" data-ref="sMsg"></div>
         <div data-ref="sResults"></div>
       </section>
@@ -1669,20 +1728,28 @@
 
       <!-- ZEITEN -->
       <section data-tab="times">
-        <div class="row" style="align-items:flex-start">
-          <div class="c" style="max-width:340px"><label class="l">Bearbeiter</label><div data-ref="zUsers"></div></div>
-          <div class="c s" style="flex-basis:150px"><label class="l">von</label><input type="date" data-ref="zFrom"></div>
-          <div class="c s" style="flex-basis:150px"><label class="l">bis</label><input type="date" data-ref="zTo"></div>
-          <div class="c"><label class="l">&nbsp;</label><div class="chips" data-ref="zRanges"></div></div>
-          <div><label class="l">&nbsp;</label><button class="btn" data-ref="zGo">Laden</button></div>
-        </div>
-        <div class="row" style="align-items:center;margin-top:4px">
-          <label class="chk"><input type="checkbox" data-ref="zColor"> Arbeitstage farbig</label>
-          <label class="chk">grün ab <input type="text" data-ref="zLow" style="width:44px"> h</label>
-          <label class="chk"><input type="checkbox" data-ref="zWeekend"> Wochenenden ohne Buchung ausblenden</label>
-          <label class="chk"><input type="checkbox" data-ref="zDetails"> Einzelbuchungen anzeigen</label>
+        <div class="row" style="align-items:flex-end">
+          <div class="c" style="max-width:320px"><label class="l">Bearbeiter</label><div data-ref="zUsers"></div></div>
+          <div class="c s" style="flex-basis:140px"><label class="l">von</label><input type="date" data-ref="zFrom"></div>
+          <div class="c s" style="flex-basis:140px"><label class="l">bis</label><input type="date" data-ref="zTo"></div>
+          <div class="dd" data-dd="zrange">
+            <button type="button" class="btn sec ddb" title="Schnellwahl Zeitraum">Zeitraum <span class="car">▾</span></button>
+            <div class="ddm"><div class="ddh">Zeitraum</div><div class="chips list" data-ref="zRanges"></div></div>
+          </div>
+          <button class="btn" data-ref="zGo">Laden</button>
           <span style="flex:1"></span>
-          <button class="btn sm sec" data-ref="zCsv">⬇ CSV-Export</button>
+          <div class="dd r" data-dd="zview">
+            <button type="button" class="btn sec ddb">Ansicht <span class="car">▾</span></button>
+            <div class="ddm" style="width:300px">
+              <div class="ddh">Ansicht</div>
+              <label class="chk blk"><input type="checkbox" data-ref="zColor"> Arbeitstage farbig</label>
+              <label class="chk blk" style="padding-left:23px">grün ab <input type="text" data-ref="zLow" style="width:48px"> h</label>
+              <label class="chk blk"><input type="checkbox" data-ref="zWeekend"> Wochenenden ohne Buchung ausblenden</label>
+              <label class="chk blk"><input type="checkbox" data-ref="zDetails"> Einzelbuchungen anzeigen</label>
+              <div class="ddsep"></div>
+              <button class="btn sm sec" data-ref="zCsv">⬇ CSV-Export</button>
+            </div>
+          </div>
         </div>
         <details class="card" data-ref="zPDet"><summary>⚖ Personio-Abgleich <span class="hint" data-ref="zPInfo"></span></summary>
           <div class="row" style="align-items:center;margin-bottom:6px">
@@ -1702,16 +1769,17 @@
 
       <!-- INBOX -->
       <section data-tab="inbox">
-        <div class="row">
-          <div class="c"><div class="chips" data-ref="iTypes"></div></div>
-          <button class="btn sm sec" data-ref="iRefresh">↻ Aktualisieren</button>
-          <button class="btn sm sec" data-ref="iAllRead">✓ Alle als gelesen</button>
-        </div>
-        <div class="row" style="margin-top:6px">
-          <div class="c s" style="flex-basis:220px"><select data-ref="iCust"><option value="">Alle Kunden</option></select></div>
-          <div class="c s" style="flex-basis:160px"><select data-ref="iRange"><option value="1">Heute</option><option value="7" selected>Letzte 7 Tage</option><option value="14">Letzte 14 Tage</option><option value="30">Letzte 30 Tage</option></select></div>
-          <label class="chk"><input type="checkbox" data-ref="iUnread" checked> nur ungelesene</label>
+        <div class="row" style="align-items:center">
+          <div class="dd" data-dd="itypes">
+            <button type="button" class="btn sm sec ddb">Typen: <b data-ref="ddTypes">alle</b> <span class="car">▾</span></button>
+            <div class="ddm"><div class="ddh">Ereignisse anzeigen</div><div class="chips list check" data-ref="iTypes"></div></div>
+          </div>
+          <div class="c s" style="flex-basis:200px"><select data-ref="iCust"><option value="">Alle Kunden</option></select></div>
+          <div class="c s" style="flex-basis:150px"><select data-ref="iRange"><option value="1">Heute</option><option value="7" selected>Letzte 7 Tage</option><option value="14">Letzte 14 Tage</option><option value="30">Letzte 30 Tage</option></select></div>
+          <label class="chk" style="margin:0"><input type="checkbox" data-ref="iUnread" checked> nur ungelesene</label>
           <span class="hint" data-ref="iLast" style="flex:1;text-align:right"></span>
+          <button class="btn sm sec" data-ref="iRefresh" title="Aktualisieren">↻</button>
+          <button class="btn sm sec" data-ref="iAllRead">✓ Alle gelesen</button>
         </div>
         <div class="msg" data-ref="iMsg"></div>
         <div data-ref="iList"></div>
@@ -1725,20 +1793,22 @@
 
       <!-- EINSTELLUNGEN -->
       <section data-tab="settings">
-        <h3 style="margin:0 0 6px">Darstellung</h3>
+        <details class="card set" data-set="look"><summary>Darstellung</summary>
         <div class="row"><div class="c s" style="flex-basis:260px"><select data-ref="stTheme"><option value="auto">Automatisch (wie Windows/Browser)</option><option value="light">Hell</option><option value="dark">Dunkel</option></select></div></div>
-        <h3 style="margin:14px 0 6px">Signatur</h3>
+        </details>
+        <details class="card set" data-set="sig"><summary>Signatur &amp; Textbausteine</summary>
         <div class="hint">Wird bei „Als Mail senden“ automatisch angehängt (abschaltbar) und steht im Editor unter „✍ Signatur“ bereit. Einfügen aus Outlook inkl. Logo per Strg+V möglich.</div>
         <div class="rte" contenteditable="true" spellcheck="true" lang="de" data-ref="stSig" style="margin-top:6px;font-family:Arial;font-size:10pt"></div>
         <label class="chk"><input type="checkbox" data-ref="stAuto"> Signatur bei neuen Mails automatisch anhängen</label>
-        <h3 style="margin:14px 0 6px">Eigene Textbausteine</h3>
+        <h4>Eigene Textbausteine</h4>
         <div data-ref="stBlocks"></div>
         <button class="btn sm sec" data-ref="stAdd" style="margin-top:6px">＋ Baustein hinzufügen</button>
         <label class="chk" style="display:flex;margin-top:10px"><input type="checkbox" data-ref="stMd"> Textbausteine aus MultiData zusätzlich anbieten</label>
         <div style="margin-top:12px"><button class="btn" data-ref="stSave">Einstellungen speichern</button></div>
         <div class="msg" data-ref="stMsg"></div>
 
-        <h3 style="margin:18px 0 6px">Internes Zeiten-Ticket</h3>
+        </details>
+        <details class="card set" data-set="intern"><summary>Internes Zeiten-Ticket</summary>
         <div class="hint">Monatliches internes Ticket für übrige Zeit (z. B. „Zeiten LE NOV 26“). Im Zeiten-Tab lässt sich der Rest eines Tages als Kommentar ohne Text darauf buchen – immer auf das Ticket des jeweiligen Monats.</div>
         <div class="row" style="margin-top:4px">
           <div class="c s" style="flex-basis:90px"><label class="l">Kürzel</label><input type="text" data-ref="itK" placeholder="z. B. LE"></div>
@@ -1754,13 +1824,15 @@
         <div class="hint" style="margin-top:4px">Neues Ticket: Firma wie oben, Priorität „Niedrig“, Status „Warten intern“, keine Benachrichtigungen, Bearbeiter = ich. Das Ticket des Vormonats wird dabei per QuickClose geschlossen.</div>
         <div class="msg" data-ref="itMsg"></div>
 
-        <h3 style="margin:18px 0 6px">Personio</h3>
+        </details>
+        <details class="card set" data-set="personio"><summary>Personio</summary>
         <div class="row" style="align-items:flex-end">
           <div class="c" style="flex-basis:340px"><label class="l">Personio-Adresse <span class="hint">für „⟳ Aus Personio holen“ im Zeiten-Tab</span></label><input type="text" data-ref="stPUrl" placeholder="${CFG.personioUrl}"></div>
         </div>
         <div class="msg" data-ref="stPMsg"></div>
 
-        <h3 style="margin:18px 0 6px">Team-Konfiguration (Abrechenbarkeit)</h3>
+        </details>
+        <details class="card set" data-set="team"><summary>Team-Konfiguration (Abrechenbarkeit)</summary>
         <div class="hint">Steuert nur den Vorschlag für die Checkbox „abrechenbar“ und die Gruppierung im Zeiten-Tab. Änderungen werden sofort gespeichert.</div>
         <div style="margin-top:8px"><b>Nicht abrechenbar</b> <span class="hint">– Kunden mit Servicevertrag/Pauschale</span></div>
         <div data-ref="stNb"></div>
@@ -1773,16 +1845,19 @@
           <label class="chk" style="margin:0"><input type="checkbox" data-ref="stExpTpl"> Suchvorlagen mit exportieren</label>
           <input type="file" data-ref="stImportFile" accept=".json,application/json" style="display:none">
         </div>
-        <h3 style="margin:14px 0 6px">Office-Dateien (Word, Excel, PowerPoint, Visio)</h3>
+        <div class="hint" style="margin-top:8px">Die exportierte Team-Datei (JSON) enthält die Kundenlisten und kann an Kolleg:innen weitergegeben werden.</div>
+        <div class="msg" data-ref="stTeamMsg"></div>
+        </details>
+        <details class="card set" data-set="office"><summary>Office-Dateien (Word, Excel, PowerPoint, Visio)</summary>
         <div class="hint">„🖥 In Office öffnen“ lädt die Originaldatei herunter, der Browser öffnet sie im installierten Office. Damit das ohne weiteren Klick passiert, einmal je Dateityp „Dateien dieses Typs immer öffnen“ wählen – die Werkbank zeigt dazu beim ersten Öffnen eine kurze Anleitung. Änderungen werden nicht nach MultiData zurückgeschrieben.</div>
         <div class="row" style="margin-top:6px;align-items:center"><span class="hint" data-ref="oStatus" style="flex:1"></span>
           <button class="btn sm sec" data-ref="oReset">Hinweise wieder anzeigen</button></div>
-        <div class="hint" style="margin-top:8px">Die exportierte Team-Datei (JSON) enthält die Kundenlisten und kann an Kolleg:innen weitergegeben werden.</div>
-        <div class="msg" data-ref="stTeamMsg"></div>
 
-        <h3 style="margin:18px 0 6px">Lokale Daten</h3>
+        </details>
+        <details class="card set" data-set="data"><summary>Lokale Daten</summary>
         <div class="hint">Signatur, Bausteine, Entwürfe, Filter, Personio-Zeiten, Posteingang und Protokoll liegen nur in diesem Browser (localStorage) – nichts davon wird in MultiData oder anderswo gespeichert.</div>
         <button class="btn sm warn" data-ref="stWipe" style="margin-top:6px">Alle Werkbank-Daten in diesem Browser löschen</button>
+        </details>
       </section>
 
       <!-- PROTOKOLL -->
@@ -2096,6 +2171,30 @@
     if (t) openTicket(t.SID, false);
   }
 
+  // --- Aufklappmenüs (Filter in Suche, Zeiten, Inbox) ---
+  // Inhalt bleibt im DOM (gleiche data-refs wie vorher), das Menü blendet ihn nur ein/aus.
+  function closeDds(except = null) { panel.querySelectorAll('.dd.open').forEach(d => { if (d !== except) d.classList.remove('open'); }); }
+  panel.addEventListener('click', e => {
+    const b = e.target.closest('.dd > .ddb');
+    if (b) { e.stopPropagation(); const d = b.parentElement; closeDds(d); d.classList.toggle('open'); return; }
+    // Menüeinträge (.mi) schließen das Menü – außer sie zeigen ihr Ergebnis selbst an (data-keep)
+    const mi = e.target.closest('.ddm .mi');
+    if (mi && !mi.hasAttribute('data-keep')) closeDds();
+  });
+  document.addEventListener('mousedown', e => { if (!e.target.closest || !e.target.closest('#mdqt-panel .dd')) closeDds(); }, true);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && panel.querySelector('.dd.open')) { e.stopPropagation(); closeDds(); } }, true);
+  // Kurztext im Menüknopf aktuell halten (z. B. „Status: offene“); set = Filter weicht von „alle“ ab → Knopf hervorheben
+  function ddSummary(ref, fn, watch) {
+    const upd = () => { const [text, set] = fn(); $(ref).textContent = text; $(ref).closest('.ddb').classList.toggle('set', !!set); };
+    const mo = new MutationObserver(upd);
+    for (const w of watch) {
+      const n = $(w);
+      mo.observe(n, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+      n.addEventListener('input', upd); n.addEventListener('change', upd);
+    }
+    return upd;
+  }
+
   // ================= SUCHE =================
   function renderStatusChips() {
     const box = $('sStatus'); box.innerHTML = '';
@@ -2230,6 +2329,7 @@
     const box = $('sFacets'), chips = [...box.querySelectorAll('.chip:not(.more)')];
     box.querySelector('.chip.more')?.remove();
     chips.forEach(c => { c.style.display = ''; });
+    if (box.closest('.ddm')) return; // im Aufklappmenü scrollt die Liste
     if (!chips.length || !box.offsetWidth) return;
     const tops = [...new Set(chips.map(c => c.offsetTop))].sort((a, b) => a - b);
     if (tops.length <= 2) return;
@@ -2298,6 +2398,23 @@
     if (save) { tabStore.set('filters', fs); store.set(CFG.store.filters, fs); }
     return f;
   }
+
+  ddSummary('ddStatus', () => {
+    const sel = ui.selStatus || new Set();
+    if (!sel.size || sel.size === CFG.statuses.length) return ['alle', false];
+    if (sel.size === OPEN_STATUSES.length && OPEN_STATUSES.every(x => sel.has(x))) return ['offene', false];
+    if (sel.size === 1) return [statusInfo([...sel][0])[1], true];
+    return [`${sel.size} gewählt`, true];
+  }, ['sStatus'])();
+  ddSummary('ddRange', () => {
+    const mode = $('sDateMode').value, a = $('sFrom').value, b = $('sTo').value;
+    if (mode === 'none' || (!a && !b)) return ['beliebig', false];
+    const r = RANGES.find(x => x[0] === ui.rangeKey);
+    const span = r ? r[1] : a === b ? fmtDate(a) : `${fmtDate(a) || '…'} – ${fmtDate(b) || '…'}`;
+    return [`${span} (${mode === 'created' ? 'Anlage' : 'gebucht'})`, true];
+  }, ['sDateMode', 'sFrom', 'sTo', 'sRanges'])();
+  ddSummary('ddFacets', () => [ui.facets ? `(${ui.facets.length})` : '', false], ['sFacets'])();
+  $('sTpl').addEventListener('click', e => { if (e.target.closest('.chip') && e.target.tagName !== 'B') closeDds(); });
 
   // Suchvorlagen (für alle Tabs dieses Browsers; über ⚙ exportierbar)
   const templates = () => store.get(CFG.store.templates, null) ?? [
@@ -2442,9 +2559,17 @@
       <div class="hrow1">
         <h3>#${t.SID}</h3>
         <input type="text" data-ref="hTitle" spellcheck="true" lang="de" title="Betreff">
-        <a href="#" data-ref="hOpen" target="_blank" class="btn sm sec" title="Öffnet MultiData mit diesem Ticket in einem neuen Tab">MultiData ↗</a>
-        <a href="#" data-ref="hNewTab" class="btn sm sec" title="Dieses Ticket in einem weiteren Werkbank-Tab öffnen">Neuer Tab ⧉</a>
-        <button class="btn sm sec" data-ref="hShare" title="MultiData-Link des Tickets kopieren (Umschalt+Klick: „#Nr. Betreff“ + Link)">🔗 Teilen</button>
+        <div class="dd r" data-dd="tmore">
+          <button type="button" class="btn sec ddb" title="Öffnen, Teilen, Child-Tickets, Zusammenführen">⋯</button>
+          <div class="ddm" style="min-width:220px">
+            <a href="#" data-ref="hOpen" target="_blank" class="btn sm sec mi" title="Öffnet MultiData mit diesem Ticket in einem neuen Tab">↗ In MultiData öffnen</a>
+            <a href="#" data-ref="hNewTab" class="btn sm sec mi" title="Dieses Ticket in einem weiteren Werkbank-Tab öffnen">⧉ In neuem Tab</a>
+            <button class="btn sm sec mi" data-ref="hShare" data-keep title="MultiData-Link des Tickets kopieren (Umschalt+Klick: „#Nr. Betreff“ + Link)">🔗 Link kopieren</button>
+            <div class="ddsep"></div>
+            <button class="btn sm sec mi" data-ref="hKids" title="Child-Tickets anzeigen, zuordnen, erstellen">🌿 Child-Tickets</button>
+            <button class="btn sm sec mi" data-ref="hMerge" title="Dieses Ticket in ein anderes zusammenführen">🔀 Zusammenführen</button>
+          </div>
+        </div>
       </div>
       <div class="hgrid">
         <div><label class="l">Status</label><select data-ref="hStatus"></select></div>
@@ -2464,8 +2589,6 @@
       <div class="warnbox" data-ref="hFirmWarn" style="display:none">Firmenwechsel: MultiData kann dabei abrechenbare Stunden zurücksetzen – bitte nach dem Speichern prüfen.</div>
       <div class="row hbar">
         <div class="sums" data-ref="hSums" style="flex:1;min-width:240px"></div>
-        <button class="btn sm sec" data-ref="hKids" title="Child-Tickets anzeigen, zuordnen, erstellen">🌿 Child-Tickets</button>
-        <button class="btn sm sec" data-ref="hMerge" title="Dieses Ticket in ein anderes zusammenführen">🔀 Zusammenführen</button>
         <button class="btn sm warn" data-ref="hQC" title="Ticket per QuickClose schließen (erzeugt den Abschlusstext)">QuickClose</button>
       </div>
       <div data-ref="hExtra"></div>`;
@@ -2541,7 +2664,7 @@
     $('hOpen', head).href = mdTicketUrl(t.SID); // immer neuer Tab (Linksklick: wechseln, Mittelklick: im Hintergrund)
     $('hShare', head).addEventListener('click', async ev => {
       const url = mdShareUrl(t.SID), text = ev.shiftKey ? `#${t.SID} ${t.TITEL || ''}\n${url}` : url;
-      try { await copyText(text); const b = ev.currentTarget || $('hShare', head); b.textContent = '✔ Kopiert'; setTimeout(() => { b.textContent = '🔗 Teilen'; }, 1800); msg('tMsg', `✔ In die Zwischenablage kopiert: ${text.replace('\n', ' · ')}`, 'ok'); }
+      try { await copyText(text); const b = ev.currentTarget || $('hShare', head); b.textContent = '✔ Kopiert'; setTimeout(() => { b.textContent = '🔗 Link kopieren'; }, 1800); msg('tMsg', `✔ In die Zwischenablage kopiert: ${text.replace('\n', ' · ')}`, 'ok'); }
       catch (e) { msg('tMsg', '✖ Kopieren nicht möglich: ' + e.message + ' – Link: ' + url, 'err'); }
     });
     $('hSave', head).addEventListener('click', ev => busy(ev.target, async () => {
@@ -3740,6 +3863,10 @@
       box.appendChild(c);
     }
   }
+  ddSummary('ddTypes', () => {
+    const n = ui.inboxTypes.size, all = Object.keys(INBOX_TYPES).length;
+    return [n === all ? 'alle' : n === 0 ? 'keine' : n === 1 ? INBOX_TYPES[[...ui.inboxTypes][0]] : `${n} von ${all}`, n !== all];
+  }, ['iTypes'])();
   function inboxItems() {
     const st = inboxState(), days = +$('iRange').value, from = addDays(todayStr(), -(days - 1));
     return Object.values(st.items)
@@ -3945,7 +4072,7 @@
   function updateTeamHint() {
     $('teamHint').style.display = !teamConfigured() && !store.get('mdqt.teamHintOff', false) ? '' : 'none';
   }
-  $('teamHintGo').addEventListener('click', () => showTab('settings'));
+  $('teamHintGo').addEventListener('click', () => { showTab('settings'); const d = panel.querySelector('details[data-set=team]'); d.open = true; d.scrollIntoView({ block: 'start' }); });
   $('teamHintNo').addEventListener('click', () => { store.set('mdqt.teamHintOff', true); updateTeamHint(); });
 
   $('stExport').addEventListener('click', () => {
@@ -4053,6 +4180,8 @@
   });
   timesUserPick.set([{ value: '__ME__', label: '👤 Ich' }]);
   persistDetails($('zPDet'), 'zeiten.personio', false);
+  $('zRanges').addEventListener('click', e => { if (e.target.closest('.chip')) closeDds(); });
+  panel.querySelectorAll('section[data-tab=settings] details[data-set]').forEach(d => persistDetails(d, 'settings.' + d.dataset.set, d.dataset.set === 'look'));
   (function initTimes() {
     const z = store.get(CFG.store.timesView, {});
     const d = new Date(), first = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`;

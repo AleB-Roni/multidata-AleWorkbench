@@ -16,6 +16,12 @@ Das Skript nutzt die gleiche interne Schnittstelle wie die MultiData-Weboberflä
 ## Neu in 1.8 (Beta)
 
 - **Modernisierte Oberfläche:** neue Kopfzeile mit Logo und Reitern als Pillen (bei schmalem Fenster seitlich scrollbar; Hell/Dunkel, Vollbild und Schließen bleiben sichtbar), einheitliche Design-Tokens für Farben, Abstände und Radien, überarbeitete Knöpfe, Eingabefelder mit Fokus-Ring, Karten, Tabellen, KPI-Kacheln, Editor-Werkzeugleiste und Dark Mode. Alle Funktionen, Tastenkürzel und gespeicherten Einstellungen bleiben unverändert.
+- **Kompakter und aufgeräumter:** geringere Abstände und Feldhöhen. Filter und Optionen stecken in Aufklappmenüs, deren Knopf die aktuelle Auswahl zeigt (z. B. „Status: offene“, „Zeitraum: Heute“). Weicht ein Filter von „alle“ ab, ist der Knopf hervorgehoben. Esc oder ein Klick daneben schließt das Menü.
+  - *Suche:* ☆ Vorlagen, Status, Zeitraum, Kunden-Übersicht; ↺ setzt die Filter zurück.
+  - *Zeiten:* Zeitraum (Schnellwahl) und Ansicht (Farben, Wochenenden, Einzelbuchungen, CSV-Export).
+  - *Inbox:* Typen.
+  - *Ticket:* „⋯“ enthält In MultiData öffnen, In neuem Tab, Link kopieren, Child-Tickets und Zusammenführen.
+  - *Einstellungen:* Abschnitte sind einklappbar; die Werkbank merkt sich, welche offen sind.
 
 ## Neu in 1.7
 
@@ -68,7 +74,7 @@ Kundenspezifisches (welche Kunden nicht abrechenbar bzw. intern sind) steht **ni
   - **Einfügen:** Fremde Schriftarten, -größen, Abstände und Zeilenhöhen werden entfernt, damit der Text aussieht wie der eigene und man normal weiterschreiben kann. Fett, kursiv, unterstrichen, farbige Schrift, Hervorhebungen, Ausrichtung, Listen, Tabellen, Links und Bilder bleiben. Listen aus Word, Google Docs oder Web-Editoren werden echte Listen.
   - **Strg+Z** / **Strg+Y** machen auch Listen- und Einzugsänderungen rückgängig bzw. wieder.
   - **Größe:** Das Textfeld lässt sich unten rechts größer und kleiner ziehen. Die Werkbank merkt sich die Höhe je Editor (Kommentar, Kommentar bearbeiten, Signatur).
-- **🔗 Teilen** kopiert die originale MultiData-Adresse des Tickets (`…/mdweb/rwi/MDERRDA/%7B%22SID%22:808626%7D`) in die Zwischenablage, ohne MultiData zu öffnen. Mit Umschalt+Klick zusätzlich „#Nr. Betreff“ davor.
+- **⋯ → 🔗 Link kopieren** (früher „Teilen“) kopiert die originale MultiData-Adresse des Tickets (`…/mdweb/rwi/MDERRDA/%7B%22SID%22:808626%7D`) in die Zwischenablage, ohne MultiData zu öffnen. Mit Umschalt+Klick zusätzlich „#Nr. Betreff“ davor.
 - Große Tickets bauen sich stückweise auf; Kommentarinhalte werden erst gerendert, wenn sie in die Nähe des sichtbaren Bereichs kommen. Antwortet MultiData nicht, gibt es nach 30 s (plus einem automatischen zweiten Versuch) eine Fehlermeldung statt eines endlosen „Lade …“.
 
 ## Internes Zeiten-Ticket (Restzeiten)
