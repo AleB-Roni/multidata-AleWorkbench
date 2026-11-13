@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.5
+// @version      1.8.0.6
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -140,7 +140,7 @@
       recent: 'mdqt.recentCustomers', filters: 'mdqt.filters', log: 'mdqt.log', drafts: 'mdqt.drafts', size: 'mdqt.size',
       settings: 'mdqt.settings', inbox: 'mdqt.inbox', sections: 'mdqt.sections', comments: 'mdqt.comments', personio: 'mdqt.personio',
       timesView: 'mdqt.timesView', templates: 'mdqt.searchTemplates', team: 'mdqt.team', facetSort: 'mdqt.facetSort',
-      history: 'mdqt.ticketHistory', personioInfo: 'mdqt.personioInfo', personioPending: 'mdqt.personioPending', personioResult: 'mdqt.personioResult',
+      history: 'mdqt.ticketHistory', topics: 'mdqt.topics', personioInfo: 'mdqt.personioInfo', personioPending: 'mdqt.personioPending', personioResult: 'mdqt.personioResult',
     },
     legacyKeys: ['mdqt.myCustomers', 'mdqt.lastText', 'mdqt.graph', 'mdqt.authResult'], // Reste älterer Versionen, werden beim Start entfernt
     pollTicketSec: 45,           // offenes Ticket auf Änderungen von außen prüfen
@@ -780,6 +780,8 @@
     if (queues.length) parts.push(valueFilter('ERRQ_ID', queues, { numeric: true }));
     if (f.kndIds.length) parts.push(orFilter('KND_ID', f.kndIds));
     if (f.text) parts.push(/^\d{5,}$/.test(f.text) ? ['SID', '=', Number(f.text)] : ['TITEL', 'contains', f.text]);
+    if (f.titleAny && f.titleAny.length) parts.push(f.titleAny.map(w => ['TITEL', 'contains', w]).flatMap((x, i) => i ? ['or', x] : [x])); // Thema: eines der Stichwörter
+    if (f.prios && f.prios.length) parts.push(orFilter('PRIORITY', f.prios));
 
     if (f.dateMode === 'booked') {
       // Tickets, auf die im Zeitraum Zeit gebucht wurde (von mir bzw. von allen)
@@ -1429,6 +1431,12 @@
   #mdqt-panel .tgrp .abr{display:inline-flex;align-items:center;gap:4px;margin-left:-1px}
   #mdqt-panel .tgrp .abr input{width:84px;min-height:28px;border-radius:0 999px 999px 0 !important;padding:2px 10px !important;font-size:12px}
   #mdqt-panel .tgrp:has(.abr:not([style*="none"])) .chk.tgl{border-radius:999px 0 0 999px}
+  #mdqt-panel tr.ghead{cursor:pointer;user-select:none}
+  #mdqt-panel tr.ghead:hover td{background:var(--mq-accent-soft)}
+  #mdqt-panel tr.ghead .gtog{display:inline-block;width:14px;color:var(--mq-muted);font-size:11px}
+  #mdqt-panel tr.ghead .gcnt{font-weight:500;font-size:12px;color:var(--mq-muted);margin-left:8px}
+  #mdqt-panel .tag.topic{background:var(--mq-accent-soft);color:var(--mq-accent-fg);margin-left:4px}
+  #mdqt-panel .topic-row{margin-top:6px;align-items:center;gap:6px}
   #mdqt-panel .wk{display:flex}
   #mdqt-panel .wk .btn{border-radius:0;margin-left:-1px;box-shadow:none;padding:5px 10px}
   #mdqt-panel .wk .btn:first-child{border-radius:var(--mq-r) 0 0 var(--mq-r);margin-left:0;font-size:16px;line-height:1}
@@ -1701,6 +1709,25 @@
               <div class="chips" data-ref="sRanges" style="margin-top:8px"></div>
             </div>
           </div>
+          <div class="dd" data-dd="topic">
+            <button type="button" class="btn sm sec ddb" title="Nach Stichwörtern im Betreff filtern (z. B. Wartung)">Thema: <b data-ref="ddTopic">alle</b> <span class="car">▾</span></button>
+            <div class="ddm" style="min-width:260px">
+              <div class="row" style="gap:6px;margin-bottom:6px;align-items:center"><span class="ddh" style="flex:1;margin:0">Thema (Betreff-Stichwörter)</span><button class="btn sm sec" data-ref="sTopicAll">alle</button></div>
+              <div class="chips list check" data-ref="sTopics"></div>
+              <div class="ddsep"></div>
+              <button class="btn sm sec mi" data-ref="sTopicEdit">✎ Themen und Stichwörter bearbeiten …</button>
+            </div>
+          </div>
+          <div class="dd" data-dd="more">
+            <button type="button" class="btn sm sec ddb" title="Priorität, Betreff ausschließen">Mehr Filter <b data-ref="ddMore"></b> <span class="car">▾</span></button>
+            <div class="ddm" style="width:300px">
+              <div class="row" style="gap:6px;margin-bottom:4px;align-items:center"><span class="ddh" style="flex:1;margin:0">Priorität</span><button class="btn sm sec" data-ref="sPrioAll">alle</button></div>
+              <div class="chips list check" data-ref="sPrios"></div>
+              <div class="ddsep"></div>
+              <label class="l" style="margin-top:0">Betreff enthält nicht</label>
+              <input type="text" data-ref="sNotText" placeholder="z. B. Test; Rechnung" title="Tickets ausblenden, deren Betreff eines dieser Wörter enthält (mehrere mit ; trennen)">
+            </div>
+          </div>
           <div class="dd" data-dd="facets">
             <button type="button" class="btn sm sec ddb" title="Kunden, die in den aktuellen Filtern vorkommen – Klick wählt aus/ab">Kunden-Übersicht <b data-ref="ddFacets"></b> <span class="car">▾</span></button>
             <div class="ddm" style="width:460px">
@@ -1711,7 +1738,19 @@
               <div class="chips" data-ref="sFacets"><span class="hint">…</span></div>
             </div>
           </div>
-          <label class="chk" title="Sortierung gilt innerhalb der Gruppen"><input type="checkbox" data-ref="sGroup"> Nach Priorität gruppieren</label>
+          <span style="flex:1"></span>
+          <div class="dd r" data-dd="view">
+            <button type="button" class="btn sm sec ddb" title="Gruppieren und sortieren">Ansicht: <b data-ref="ddView"></b> <span class="car">▾</span></button>
+            <div class="ddm" style="width:290px">
+              <label class="l" style="margin-top:0">Gruppieren nach</label>
+              <select data-ref="sGroupBy"><option value="none">– keine Gruppen –</option><option value="prio">Priorität</option><option value="topic">Thema (Betreff-Stichwörter)</option>
+                <option value="status">Status</option><option value="cust">Kunde</option><option value="user">Bearbeiter</option></select>
+              <label class="l">Sortieren nach</label>
+              <div class="row" style="gap:6px;flex-wrap:nowrap"><div class="c"><select data-ref="sSortKey"></select></div>
+                <button type="button" class="btn sec" data-ref="sSortDir" title="Richtung umkehren">↓</button></div>
+              <div class="hint" style="margin-top:8px">Sortiert wird innerhalb der Gruppen. Spaltenköpfe sind ebenfalls klickbar; Klick auf eine Gruppe klappt sie ein und aus.</div>
+            </div>
+          </div>
         </div>
         <div class="msg" data-ref="sMsg"></div>
         <div data-ref="sResults"></div>
@@ -1833,6 +1872,11 @@
         <div class="msg" data-ref="stMsg"></div>
 
         </details>
+        <details class="card set" data-set="topics"><summary>Themen (Betreff-Stichwörter)</summary>
+        <div class="hint">Tickets, deren Betreff eines der Stichwörter enthält, gehören zum Thema – z. B. „Wartung“: <i>Wartungswoche; Wartung; Patchday</i>. Groß-/Kleinschreibung egal. In der Suche: Filter „Thema“ und Ansicht „Gruppieren nach Thema“. Passt ein Betreff zu mehreren Themen, zählt das obere. Änderungen werden sofort gespeichert.</div>
+        <div data-ref="stTopics" style="margin-top:6px"></div>
+        <button class="btn sm sec" data-ref="stTopicAdd" style="margin-top:6px">＋ Thema hinzufügen</button>
+        </details>
         <details class="card set" data-set="intern"><summary>Internes Zeiten-Ticket</summary>
         <div class="hint">Monatliches internes Ticket für übrige Zeit (z. B. „Zeiten LE NOV 26“). Im Zeiten-Tab lässt sich der Rest eines Tages als Kommentar ohne Text darauf buchen – immer auf das Ticket des jeweiligen Monats.</div>
         <div class="row" style="margin-top:4px">
@@ -1867,7 +1911,7 @@
         <div class="row" style="margin-top:8px;align-items:center">
           <button class="btn sm sec" data-ref="stExport">⤓ Exportieren</button>
           <button class="btn sm sec" data-ref="stImport">⤒ Importieren …</button>
-          <label class="chk" style="margin:0"><input type="checkbox" data-ref="stExpTpl"> Suchvorlagen mit exportieren</label>
+          <label class="chk" style="margin:0"><input type="checkbox" data-ref="stExpTpl"> Suchvorlagen und Themen mit exportieren</label>
           <input type="file" data-ref="stImportFile" accept=".json,application/json" style="display:none">
         </div>
         <div class="hint" style="margin-top:8px">Die exportierte Team-Datei (JSON) enthält die Kundenlisten und kann an Kolleg:innen weitergegeben werden.</div>
@@ -2401,12 +2445,56 @@
   ['sDateMode', 'sFrom', 'sTo'].forEach(r => $(r).addEventListener('change', scheduleFacets));
   $('sText').addEventListener('input', scheduleFacets);
 
+  // --- Themen: eigene Stichwörter im Betreff (z. B. „Wartung“: Wartungswoche, Wartung) zum Filtern und Gruppieren ---
+  const NO_TOPIC = '__none__';
+  const DEFAULT_TOPICS = [{ id: 'wartung', name: 'Wartung', words: ['Wartungswoche', 'Wartung'] }];
+  const topicsRaw = () => store.get(CFG.store.topics, null) ?? DEFAULT_TOPICS;
+  const topics = () => topicsRaw().filter(t => t && t.name && (t.words || []).length);
+  const topicHit = (title, t) => { const s = String(title || '').toLowerCase(); return t.words.some(w => s.includes(String(w).toLowerCase())); };
+  const topicOf = title => topics().find(t => topicHit(title, t)) || null;
+  const splitWords = v => String(v || '').split(/[;,\n]/).map(x => x.trim()).filter(Boolean);
+  ui.selTopics = new Set(); ui.selPrios = new Set();
+  function renderTopicChips() {
+    const box = $('sTopics'); box.innerHTML = '';
+    const known = new Set([NO_TOPIC, ...topics().map(t => t.id)]);
+    for (const id of [...ui.selTopics]) if (!known.has(id)) ui.selTopics.delete(id); // gelöschte Themen
+    for (const t of [...topics(), { id: NO_TOPIC, name: 'Ohne Thema' }]) {
+      const c = el('button', { type: 'button', className: 'chip' + (ui.selTopics.has(t.id) ? ' sel' : ''), title: t.words ? 'Stichwörter: ' + t.words.join(' · ') : 'Betreff passt zu keinem Thema' });
+      c.textContent = (t.id === NO_TOPIC ? '∅ ' : '🏷 ') + t.name;
+      c.addEventListener('click', () => { ui.selTopics.has(t.id) ? ui.selTopics.delete(t.id) : ui.selTopics.add(t.id); renderTopicChips(); scheduleFacets(); });
+      box.appendChild(c);
+    }
+    if (!topics().length) box.prepend(el('div', { className: 'hint', textContent: 'Noch keine Themen – unten anlegen.' }));
+  }
+  function renderPrioChips() {
+    const box = $('sPrios'); box.innerHTML = '';
+    for (const [id, name, color] of CFG.priorities) {
+      const c = el('button', { type: 'button', className: 'chip' + (ui.selPrios.has(id) ? ' sel' : '') }, `<span class="flag" style="background:${color}"></span>${esc(name)}`);
+      c.addEventListener('click', () => { ui.selPrios.has(id) ? ui.selPrios.delete(id) : ui.selPrios.add(id); renderPrioChips(); scheduleFacets(); });
+      box.appendChild(c);
+    }
+  }
+  $('sTopicAll').addEventListener('click', () => { ui.selTopics.clear(); renderTopicChips(); scheduleFacets(); });
+  $('sPrioAll').addEventListener('click', () => { ui.selPrios.clear(); renderPrioChips(); scheduleFacets(); });
+  $('sTopicEdit').addEventListener('click', () => { showTab('settings'); const d = panel.querySelector('details[data-set=topics]'); d.open = true; d.scrollIntoView({ block: 'start' }); });
+  $('sNotText').addEventListener('keydown', e => { if (e.key === 'Enter') { closeDds(); runSearch(); } });
+  // Sortierung: Auswahl im Menü „Ansicht“ = Klick auf den Spaltenkopf
+  const SORT_KEYS = [['SID', 'ID'], ['TITEL', 'Betreff'], ['MATCHCODE', 'Kunde'], ['STATUS', 'Status'], ['PRIORITY', 'Priorität'], ['ANLAGE_DATUM', 'Angelegt'],
+    ['BEARBEITER_USER_ID', 'Bearbeiter'], ['SUM_STD', 'Std.'], ['MEMO_SUM_ABRSTD', 'abr.'], ['_BSTD', 'Std. im Zeitraum'], ['_BABR', 'abr. im Zeitraum']];
+  $('sSortKey').innerHTML = SORT_KEYS.map(([k, n]) => `<option value="${k}">${n}</option>`).join('');
+  const syncSortUi = () => { $('sSortKey').value = ui.sort.key; $('sSortDir').textContent = ui.sort.desc ? '↓ absteigend' : '↑ aufsteigend'; };
+  $('sSortKey').addEventListener('change', () => { ui.sort = { key: $('sSortKey').value, desc: ['SID', 'ANLAGE_DATUM', 'SUM_STD', 'MEMO_SUM_ABRSTD', '_BSTD', '_BABR'].includes($('sSortKey').value) }; syncSortUi(); readFilters(); renderResults(); });
+  $('sSortDir').addEventListener('click', () => { ui.sort = { ...ui.sort, desc: !ui.sort.desc }; syncSortUi(); readFilters(); renderResults(); });
+  $('sGroupBy').addEventListener('change', () => { readFilters(); renderResults(); });
+
   // Filterzustand der Suche. Gilt pro Browser-Tab (sessionStorage); der zuletzt benutzte ist Vorgabe für neue Tabs.
   const OPEN_STATUSES = CFG.statuses.filter(s => s[0] !== 'Z').map(s => s[0]);
-  const defaultFilterState = () => ({ users: [userItem('__ME__')], custs: [], queues: [], statuses: OPEN_STATUSES, dateMode: 'none', from: '', to: '', range: null, text: '', group: true });
+  const defaultFilterState = () => ({ users: [userItem('__ME__')], custs: [], queues: [], statuses: OPEN_STATUSES, dateMode: 'none', from: '', to: '', range: null, text: '', group: true,
+    topics: [], prios: [], notText: '', sort: { key: 'SID', desc: true } });
   function getFilterState() {
     return { users: userPick.items(), custs: custPick.items(), queues: queuePick.items(), statuses: [...ui.selStatus], dateMode: $('sDateMode').value,
-      from: $('sFrom').value, to: $('sTo').value, range: ui.rangeKey || null, text: $('sText').value.trim(), group: $('sGroup').checked };
+      from: $('sFrom').value, to: $('sTo').value, range: ui.rangeKey || null, text: $('sText').value.trim(),
+      group: $('sGroupBy').value !== 'none', groupBy: $('sGroupBy').value, topics: [...ui.selTopics], prios: [...ui.selPrios], notText: $('sNotText').value.trim(), sort: { ...ui.sort } };
   }
   function applyFilterState(fs) {
     fs = { ...defaultFilterState(), ...fs };
@@ -2418,12 +2506,20 @@
     ui.rangeKey = fs.range || null;
     const [a, b] = fs.range ? rangeDates(fs.range) : [fs.from || '', fs.to || ''];
     $('sFrom').value = a; $('sTo').value = b;
-    $('sGroup').checked = fs.group !== false;
+    $('sGroupBy').value = fs.groupBy || (fs.group === false ? 'none' : 'prio'); // ältere Vorlagen: nur „nach Priorität ja/nein“
+    ui.selTopics = new Set(fs.topics || []); ui.selPrios = new Set((fs.prios || []).map(Number));
+    $('sNotText').value = fs.notText || '';
+    ui.sort = fs.sort && fs.sort.key ? { key: fs.sort.key, desc: !!fs.sort.desc } : { key: 'SID', desc: true };
+    syncSortUi(); renderTopicChips(); renderPrioChips();
     renderStatusChips(); renderRanges(); renderFacets(); scheduleFacets();
   }
   function readFilters(save = true) {
     const fs = getFilterState();
-    const f = { users: userPick.get(), kndIds: custPick.get(), queues: queuePick.get(), statuses: fs.statuses, dateMode: fs.dateMode, from: fs.from, to: fs.to, text: fs.text };
+    const f = { users: userPick.get(), kndIds: custPick.get(), queues: queuePick.get(), statuses: fs.statuses, dateMode: fs.dateMode, from: fs.from, to: fs.to, text: fs.text,
+      prios: fs.prios, selTopics: fs.topics, notWords: splitWords(fs.notText).map(w => w.toLowerCase()) };
+    // Thema: nur ausgewählte Themen (ohne „Ohne Thema“) gehen als Betreff-Filter an MultiData, der Rest wird im Browser gefiltert
+    const selT = topics().filter(t => ui.selTopics.has(t.id));
+    if (selT.length && !ui.selTopics.has(NO_TOPIC)) f.titleAny = [...new Set(selT.flatMap(t => t.words))];
     if (f.dateMode !== 'none' && !f.from && !f.to) f.dateMode = 'none';
     if (save) { tabStore.set('filters', fs); store.set(CFG.store.filters, fs); }
     return f;
@@ -2443,6 +2539,17 @@
     const span = r ? r[1] : a === b ? fmtDate(a) : `${fmtDate(a) || '…'} – ${fmtDate(b) || '…'}`;
     return [`${span} (${mode === 'created' ? 'Anlage' : 'gebucht'})`, true];
   }, ['sDateMode', 'sFrom', 'sTo', 'sRanges'])();
+  ddSummary('ddTopic', () => {
+    const sel = [...ui.selTopics];
+    if (!sel.length) return ['alle', false];
+    if (sel.length === 1) return [sel[0] === NO_TOPIC ? 'ohne Thema' : (topics().find(t => t.id === sel[0]) || {}).name || '?', true];
+    return [`${sel.length} gewählt`, true];
+  }, ['sTopics'])();
+  ddSummary('ddMore', () => { const n = (ui.selPrios.size ? 1 : 0) + ($('sNotText').value.trim() ? 1 : 0); return [n ? `(${n})` : '', n > 0]; }, ['sPrios', 'sNotText'])();
+  ddSummary('ddView', () => {
+    const g = $('sGroupBy'), k = SORT_KEYS.find(x => x[0] === ui.sort.key);
+    return [`${g.value === 'none' ? '' : g.options[g.selectedIndex].text.replace(/ \(.*\)$/, '') + ' · '}${k ? k[1] : ui.sort.key} ${ui.sort.desc ? '↓' : '↑'}`, false];
+  }, ['sGroupBy', 'sSortKey', 'sSortDir'])();
   ddSummary('ddFacets', () => [ui.facets ? `(${ui.facets.length})` : '', false], ['sFacets'])();
   $('sTpl').addEventListener('click', e => { if (e.target.closest('.chip') && e.target.tagName !== 'B') closeDds(); });
 
@@ -2479,12 +2586,24 @@
     if (!silent) msg('sMsg', 'Suche …');
     const body = panel.querySelector('.body'), top = body.scrollTop;
     try {
-      const res = await searchTickets(readFilters(!silent));
+      const f = readFilters(!silent);
+      const res = await searchTickets(f);
+      // Filter, die MultiData nicht kann: „Betreff enthält nicht“, „Ohne Thema“
+      const n0 = res.rows.length, truncated = (res.total ?? n0) > n0;
+      const known = topics(), selT = known.filter(t => (f.selTopics || []).includes(t.id)), selNone = (f.selTopics || []).includes(NO_TOPIC);
+      res.rows = res.rows.filter(r => {
+        const t = String(r.TITEL || '').toLowerCase();
+        if (f.notWords.some(w => t.includes(w))) return false;
+        if (selT.length || selNone) return selT.some(x => topicHit(r.TITEL, x)) || (selNone && !known.some(x => topicHit(r.TITEL, x)));
+        return true;
+      });
       ui.lastResult = res; ui.lastSearchAt = Date.now();
       renderResults();
       if (silent) body.scrollTop = top;
-      const shown = res.rows.length, total = res.total ?? shown;
-      msg('sMsg', `${total} Ticket(s)${total > shown ? ` – angezeigt werden die neuesten ${shown}` : ''}.${silent ? ` · automatisch aktualisiert ${new Date().toLocaleTimeString('de-DE').slice(0, 5)}` : ''}`, 'ok');
+      const shown = res.rows.length, total = res.total ?? shown, cut = n0 - shown;
+      msg('sMsg', (cut ? `${shown} Ticket(s) nach Betreff-Filter${truncated ? ` (geprüft wurden die neuesten ${n0} von ${total})` : ''}`
+        : `${total} Ticket(s)${total > shown ? ` – angezeigt werden die neuesten ${shown}` : ''}`) +
+        `.${silent ? ` · automatisch aktualisiert ${new Date().toLocaleTimeString('de-DE').slice(0, 5)}` : ''}`, 'ok');
     } catch (e) { msg('sMsg', '✖ ' + e.message, 'err'); }
   }
   $('sGo').addEventListener('click', () => busy($('sGo'), () => runSearch()));
@@ -2498,17 +2617,37 @@
     if (bh) cols.push(['_BSTD', 'Std. im Zeitraum'], ['_BABR', 'abr. im Zeitraum']);
     const rows = res.rows.map(r => ({ ...r, _BSTD: bh?.[r.SID]?.std ?? null, _BABR: bh?.[r.SID]?.abr ?? null }));
     const { key, desc } = ui.sort;
-    const group = $('sGroup').checked;
+    const gb = $('sGroupBy').value, group = gb !== 'none';
+    const stIdx = id => { const i = CFG.statuses.findIndex(x => x[0] === id); return i < 0 ? 99 : i; };
+    const custName = r => (r.MATCHCODE || '').replace(/^\d+\s*-\s*/, '');
+    const tops = topics();
+    for (const r of rows) r._TOPIC = tops.find(t => topicHit(r.TITEL, t)) || null;
+    // Gruppe: Schlüssel, Rang (Reihenfolge), Anzeige
+    const G = {
+      prio: { key: r => r.PRIORITY ?? null, rank: k => k ?? 99, html: k => prioHtml(k), text: k => prioInfo(k)[1] },
+      topic: { key: r => r._TOPIC ? r._TOPIC.id : NO_TOPIC, rank: k => { const i = tops.findIndex(t => t.id === k); return i < 0 ? 1e6 : i; },
+        html: k => k === NO_TOPIC ? '<span class="hint">∅ Ohne Thema</span>' : '🏷 ' + esc((tops.find(t => t.id === k) || {}).name || k), text: k => k === NO_TOPIC ? 'ohne Thema' : (tops.find(t => t.id === k) || {}).name || k },
+      status: { key: r => r.STATUS, rank: stIdx, html: k => `<span class="dot" style="background:${statusInfo(k)[2]}"></span>${esc(statusInfo(k)[1])}`, text: k => statusInfo(k)[1] },
+      cust: { key: r => custName(r), rank: k => k ? k.toLowerCase() : '\uffff', html: k => esc(k || '– ohne Kunde –'), text: k => k || 'ohne Kunde' },
+      user: { key: r => r.BEARBEITER_USER_ID || '', rank: k => k ? userLabel(k).toLowerCase() : '\uffff', html: k => k ? esc(userLabel(k)) : '<span class="hint">∅ ohne Bearbeiter</span>', text: k => k ? userLabel(k) : 'ohne Bearbeiter' },
+    }[gb];
+    const cmp = (x, y) => {
+      if (x == null || x === '') return y == null || y === '' ? 0 : -1;
+      if (y == null || y === '') return 1;
+      return typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'de', { numeric: true, sensitivity: 'base' });
+    };
+    const sortVal = r => key === 'MATCHCODE' ? custName(r) : key === 'STATUS' ? stIdx(r.STATUS) : r[key];
     rows.sort((a, b) => {
-      if (group) { const pa = a.PRIORITY ?? 99, pb = b.PRIORITY ?? 99; if (pa !== pb) return pa - pb; } // wichtigste Gruppe zuerst
-      const x = a[key] ?? '', y = b[key] ?? ''; return (x > y ? 1 : x < y ? -1 : 0) * (desc ? -1 : 1);
+      if (group) { const c = cmp(G.rank(G.key(a)), G.rank(G.key(b))); if (c) return c; } // Gruppen in fester Reihenfolge
+      return cmp(sortVal(a), sortVal(b)) * (desc ? -1 : 1) || (b.SID - a.SID);
     });
+    syncSortUi();
 
     const tbl = el('table');
     const thr = el('tr');
     for (const [k, n] of cols) {
       const th = el('th', { textContent: n + (key === k ? (desc ? ' ↓' : ' ↑') : '') });
-      th.addEventListener('click', () => { ui.sort = { key: k, desc: key === k ? !desc : false }; renderResults(); });
+      th.addEventListener('click', () => { ui.sort = { key: k, desc: key === k ? !desc : false }; readFilters(); renderResults(); });
       thr.appendChild(th);
     }
     tbl.appendChild(el('thead')).appendChild(thr);
@@ -2520,30 +2659,42 @@
         (bh ? `<td class="n"><b>${fmtH(s_.b)}</b></td><td class="n"><b>${fmtH(s_.ba)}</b></td>` : '');
       tb.appendChild(tf);
     };
-    let cur, gs = null, gn = 0;
-    const flush = () => { if (gs && group) sumRow('Summe ' + prioInfo(cur)[1], gs, gn, 'gsum'); };
+    // Gruppen vorab bilden (Anzahl und Stunden stehen im Gruppenkopf; eingeklappte Gruppen zeigen nur den Kopf)
+    const groups = [];
     for (const r of rows) {
-      if (group && (gs === null || r.PRIORITY !== cur)) {
-        flush(); cur = r.PRIORITY; gs = { std: 0, abr: 0, b: 0, ba: 0 }; gn = 0;
-        const gh = el('tr', { className: 'ghead' }); gh.innerHTML = `<td colspan="${cols.length}">${prioHtml(cur)}</td>`; tb.appendChild(gh);
-      }
-      const [, sn, sc] = statusInfo(r.STATUS);
-      const tr = el('tr', { className: 'r' });
-      tr.innerHTML = `<td style="white-space:nowrap">${prioHtml(r.PRIORITY)}</td><td class="n">${r.SID}</td><td>${esc(r.TITEL)}</td><td>${esc((r.MATCHCODE || '').replace(/^\d+\s*-\s*/, ''))}</td>
-        <td><span class="dot" style="background:${sc}"></span>${esc(sn)}</td><td>${fmtDate(r.ANLAGE_DATUM)}</td><td>${esc(r.BEARBEITER_USER_ID || '')}</td>
-        <td class="n">${fmtH(r.SUM_STD)}</td><td class="n">${fmtH(r.MEMO_SUM_ABRSTD)}</td>` +
-        (bh ? `<td class="n">${fmtH(r._BSTD)}</td><td class="n">${fmtH(r._BABR)}</td>` : '');
-      tr.title = 'Klick: öffnen · Mittelklick oder Strg+Klick: in neuem Tab im Hintergrund';
-      wbRow(tr, ticketRoute(r.SID), () => openTicket(r.SID));
-      tb.appendChild(tr);
-      for (const t of [sum, gs].filter(Boolean)) { t.std += r.SUM_STD || 0; t.abr += r.MEMO_SUM_ABRSTD || 0; t.b += r._BSTD || 0; t.ba += r._BABR || 0; }
-      gn++;
+      const k = group ? G.key(r) : '';
+      let g = groups[groups.length - 1];
+      if (!g || g.k !== k) groups.push(g = { k, rows: [], s: { std: 0, abr: 0, b: 0, ba: 0 } });
+      g.rows.push(r); g.s.std += r.SUM_STD || 0; g.s.abr += r.MEMO_SUM_ABRSTD || 0; g.s.b += r._BSTD || 0; g.s.ba += r._BABR || 0;
     }
-    flush();
+    ui.collapsedGroups ||= new Set();
+    for (const g of groups) {
+      const gid = gb + ':' + g.k, closed = group && ui.collapsedGroups.has(gid);
+      if (group) {
+        const gh = el('tr', { className: 'ghead' + (closed ? ' closed' : ''), title: 'Klick: Gruppe ein-/ausklappen' });
+        gh.innerHTML = `<td colspan="${cols.length}"><span class="gtog">${closed ? '▸' : '▾'}</span>${G.html(g.k)} <span class="gcnt">${g.rows.length} Ticket(s) · ${fmtH(g.s.std)} h${g.s.abr ? ` · abr. ${fmtH(g.s.abr)}` : ''}</span></td>`;
+        gh.addEventListener('click', () => { closed ? ui.collapsedGroups.delete(gid) : ui.collapsedGroups.add(gid); renderResults(); });
+        tb.appendChild(gh);
+      }
+      for (const r of g.rows) {
+        for (const t of [sum]) { t.std += r.SUM_STD || 0; t.abr += r.MEMO_SUM_ABRSTD || 0; t.b += r._BSTD || 0; t.ba += r._BABR || 0; }
+        if (closed) continue;
+        const [, sn, sc] = statusInfo(r.STATUS);
+        const tr = el('tr', { className: 'r' });
+        const ttag = r._TOPIC && gb !== 'topic' ? ` <span class="tag topic" title="Thema">🏷 ${esc(r._TOPIC.name)}</span>` : '';
+        tr.innerHTML = `<td style="white-space:nowrap">${prioHtml(r.PRIORITY)}</td><td class="n">${r.SID}</td><td>${esc(r.TITEL)}${ttag}</td><td>${esc(custName(r))}</td>
+          <td><span class="dot" style="background:${sc}"></span>${esc(sn)}</td><td>${fmtDate(r.ANLAGE_DATUM)}</td><td>${esc(r.BEARBEITER_USER_ID || '')}</td>
+          <td class="n">${fmtH(r.SUM_STD)}</td><td class="n">${fmtH(r.MEMO_SUM_ABRSTD)}</td>` +
+          (bh ? `<td class="n">${fmtH(r._BSTD)}</td><td class="n">${fmtH(r._BABR)}</td>` : '');
+        tr.title = 'Klick: öffnen · Mittelklick oder Strg+Klick: in neuem Tab im Hintergrund';
+        wbRow(tr, ticketRoute(r.SID), () => openTicket(r.SID));
+        tb.appendChild(tr);
+      }
+      if (group && !closed && groups.length > 1) sumRow('Summe ' + G.text(g.k), g.s, g.rows.length, 'gsum');
+    }
     sumRow('Summe', sum, rows.length, 'tsum');
     const box = $('sResults'); box.innerHTML = ''; box.appendChild(tbl);
   }
-  $('sGroup').addEventListener('change', () => { readFilters(); renderResults(); });
   $('sReset').addEventListener('click', () => { applyFilterState(defaultFilterState()); readFilters(); msg('sMsg', 'Filter zurückgesetzt.'); });
 
   // ================= TICKET =================
@@ -4114,10 +4265,37 @@
   $('teamHintGo').addEventListener('click', () => { showTab('settings'); const d = panel.querySelector('details[data-set=team]'); d.open = true; d.scrollIntoView({ block: 'start' }); });
   $('teamHintNo').addEventListener('click', () => { store.set('mdqt.teamHintOff', true); updateTeamHint(); });
 
+  // Themen bearbeiten (sofort gespeichert; Suche aktualisiert Filter und Gruppen)
+  function saveTopics() {
+    const list = [...$('stTopics').querySelectorAll('.topic-row')].map(r => ({ id: r.dataset.id, name: r.querySelector('[data-a=name]').value.trim(), words: splitWords(r.querySelector('[data-a=words]').value) }));
+    store.set(CFG.store.topics, list);
+    renderTopicChips(); if (ui.lastResult) renderResults();
+  }
+  function renderTopicEditor() {
+    const box = $('stTopics'); box.innerHTML = '';
+    for (const t of topicsRaw()) {
+      const r = el('div', { className: 'row topic-row' }); r.dataset.id = t.id || ('t' + Date.now() + Math.random().toString(36).slice(2, 6));
+      r.innerHTML = `<div class="c s" style="flex-basis:160px"><input type="text" data-a="name" placeholder="Name, z. B. Wartung"></div>
+        <div class="c"><input type="text" data-a="words" placeholder="Stichwörter, mit ; trennen – z. B. Wartungswoche; Wartung"></div>
+        <button type="button" class="btn sm sec" data-a="up" title="Nach oben (hat Vorrang)">↑</button><button type="button" class="btn sm warn" data-a="del" title="Thema löschen">✕</button>`;
+      r.querySelector('[data-a=name]').value = t.name || ''; r.querySelector('[data-a=words]').value = (t.words || []).join('; ');
+      r.querySelectorAll('input').forEach(i => i.addEventListener('input', saveTopics));
+      r.querySelector('[data-a=del]').addEventListener('click', () => { r.remove(); saveTopics(); });
+      r.querySelector('[data-a=up]').addEventListener('click', () => { if (r.previousElementSibling) { r.previousElementSibling.before(r); saveTopics(); } });
+      box.appendChild(r);
+    }
+    if (!box.children.length) box.innerHTML = '<div class="hint">Noch keine Themen.</div>';
+  }
+  $('stTopicAdd').addEventListener('click', () => {
+    store.set(CFG.store.topics, [...topicsRaw(), { id: 't' + Date.now(), name: '', words: [] }]); renderTopicEditor();
+    const rows = $('stTopics').querySelectorAll('.topic-row'); rows[rows.length - 1].querySelector('input').focus();
+  });
+  renderTopicEditor();
+
   $('stExport').addEventListener('click', () => {
     const tc = team();
     const data = { type: 'mdqt-team', version: 1, exportedAt: new Date().toISOString(), nonBillable: tc.nonBillable, intern: tc.intern, othersBillable: tc.othersBillable !== false };
-    if ($('stExpTpl').checked) data.templates = templates();
+    if ($('stExpTpl').checked) { data.templates = templates(); data.topics = topics(); }
     download('werkbank-team-config.json', JSON.stringify(data, null, 2), 'application/json');
     msg('stTeamMsg', '✔ Exportiert.', 'ok');
   });
@@ -4136,6 +4314,13 @@
         const add = d.templates.filter(t => t && t.name && t.fs && !names.has(t.name));
         store.set(CFG.store.templates, [...own, ...add]); renderTemplates();
         extra = `, ${add.length} Suchvorlage(n) ergänzt`;
+      }
+      if (Array.isArray(d.topics) && d.topics.length) {
+        const own = topicsRaw(), names = new Set(own.map(t => String(t.name).toLowerCase()));
+        const add = d.topics.filter(t => t && t.name && Array.isArray(t.words) && !names.has(String(t.name).toLowerCase()))
+          .map(t => ({ id: 't' + Date.now() + Math.random().toString(36).slice(2, 6), name: String(t.name), words: t.words.map(String) }));
+        store.set(CFG.store.topics, [...own, ...add]); renderTopicEditor(); renderTopicChips();
+        extra += `, ${add.length} Thema/Themen ergänzt`;
       }
       renderTeam(); updateTeamHint();
       msg('stTeamMsg', `✔ Importiert: ${clean(d.nonBillable).length} nicht abrechenbar, ${clean(d.intern).length} intern${extra}.`, 'ok');

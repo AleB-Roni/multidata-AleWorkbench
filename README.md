@@ -18,6 +18,13 @@ Das Skript nutzt die gleiche interne Schnittstelle wie die MultiData-Weboberflä
 - **Modernisierte Oberfläche:** neue Kopfzeile mit Logo und Reitern als Pillen (bei schmalem Fenster seitlich scrollbar; Hell/Dunkel, Vollbild und Schließen bleiben sichtbar), einheitliche Design-Tokens für Farben, Abstände und Radien, überarbeitete Knöpfe, Eingabefelder mit Fokus-Ring, Karten, Tabellen, KPI-Kacheln, Editor-Werkzeugleiste und Dark Mode. Alle Funktionen, Tastenkürzel und gespeicherten Einstellungen bleiben unverändert.
 - **Kompakter und aufgeräumter:** geringere Abstände und Feldhöhen. Filter und Optionen stecken in Aufklappmenüs, deren Knopf die aktuelle Auswahl zeigt (z. B. „Status: offene“, „Zeitraum: Heute“). Weicht ein Filter von „alle“ ab, ist der Knopf hervorgehoben. Esc oder ein Klick daneben schließt das Menü.
   - *Suche:* ☆ Vorlagen, Status, Zeitraum, Kunden-Übersicht; ↺ setzt die Filter zurück.
+- **Themen, Gruppieren und Sortieren in der Suche:**
+  - **Themen** legt man unter ⚙ → *Themen (Betreff-Stichwörter)* an: ein Name und Stichwörter, getrennt mit ; (z. B. „Wartung“: *Wartungswoche; Wartung*). Groß-/Kleinschreibung spielt keine Rolle. Passt ein Betreff zu mehreren Themen, zählt das obere (↑ ändert die Reihenfolge).
+  - Filter **Thema:** Es lassen sich ein oder mehrere Themen wählen, oder „Ohne Thema“.
+  - **Mehr Filter:** Priorität und *Betreff enthält nicht* (mehrere Wörter mit ; trennen).
+  - **Ansicht:** *Gruppieren nach* Priorität, Thema, Status, Kunde oder Bearbeiter, *Sortieren nach* jeder Spalte (auf-/absteigend; Betreff mit natürlicher Zahlensortierung). Jeder Gruppenkopf zeigt Anzahl und Stunden; ein Klick klappt die Gruppe ein.
+  - Tickets mit Thema tragen in der Liste das Etikett 🏷. Vorlagen speichern Thema, weitere Filter, Gruppierung und Sortierung mit. Beim Team-Export (mit Haken „Suchvorlagen und Themen“) werden die Themen mit exportiert.
+  - Thema und Priorität fragt die Werkbank direkt bei MultiData ab. *Betreff enthält nicht* und „Ohne Thema“ filtert sie im Browser, innerhalb der neuesten 300 Treffer.
   - *Zeiten:* Zeitraum (Schnellwahl) und Ansicht (Farben, Wochenenden, Einzelbuchungen, CSV-Export).
   - *Inbox:* Typen.
   - *Ticket:* „⋯“ enthält In MultiData öffnen, In neuem Tab, Link kopieren, Child-Tickets und Zusammenführen.
