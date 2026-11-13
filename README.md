@@ -9,9 +9,30 @@ Das Skript nutzt die gleiche interne Schnittstelle wie die MultiData-Weboberflä
 1. Die Browser-Erweiterung **Tampermonkey** installieren (Chrome/Edge Web Store).
 2. Nur Chrome/Edge: Unter `chrome://extensions` bei Tampermonkey **„Details“ → „Nutzerskripts zulassen“** (bzw. den Entwicklermodus) aktivieren, sonst laufen keine Skripte.
 3. Diesen Link öffnen, dann in Tampermonkey auf **Installieren** klicken:
-   **https://raw.githubusercontent.com/lukasebner1998-ship-it/multidata-werkbank/main/stable/multidata-werkbank.user.js**
+   **https://raw.githubusercontent.com/AleB-Roni/multidata-AleWorkbench/main/stable/multidata-werkbank.user.js**
 4. MultiData neu laden. Unten rechts erscheint **⚡ Werkbank** (oder Alt+Q).
 5. Beim ersten Start unter **⚙ → Team-Konfiguration** die Datei importieren, die im Team geteilt wird. Alternativ selbst festlegen, welche Kunden nicht abrechenbar bzw. intern sind.
+
+## Neu in 1.8 (Beta)
+
+- **Modernisierte Oberfläche:** neue Kopfzeile mit Logo und Reitern als Pillen (bei schmalem Fenster seitlich scrollbar; Hell/Dunkel, Vollbild und Schließen bleiben sichtbar), einheitliche Design-Tokens für Farben, Abstände und Radien, überarbeitete Knöpfe, Eingabefelder mit Fokus-Ring, Karten, Tabellen, KPI-Kacheln, Editor-Werkzeugleiste und Dark Mode. Alle Funktionen, Tastenkürzel und gespeicherten Einstellungen bleiben unverändert.
+- **Kompakter und aufgeräumter:** geringere Abstände und Feldhöhen. Filter und Optionen stecken in Aufklappmenüs, deren Knopf die aktuelle Auswahl zeigt (z. B. „Status: offene“, „Zeitraum: Heute“). Weicht ein Filter von „alle“ ab, ist der Knopf hervorgehoben. Esc oder ein Klick daneben schließt das Menü.
+  - *Suche:* ☆ Vorlagen, Status, Zeitraum, Kunden-Übersicht; ↺ setzt die Filter zurück.
+- **Themen, Gruppieren und Sortieren in der Suche:**
+  - **Themen** legt man unter ⚙ → *Themen (Betreff-Stichwörter)* an: ein Name und Stichwörter, getrennt mit ; (z. B. „Wartung“: *Wartungswoche; Wartung*). Groß-/Kleinschreibung spielt keine Rolle. Passt ein Betreff zu mehreren Themen, zählt das obere (↑ ändert die Reihenfolge).
+  - Filter **Thema:** Es lassen sich ein oder mehrere Themen wählen, oder „Ohne Thema“.
+  - **Mehr Filter:** Priorität und *Betreff enthält nicht* (mehrere Wörter mit ; trennen).
+  - **Ansicht:** *Gruppieren nach* Priorität, Thema, Status, Kunde oder Bearbeiter, *Sortieren nach* jeder Spalte (auf-/absteigend; Betreff mit natürlicher Zahlensortierung). Jeder Gruppenkopf zeigt Anzahl und Stunden; ein Klick klappt die Gruppe ein.
+  - Tickets mit Thema tragen in der Liste das Etikett 🏷. Vorlagen speichern Thema, weitere Filter, Gruppierung und Sortierung mit. Beim Team-Export (mit Haken „Suchvorlagen und Themen“) werden die Themen mit exportiert.
+  - Thema und Priorität fragt die Werkbank direkt bei MultiData ab. *Betreff enthält nicht* und „Ohne Thema“ filtert sie im Browser, innerhalb der neuesten 300 Treffer.
+  - *Zeiten:* Zeitraum (Schnellwahl) und Ansicht (Farben, Wochenenden, Einzelbuchungen, CSV-Export).
+  - *Inbox:* Typen.
+  - *Ticket:* „⋯“ enthält In MultiData öffnen, In neuem Tab, Link kopieren, Child-Tickets und Zusammenführen.
+  - *Einstellungen:* Abschnitte sind einklappbar; die Werkbank merkt sich, welche offen sind.
+  - *Buchen:* Die Dauer-Schnellwerte (0,25 h … 4 h) stecken im ▾ am Dauer-Feld. „Abrechenbar“, „Vor Ort“ und „Als Mail senden“ sind Umschalt-Pillen in einer Zeile. Die abrechenbaren Stunden trägt man direkt an der Abrechenbar-Pille ein (leer = wie gebucht).
+  - *Texteditor:* Die Tabellen-Befehle (neue Tabelle, Zeile/Spalte einfügen oder löschen) stecken im Menü ⊞ ▾. Format entfernen (✕), Signatur (✍) und die Listen sind Symbolknöpfe mit Tooltip.
+
+- **Zeiten wochenweise:** Beim ersten Öffnen lädt der Zeiten-Tab automatisch die aktuelle Woche (Montag bis heute). Mit **‹** und **›** blättert man eine Woche zurück bzw. vor (Montag–Sonntag; nicht über die laufende Woche hinaus), **Heute** springt zurück zur aktuellen Woche. Über den Feldern steht die Kalenderwoche (z. B. „KW 46“). Eigene Zeiträume gehen weiterhin über von/bis oder das Menü „Zeitraum“.
 
 ## Neu in 1.7
 
@@ -41,7 +62,7 @@ Bitte **nicht beide** gleichzeitig aktiv haben; es läuft ohnehin nur die zuerst
 3. Freigeben: **Actions → „Beta freigeben“ → Run workflow** (optional mit kurzer Notiz). Der Workflow
    - kopiert die Beta nach `stable/`,
    - setzt `@name` ohne „(Beta)“, `@version` ohne die 4. Stelle (`1.5.1.3` → `1.5.1`) und die Update-URLs auf `stable/`,
-   - legt einen Git-Tag und ein GitHub-Release an.
+   - legt einen Git-Tag und ein GitHub-Release an. Gibt es `docs/releases/v<Version>.md` (z. B. `v1.8.0.md`), wird sie als Release-Text verwendet, mit Bildern aus demselben Ordner (relativ verlinkt: `./v1.8/bild.png`). Sonst gilt die Notiz aus dem Formular.
    Er bricht ab, wenn die Stable-Version nicht höher würde.
 4. Kolleg:innen erhalten das Update automatisch über Tampermonkey.
 
@@ -54,7 +75,7 @@ Kundenspezifisches (welche Kunden nicht abrechenbar bzw. intern sind) steht **ni
 - **Meldungen:** Fehler und Warnungen (z. B. „keine Zeit eingetragen“) erscheinen zusätzlich als Pop-up unten in der Werkbank, egal wie weit man gescrollt hat. Ein Klick schließt sie; nach einigen Sekunden verschwinden sie von selbst.
 - **Kopfzeile:** Angelegt am … von *Ersteller* (MultiData-Feld „Ersteller“), Stunden und abrechenbare Stunden.
 - **Kopf:** Betreff, Status, Priorität, Queue, Bearbeiter, Firma, Parent-Ticket und „Keine Benachrichtigungen“ werden nur vorgemerkt (gelb markiert) und gemeinsam mit **Speichern** übernommen; **Verwerfen** stellt den alten Stand wieder her. Bearbeiter und Firma sucht man direkt im Feld. Beim Firmenwechsel kann MultiData abrechenbare Stunden zurücksetzen – die Werkbank weist darauf hin.
-- **🚗 Vor-Ort-Termin:** Haken beim Buchen (oder beim Bearbeiten eines Kommentars) setzt im Kommentar *Wegzeit* und *Wegstrecke* auf 1 – das Kennzeichen für die Buchhaltung. Solche Kommentare tragen das Etikett „🚗 vor Ort“.
+- **🚗 Vor Ort** (Vor-Ort-Termin): Haken beim Buchen (oder beim Bearbeiten eines Kommentars) setzt im Kommentar *Wegzeit* und *Wegstrecke* auf 1 – das Kennzeichen für die Buchhaltung. Solche Kommentare tragen das Etikett „🚗 vor Ort“.
 - **Reiter unten:** *💬 Kommentare* und *🕘 Verlauf*. Der Verlauf zeigt Anlage, Kommentare, Mails, Anhänge und alle Feldänderungen aus dem MultiData-Protokoll (Tabelle `MDERRDA_MDERRDAP`: wer, wann, Feld, alt → neu – dasselbe wie der Reiter „Protokoll“ in MultiData). Ist das Protokoll nicht abrufbar, zeigt die Werkbank ersatzweise die Änderungen, die sie selbst erkannt hat.
 - **Texteditor** (Kommentar, Kommentar bearbeiten, Signatur, Textbausteine):
   - Die **Rechtschreibprüfung** des Browsers ist in allen Textfeldern aktiv (Deutsch; Korrekturvorschläge per Rechtsklick).
@@ -64,7 +85,7 @@ Kundenspezifisches (welche Kunden nicht abrechenbar bzw. intern sind) steht **ni
   - **Einfügen:** Fremde Schriftarten, -größen, Abstände und Zeilenhöhen werden entfernt, damit der Text aussieht wie der eigene und man normal weiterschreiben kann. Fett, kursiv, unterstrichen, farbige Schrift, Hervorhebungen, Ausrichtung, Listen, Tabellen, Links und Bilder bleiben. Listen aus Word, Google Docs oder Web-Editoren werden echte Listen.
   - **Strg+Z** / **Strg+Y** machen auch Listen- und Einzugsänderungen rückgängig bzw. wieder.
   - **Größe:** Das Textfeld lässt sich unten rechts größer und kleiner ziehen. Die Werkbank merkt sich die Höhe je Editor (Kommentar, Kommentar bearbeiten, Signatur).
-- **🔗 Teilen** kopiert die originale MultiData-Adresse des Tickets (`…/mdweb/rwi/MDERRDA/%7B%22SID%22:808626%7D`) in die Zwischenablage, ohne MultiData zu öffnen. Mit Umschalt+Klick zusätzlich „#Nr. Betreff“ davor.
+- **⋯ → 🔗 Link kopieren** (früher „Teilen“) kopiert die originale MultiData-Adresse des Tickets (`…/mdweb/rwi/MDERRDA/%7B%22SID%22:808626%7D`) in die Zwischenablage, ohne MultiData zu öffnen. Mit Umschalt+Klick zusätzlich „#Nr. Betreff“ davor.
 - Große Tickets bauen sich stückweise auf; Kommentarinhalte werden erst gerendert, wenn sie in die Nähe des sichtbaren Bereichs kommen. Antwortet MultiData nicht, gibt es nach 30 s (plus einem automatischen zweiten Versuch) eine Fehlermeldung statt eines endlosen „Lade …“.
 
 ## Internes Zeiten-Ticket (Restzeiten)

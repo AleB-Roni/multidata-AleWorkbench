@@ -6,9 +6,9 @@
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
 // @match        https://*.app.personio.com/my-desk*
-// @homepageURL  https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @updateURL    https://raw.githubusercontent.com/lukasebner1998-ship-it/multidata-werkbank/main/stable/multidata-werkbank.user.js
-// @downloadURL  https://raw.githubusercontent.com/lukasebner1998-ship-it/multidata-werkbank/main/stable/multidata-werkbank.user.js
+// @homepageURL  https://github.com/AleB-Roni/multidata-AleWorkbench
+// @updateURL    https://raw.githubusercontent.com/AleB-Roni/multidata-AleWorkbench/main/stable/multidata-werkbank.user.js
+// @downloadURL  https://raw.githubusercontent.com/AleB-Roni/multidata-AleWorkbench/main/stable/multidata-werkbank.user.js
 // @require      https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js#sha256-rMfkFFWoB2W1/Zx+4bgHim0WC7vKRVrq6FTeZclH1Z4=
 // @require      https://cdn.jsdelivr.net/npm/docx-preview@0.4.1/dist/docx-preview.min.js#sha256-xKEzxloRJ5njWxQ8Vy3/+ekjo785tf07B6BqoPj1MMI=
 // @require      https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js#sha256-zAFRMKqFIefwiPiImOupSczcv7ON8L0Sm0S3Jzw6b0E=

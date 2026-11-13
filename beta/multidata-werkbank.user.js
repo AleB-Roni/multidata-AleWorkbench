@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.7.0.1
+// @version      1.8.0.6
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
 // @match        https://*.app.personio.com/my-desk*
-// @homepageURL  https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @updateURL    https://raw.githubusercontent.com/lukasebner1998-ship-it/multidata-werkbank/main/beta/multidata-werkbank.user.js
-// @downloadURL  https://raw.githubusercontent.com/lukasebner1998-ship-it/multidata-werkbank/main/beta/multidata-werkbank.user.js
+// @homepageURL  https://github.com/AleB-Roni/multidata-AleWorkbench
+// @updateURL    https://raw.githubusercontent.com/AleB-Roni/multidata-AleWorkbench/main/beta/multidata-werkbank.user.js
+// @downloadURL  https://raw.githubusercontent.com/AleB-Roni/multidata-AleWorkbench/main/beta/multidata-werkbank.user.js
 // @require      https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js#sha256-rMfkFFWoB2W1/Zx+4bgHim0WC7vKRVrq6FTeZclH1Z4=
 // @require      https://cdn.jsdelivr.net/npm/docx-preview@0.4.1/dist/docx-preview.min.js#sha256-xKEzxloRJ5njWxQ8Vy3/+ekjo785tf07B6BqoPj1MMI=
 // @require      https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js#sha256-zAFRMKqFIefwiPiImOupSczcv7ON8L0Sm0S3Jzw6b0E=
@@ -140,7 +140,7 @@
       recent: 'mdqt.recentCustomers', filters: 'mdqt.filters', log: 'mdqt.log', drafts: 'mdqt.drafts', size: 'mdqt.size',
       settings: 'mdqt.settings', inbox: 'mdqt.inbox', sections: 'mdqt.sections', comments: 'mdqt.comments', personio: 'mdqt.personio',
       timesView: 'mdqt.timesView', templates: 'mdqt.searchTemplates', team: 'mdqt.team', facetSort: 'mdqt.facetSort',
-      history: 'mdqt.ticketHistory', personioInfo: 'mdqt.personioInfo', personioPending: 'mdqt.personioPending', personioResult: 'mdqt.personioResult',
+      history: 'mdqt.ticketHistory', topics: 'mdqt.topics', personioInfo: 'mdqt.personioInfo', personioPending: 'mdqt.personioPending', personioResult: 'mdqt.personioResult',
     },
     legacyKeys: ['mdqt.myCustomers', 'mdqt.lastText', 'mdqt.graph', 'mdqt.authResult'], // Reste älterer Versionen, werden beim Start entfernt
     pollTicketSec: 45,           // offenes Ticket auf Änderungen von außen prüfen
@@ -780,6 +780,8 @@
     if (queues.length) parts.push(valueFilter('ERRQ_ID', queues, { numeric: true }));
     if (f.kndIds.length) parts.push(orFilter('KND_ID', f.kndIds));
     if (f.text) parts.push(/^\d{5,}$/.test(f.text) ? ['SID', '=', Number(f.text)] : ['TITEL', 'contains', f.text]);
+    if (f.titleAny && f.titleAny.length) parts.push(f.titleAny.map(w => ['TITEL', 'contains', w]).flatMap((x, i) => i ? ['or', x] : [x])); // Thema: eines der Stichwörter
+    if (f.prios && f.prios.length) parts.push(orFilter('PRIORITY', f.prios));
 
     if (f.dateMode === 'booked') {
       // Tickets, auf die im Zeitraum Zeit gebucht wurde (von mir bzw. von allen)
@@ -1265,184 +1267,377 @@
   // 6. Oberfläche
   // ===========================================================================
   const css = `
-  #mdqt-fab{position:fixed;right:18px;bottom:18px;z-index:99998;background:#00897b;color:#fff;border:none;border-radius:24px;
-    padding:10px 16px;font:600 13px Roboto,Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);cursor:pointer}
-  #mdqt-panel{position:fixed;top:56px;right:12px;bottom:66px;z-index:99999;width:min(1000px,calc(100vw - 24px));display:none;
-    flex-direction:column;background:var(--mq-bg);color:var(--mq-fg);border-radius:8px;box-shadow:0 6px 28px rgba(0,0,0,.35);
-    font:13px/1.35 Roboto,Arial,sans-serif;color-scheme:var(--mq-scheme);overflow:hidden}
-  #mdqt-panel.open{display:flex}
+  /* ---------- Design-Tokens (hell) – Farben, Radien, Schatten an einer Stelle ---------- */
+  #mdqt-panel,#mdqt-fab{--mq-accent:#0d9488;--mq-accent-h:#0f766e;--mq-accent-a:#115e59;--mq-on-accent:#fff;--mq-ring:rgba(13,148,136,.28);
+    --mq-danger:#dc2626;--mq-danger-h:#b91c1c;--mq-ok:#15803d;--mq-warn:#ea580c;--mq-amber:#f59e0b;
+    --mq-r-sm:6px;--mq-r:8px;--mq-r-lg:12px;
+    --mq-font:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif}
+  #mdqt-panel{--mq-bg:#fff;--mq-fg:#1e293b;--mq-input:#fff;--mq-soft:#f8fafc;--mq-soft2:#f1f5f9;--mq-border:#e2e8f0;--mq-border2:#cbd5e1;--mq-line:#eef2f6;
+    --mq-muted:#64748b;--mq-muted2:#475569;--mq-accent-soft:#e6f6f4;--mq-accent-soft2:#ccede9;--mq-accent-fg:#0f766e;--mq-edit:#f3fbfa;--mq-btn:#fff;
+    --mq-warn-bg:#fff7ed;--mq-warn-bd:#fed7aa;--mq-mail-bg:#f5f9ff;--mq-unread:#fffbeb;--mq-hover:#f1f9f8;--mq-tag:#f1f5f9;--mq-link2:#1d4ed8;--mq-link:#0f766e;
+    --mq-hdr:#fff;--mq-hdr-fg:#475569;--mq-shadow:0 24px 48px -12px rgba(15,23,42,.28),0 4px 12px rgba(15,23,42,.08);--mq-shadow-sm:0 1px 2px rgba(15,23,42,.06);
+    --mq-scheme:light}
+  /* ---------- Design-Tokens (dunkel) ---------- */
+  #mdqt-panel.dark{--mq-accent:#14b8a6;--mq-accent-h:#2dd4bf;--mq-accent-a:#5eead4;--mq-on-accent:#042f2e;--mq-ring:rgba(45,212,191,.35);
+    --mq-bg:#16181d;--mq-fg:#e5e7eb;--mq-input:#1d2026;--mq-soft:#1c1f25;--mq-soft2:#23272e;--mq-border:#2f343c;--mq-border2:#3c424b;--mq-line:#262a31;
+    --mq-muted:#8b929c;--mq-muted2:#aab1bb;--mq-accent-soft:#12302d;--mq-accent-soft2:#174440;--mq-accent-fg:#5eead4;--mq-edit:#142725;--mq-btn:#1f2329;
+    --mq-warn-bg:#2d2214;--mq-warn-bd:#5c3d16;--mq-mail-bg:#17202d;--mq-unread:#25231a;--mq-hover:#1b2a29;--mq-tag:#262b33;--mq-link2:#93c5fd;--mq-link:#5eead4;
+    --mq-hdr:#1b1e24;--mq-hdr-fg:#aab1bb;--mq-shadow:0 24px 48px -12px rgba(0,0,0,.6),0 4px 12px rgba(0,0,0,.35);--mq-shadow-sm:0 1px 2px rgba(0,0,0,.3);
+    --mq-scheme:dark}
+
+  /* ---------- Schnellstart-Knopf ---------- */
+  #mdqt-fab{position:fixed;right:20px;bottom:20px;z-index:99998;display:inline-flex;align-items:center;gap:6px;
+    background:linear-gradient(135deg,#14b8a6,#0f766e);color:#fff;border:none;border-radius:999px;padding:11px 18px;
+    font:600 13px/1 var(--mq-font);letter-spacing:.01em;box-shadow:0 8px 20px -6px rgba(13,148,136,.65),0 2px 6px rgba(15,23,42,.18);
+    cursor:pointer;transition:transform .15s ease,box-shadow .15s ease}
+  #mdqt-fab:hover{transform:translateY(-2px);box-shadow:0 12px 26px -6px rgba(13,148,136,.7),0 3px 8px rgba(15,23,42,.2)}
+  #mdqt-fab:active{transform:translateY(0)}
+  #mdqt-fab:focus-visible{outline:none;box-shadow:0 0 0 3px #fff,0 0 0 6px var(--mq-accent)}
+
+  /* ---------- Fenster ---------- */
+  #mdqt-panel{position:fixed;top:56px;right:12px;bottom:66px;z-index:99999;width:min(1040px,calc(100vw - 24px));display:none;
+    flex-direction:column;background:var(--mq-bg);color:var(--mq-fg);border-radius:var(--mq-r-lg);border:1px solid var(--mq-border);box-shadow:var(--mq-shadow);
+    font:13px/1.45 var(--mq-font);color-scheme:var(--mq-scheme);overflow:hidden;-webkit-font-smoothing:antialiased}
+  #mdqt-panel.open{display:flex;animation:mqPanelIn .16s ease-out}
+  @keyframes mqPanelIn{from{opacity:0;transform:translateY(6px) scale(.995)}to{opacity:1;transform:none}}
   #mdqt-panel *{box-sizing:border-box}
-  #mdqt-panel .hdr{display:flex;align-items:center;background:#00897b;color:#fff}
-  #mdqt-panel .hdr button.tab{background:none;border:none;color:#d7f0ed;padding:11px 14px;cursor:pointer;font:600 13px inherit;font-family:inherit;border-bottom:3px solid transparent}
-  #mdqt-panel .hdr button.tab.active{color:#fff;border-bottom-color:#fff}
-  #mdqt-panel .hdr .sp{flex:1}
-  #mdqt-panel .hdr .x{background:none;border:none;color:#fff;font-size:20px;padding:6px 14px;cursor:pointer}
-  #mdqt-panel .body{flex:1;overflow:auto;padding:12px 14px}
-  #mdqt-panel section{display:none}#mdqt-panel section.active{display:block}
-  #mdqt-panel label.l{display:block;margin:8px 0 3px;color:var(--mq-muted2);font-size:12px}
-  #mdqt-panel input[type=text],#mdqt-panel input[type=date],#mdqt-panel input[type=time],#mdqt-panel select,#mdqt-panel textarea,#mdqt-panel .rte{
-    width:100%;border:1px solid var(--mq-border);border-radius:4px;padding:5px 7px;font:13px inherit;font-family:inherit;background:var(--mq-input) !important;color:var(--mq-fg) !important}
+  #mdqt-panel ::selection{background:var(--mq-accent-soft2)}
+  #mdqt-panel *{scrollbar-width:thin;scrollbar-color:var(--mq-border2) transparent}
+  #mdqt-panel ::-webkit-scrollbar{width:10px;height:10px}
+  #mdqt-panel ::-webkit-scrollbar-thumb{background:var(--mq-border2);border-radius:10px;border:2px solid var(--mq-bg)}
+  #mdqt-panel ::-webkit-scrollbar-track{background:transparent}
+
+  /* ---------- Kopfzeile mit Reitern ---------- */
+  #mdqt-panel .hdr{display:flex;align-items:center;gap:2px;padding:5px 6px 5px 12px;background:var(--mq-hdr);color:var(--mq-hdr-fg);
+    border-bottom:1px solid var(--mq-border);flex:none;min-height:44px}
+  #mdqt-panel .hdr .tabs{display:flex;align-items:center;gap:2px;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+  #mdqt-panel .hdr .tabs::-webkit-scrollbar{display:none}
+  #mdqt-panel .hdr .brand{display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:14px;color:var(--mq-fg);margin-right:8px;white-space:nowrap;user-select:none}
+  #mdqt-panel .hdr .brand i{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:7px;font-style:normal;font-size:13px;
+    background:linear-gradient(135deg,#14b8a6,#0f766e);color:#fff;box-shadow:0 2px 6px -1px rgba(13,148,136,.5)}
+  #mdqt-panel .hdr button.tab{display:inline-flex;align-items:center;gap:6px;background:none;border:none;color:var(--mq-hdr-fg);padding:6px 10px;border-radius:var(--mq-r);
+    cursor:pointer;font:600 13px/1 var(--mq-font);white-space:nowrap;transition:background .12s,color .12s}
+  #mdqt-panel .hdr button.tab:hover{background:var(--mq-soft2);color:var(--mq-fg)}
+  #mdqt-panel .hdr button.tab.active{background:var(--mq-accent-soft);color:var(--mq-accent-fg)}
+  #mdqt-panel .hdr .sp{flex:1;min-width:8px}
+  #mdqt-panel .hdr .ic,#mdqt-panel .hdr .x{display:inline-grid;place-items:center;width:30px;height:30px;padding:0;background:none;border:none;border-radius:var(--mq-r);
+    color:var(--mq-hdr-fg);font-size:15px;cursor:pointer;flex:none;text-decoration:none;transition:background .12s,color .12s}
+  #mdqt-panel .hdr .x{font-size:20px}
+  #mdqt-panel .hdr .ic:hover,#mdqt-panel .hdr .x:hover{background:var(--mq-soft2);color:var(--mq-fg)}
+  #mdqt-panel .hdr .x:hover{background:#fee2e2;color:var(--mq-danger)}
+  #mdqt-panel.dark .hdr .x:hover{background:#3b1d1d;color:#fca5a5}
+
+  /* ---------- Inhalt ---------- */
+  #mdqt-panel .body{flex:1;overflow:auto;padding:12px 14px;background:var(--mq-bg)}
+  #mdqt-panel section{display:none}#mdqt-panel section.active{display:block;animation:mqFade .12s ease-out}
+  @keyframes mqFade{from{opacity:.4}to{opacity:1}}
+  #mdqt-panel h3{font-size:14px;font-weight:700;letter-spacing:-.005em;color:var(--mq-fg)}
+  #mdqt-panel details.set{margin-top:6px;padding:0;box-shadow:none}
+  #mdqt-panel details.set:first-child{margin-top:0}
+  #mdqt-panel details.set>summary{margin:0;padding:9px 12px;color:var(--mq-fg);font-size:13px;list-style:none;display:flex;align-items:center;gap:8px;border-radius:var(--mq-r)}
+  #mdqt-panel details.set>summary::-webkit-details-marker{display:none}
+  #mdqt-panel details.set>summary::before{content:'▸';color:var(--mq-muted);font-size:11px;width:10px;transition:transform .12s}
+  #mdqt-panel details.set[open]>summary::before{transform:rotate(90deg)}
+  #mdqt-panel details.set>summary:hover{background:var(--mq-soft)}
+  #mdqt-panel details.set[open]{padding:0 12px 10px}
+  #mdqt-panel details.set[open]>summary{margin:0 -12px 4px;border-bottom:1px solid var(--mq-line);border-radius:var(--mq-r) var(--mq-r) 0 0}
+  #mdqt-panel h4{margin:12px 0 4px;font-size:13px}
+  #mdqt-panel label.l{display:block;margin:7px 0 3px;color:var(--mq-muted2);font-size:12px;font-weight:600}
+  #mdqt-panel label.l .hint{font-weight:400}
+
+  /* ---------- Eingabefelder ---------- */
+  #mdqt-panel input[type=text],#mdqt-panel input[type=date],#mdqt-panel input[type=time],#mdqt-panel input[type=number],#mdqt-panel select,#mdqt-panel textarea,#mdqt-panel .rte{
+    width:100%;border:1px solid var(--mq-border2);border-radius:var(--mq-r);padding:4px 8px;font:13px/1.4 var(--mq-font);background:var(--mq-input) !important;color:var(--mq-fg) !important;
+    min-height:30px;transition:border-color .12s,box-shadow .12s}
+  #mdqt-panel input:hover:not(:disabled),#mdqt-panel select:hover:not(:disabled),#mdqt-panel textarea:hover{border-color:var(--mq-muted)}
+  #mdqt-panel input[type=text]:focus,#mdqt-panel input[type=date]:focus,#mdqt-panel input[type=time]:focus,#mdqt-panel input[type=number]:focus,#mdqt-panel select:focus,#mdqt-panel textarea:focus,#mdqt-panel .rte:focus{
+    outline:none;border-color:var(--mq-accent);box-shadow:0 0 0 3px var(--mq-ring)}
+  #mdqt-panel input::placeholder,#mdqt-panel textarea::placeholder{color:var(--mq-muted);opacity:.85}
   #mdqt-panel textarea{min-height:64px;resize:vertical}
-  #mdqt-panel .rte{min-height:70px;max-height:300px;overflow:auto;resize:vertical}
-  #mdqt-panel .tb button.on{background:var(--mq-accent-soft);border-color:#00897b}
-  #mdqt-panel .rte:focus{outline:2px solid #80cbc4}
-  #mdqt-panel input[type=checkbox]{appearance:auto !important;-webkit-appearance:checkbox !important;width:15px;height:15px;margin:0;accent-color:#00897b;flex:none}
+  #mdqt-panel .rte{min-height:70px;max-height:300px;overflow:auto;resize:vertical;padding:8px 10px}
+  #mdqt-panel input[type=checkbox]{appearance:auto !important;-webkit-appearance:checkbox !important;width:16px;height:16px;margin:0;accent-color:var(--mq-accent);flex:none;cursor:pointer}
+
+  /* ---------- Layout-Helfer ---------- */
   #mdqt-panel .row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
   #mdqt-panel .row>.c{flex:1;min-width:120px}
   #mdqt-panel .row>.c.s{flex:0 0 110px;min-width:0}
-  #mdqt-panel .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+  #mdqt-panel .chk{display:inline-flex;gap:6px;align-items:center;margin:6px 12px 0 0;cursor:pointer;user-select:none}
+
+  /* ---------- Chips (Filter, Status, Vorlagen) ---------- */
+  #mdqt-panel .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+  #mdqt-panel .chip{display:inline-flex;align-items:center;border:1px solid var(--mq-border2);color:var(--mq-muted2);background:var(--mq-bg);border-radius:999px;
+    padding:2px 10px;cursor:pointer;font:500 12px/1.5 var(--mq-font);transition:background .12s,border-color .12s,color .12s}
+  #mdqt-panel .chip:hover{border-color:var(--mq-accent);color:var(--mq-accent-fg);background:var(--mq-accent-soft)}
+  #mdqt-panel .chip.sel{background:var(--mq-accent);border-color:var(--mq-accent);color:var(--mq-on-accent)}
+  #mdqt-panel .chip.sel:hover{background:var(--mq-accent-h);border-color:var(--mq-accent-h);color:var(--mq-on-accent)}
   #mdqt-panel .chip.more{border-style:dashed;font-weight:600}
-  #mdqt-panel .chip{border:1px solid #00897b;color:var(--mq-accent-fg);background:var(--mq-bg);border-radius:12px;padding:2px 9px;cursor:pointer;font-size:12px}
-  #mdqt-panel .chip.sel{background:#00897b;color:#fff}
-  #mdqt-panel .chip .n{opacity:.7;margin-left:4px;font-size:11px}
-  #mdqt-panel .mp{position:relative;display:flex;flex-wrap:wrap;gap:4px;align-items:center;border:1px solid var(--mq-border);border-radius:4px;padding:3px 5px;background:var(--mq-bg);min-height:32px;cursor:text}
-  #mdqt-panel .mp .pill{background:#00897b;color:#fff;border-radius:12px;padding:1px 4px 1px 9px;font-size:12px;display:inline-flex;align-items:center;gap:3px;max-width:100%}
+  #mdqt-panel .chip .n{opacity:.7;margin-left:5px;font-size:11px}
+  #mdqt-panel .chip.sel .dot{box-shadow:0 0 0 2px rgba(255,255,255,.85)}
+
+  /* ---------- Mehrfachauswahl (Bearbeiter, Kunden, Queues) ---------- */
+  #mdqt-panel .mp{position:relative;display:flex;flex-wrap:wrap;gap:4px;align-items:center;border:1px solid var(--mq-border2);border-radius:var(--mq-r);padding:2px 4px;
+    background:var(--mq-input);min-height:30px;cursor:text;transition:border-color .12s,box-shadow .12s}
+  #mdqt-panel .mp:focus-within{border-color:var(--mq-accent);box-shadow:0 0 0 3px var(--mq-ring)}
+  #mdqt-panel .mp .pill{background:var(--mq-accent-soft2);color:var(--mq-accent-fg);border-radius:999px;padding:2px 4px 2px 10px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:2px;max-width:100%}
   #mdqt-panel .mp .pill span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  #mdqt-panel .mp .pill b{cursor:pointer;padding:0 4px;font-weight:700}
-  #mdqt-panel .mp input[type=text]{border:none !important;flex:1;min-width:120px;padding:3px !important;outline:none}
-  #mdqt-panel .mp .results{position:absolute;left:0;right:0;top:100%;z-index:6}
-  #mdqt-panel .chk{display:inline-flex;gap:6px;align-items:center;margin:6px 12px 0 0;cursor:pointer}
-  #mdqt-panel .btn{padding:7px 12px;border:none;border-radius:4px;background:#00897b;color:#fff;font:600 13px inherit;font-family:inherit;cursor:pointer}
-  #mdqt-panel .btn.sec{background:var(--mq-accent-soft);color:var(--mq-accent-fg)}
-  #mdqt-panel .btn.warn{background:#c62828}
-  #mdqt-panel .btn.sm{padding:3px 8px;font-size:12px}
-  #mdqt-panel .btn:disabled{opacity:.5;cursor:default}
+  #mdqt-panel .mp .pill b{cursor:pointer;padding:0 5px;font-weight:700;border-radius:999px;opacity:.7}
+  #mdqt-panel .mp .pill b:hover{opacity:1;background:rgba(0,0,0,.08)}
+  #mdqt-panel .mp input[type=text]{border:none !important;box-shadow:none !important;flex:1;min-width:120px;min-height:24px;padding:2px !important;outline:none}
+  #mdqt-panel .mp .results{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:6}
+
+  /* ---------- Aufklappmenüs ---------- */
+  #mdqt-panel .row.bar{align-items:center}
+  #mdqt-panel .row.bar input[type=text]{min-height:32px}
+  #mdqt-panel .row.fbar{align-items:center;margin-top:8px;gap:6px}
+  #mdqt-panel .row.fbar .chk{margin:0 0 0 6px}
+  #mdqt-panel .dd{position:relative;flex:none}
+  #mdqt-panel .ddb .car{font-size:10px;opacity:.6;margin-left:2px}
+  #mdqt-panel .ddb b{font-weight:600;color:var(--mq-muted2);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #mdqt-panel .ddb.set{border-color:var(--mq-accent);background:var(--mq-accent-soft);color:var(--mq-accent-fg)}
+  #mdqt-panel .ddb.set b{color:var(--mq-accent-fg)}
+  #mdqt-panel .dd.open>.ddb{border-color:var(--mq-accent);box-shadow:0 0 0 3px var(--mq-ring)}
+  #mdqt-panel .ddm{display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:30;min-width:240px;max-width:min(520px,calc(100vw - 40px));max-height:min(420px,60vh);overflow:auto;
+    background:var(--mq-bg);border:1px solid var(--mq-border);border-radius:var(--mq-r-lg);box-shadow:0 16px 36px -10px rgba(15,23,42,.3),0 2px 6px rgba(15,23,42,.08);padding:8px 10px 10px}
+  #mdqt-panel.dark .ddm{box-shadow:0 16px 36px -10px rgba(0,0,0,.7)}
+  #mdqt-panel .dd.r>.ddm{left:auto;right:0}
+  #mdqt-panel .dd.open>.ddm{display:block;animation:mqFade .1s ease-out}
+  #mdqt-panel .ddh{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--mq-muted);margin:2px 2px 6px}
+  #mdqt-panel .ddsep{height:1px;background:var(--mq-line);margin:8px -10px}
+  #mdqt-panel .chips.list{flex-direction:column;flex-wrap:nowrap;gap:1px;margin:0}
+  #mdqt-panel .chips.list .chip{border:none;border-radius:var(--mq-r-sm);background:transparent;color:var(--mq-fg);padding:5px 8px;width:100%;justify-content:flex-start;text-align:left;font-size:13px}
+  #mdqt-panel .chips.list .chip:hover{background:var(--mq-soft2);color:var(--mq-fg)}
+  #mdqt-panel .chips.list .chip b{margin-left:auto !important;opacity:.5;padding:0 4px}
+  #mdqt-panel .chips.list .chip b:hover{opacity:1;color:var(--mq-danger)}
+  #mdqt-panel .chips.list.check .chip::before{content:'';flex:none;width:14px;height:14px;margin-right:8px;border:1.5px solid var(--mq-border2);border-radius:4px;
+    display:inline-grid;place-items:center;font-size:10px;line-height:1;color:var(--mq-on-accent)}
+  #mdqt-panel .chips.list.check .chip.sel{background:transparent;color:var(--mq-fg)}
+  #mdqt-panel .chips.list.check .chip.sel:hover{background:var(--mq-soft2)}
+  #mdqt-panel .chips.list.check .chip.sel::before{content:'✓';background:var(--mq-accent);border-color:var(--mq-accent)}
+  #mdqt-panel .chips.list.check .chip.sel .dot{box-shadow:none}
+  #mdqt-panel .ddm .chk.blk{display:flex;margin:4px 0}
+  #mdqt-panel .ddm .btn.mi{display:flex;width:100%;justify-content:flex-start;border:none;box-shadow:none;background:transparent;color:var(--mq-fg);font-weight:500;font-size:13px;min-height:30px}
+  #mdqt-panel .ddm .btn.mi:hover{background:var(--mq-soft2);color:var(--mq-fg)}
+  #mdqt-panel .tb .ddm button.mi{display:flex;width:100%;justify-content:flex-start;border:none;background:transparent;font-size:13px;padding:5px 8px;min-height:28px}
+  #mdqt-panel .tb .ddm button.mi:hover{background:var(--mq-soft2)}
+  #mdqt-panel .tb .dd .ddm{padding:6px}
+  #mdqt-panel .tb .dd.open>.ddb{background:var(--mq-accent-soft);border-color:var(--mq-accent)}
+  #mdqt-panel .togs{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}
+  #mdqt-panel .chk.tgl{margin:0;padding:3px 10px 3px 8px;min-height:28px;border:1px solid var(--mq-border2);border-radius:999px;background:var(--mq-btn);font-size:12px;font-weight:500;
+    transition:background .12s,border-color .12s,color .12s}
+  #mdqt-panel .chk.tgl input{width:14px;height:14px}
+  #mdqt-panel .chk.tgl:hover{border-color:var(--mq-accent)}
+  #mdqt-panel .chk.tgl:has(input:checked){background:var(--mq-accent-soft);border-color:var(--mq-accent);color:var(--mq-accent-fg)}
+  #mdqt-panel .tgrp{display:inline-flex;align-items:center}
+  #mdqt-panel .tgrp .abr{display:inline-flex;align-items:center;gap:4px;margin-left:-1px}
+  #mdqt-panel .tgrp .abr input{width:84px;min-height:28px;border-radius:0 999px 999px 0 !important;padding:2px 10px !important;font-size:12px}
+  #mdqt-panel .tgrp:has(.abr:not([style*="none"])) .chk.tgl{border-radius:999px 0 0 999px}
+  #mdqt-panel tr.ghead{cursor:pointer;user-select:none}
+  #mdqt-panel tr.ghead:hover td{background:var(--mq-accent-soft)}
+  #mdqt-panel tr.ghead .gtog{display:inline-block;width:14px;color:var(--mq-muted);font-size:11px}
+  #mdqt-panel tr.ghead .gcnt{font-weight:500;font-size:12px;color:var(--mq-muted);margin-left:8px}
+  #mdqt-panel .tag.topic{background:var(--mq-accent-soft);color:var(--mq-accent-fg);margin-left:4px}
+  #mdqt-panel .topic-row{margin-top:6px;align-items:center;gap:6px}
+  #mdqt-panel .wk{display:flex}
+  #mdqt-panel .wk .btn{border-radius:0;margin-left:-1px;box-shadow:none;padding:5px 10px}
+  #mdqt-panel .wk .btn:first-child{border-radius:var(--mq-r) 0 0 var(--mq-r);margin-left:0;font-size:16px;line-height:1}
+  #mdqt-panel .wk .btn:last-child{border-radius:0 var(--mq-r) var(--mq-r) 0;font-size:16px;line-height:1}
+  #mdqt-panel .inpdd{display:flex}
+  #mdqt-panel .inpdd>input{border-top-right-radius:0 !important;border-bottom-right-radius:0 !important;min-width:0}
+  #mdqt-panel .inpdd .ddb{border-top-left-radius:0;border-bottom-left-radius:0;margin-left:-1px;min-height:30px;padding:0 9px;box-shadow:none}
+  #mdqt-panel .chips.list .chip.mi{font-variant-numeric:tabular-nums}
+
+  /* ---------- Knöpfe ---------- */
+  #mdqt-panel .btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:5px 12px;min-height:30px;border:1px solid transparent;border-radius:var(--mq-r);
+    background:var(--mq-accent);color:var(--mq-on-accent);font:600 13px/1.2 var(--mq-font);cursor:pointer;white-space:nowrap;
+    box-shadow:var(--mq-shadow-sm);transition:background .12s,border-color .12s,box-shadow .12s,transform .06s}
+  #mdqt-panel .btn:hover:not(:disabled){background:var(--mq-accent-h)}
+  #mdqt-panel .btn:active:not(:disabled){transform:translateY(1px)}
+  #mdqt-panel .btn:focus-visible,#mdqt-panel .chip:focus-visible,#mdqt-panel .hdr button:focus-visible,#mdqt-panel .tb button:focus-visible,#mdqt-panel .btabs button:focus-visible{
+    outline:none;box-shadow:0 0 0 3px var(--mq-ring)}
+  #mdqt-panel .btn.sec{background:var(--mq-btn);color:var(--mq-fg);border-color:var(--mq-border2)}
+  #mdqt-panel .btn.sec:hover:not(:disabled){background:var(--mq-accent-soft);border-color:var(--mq-accent);color:var(--mq-accent-fg)}
+  #mdqt-panel .btn.warn{background:var(--mq-danger);color:#fff}
+  #mdqt-panel .btn.warn:hover:not(:disabled){background:var(--mq-danger-h)}
+  #mdqt-panel .btn.sm{padding:2px 9px;min-height:26px;font-size:12px;border-radius:var(--mq-r-sm)}
+  #mdqt-panel .btn:disabled{opacity:.5;cursor:default;box-shadow:none}
+  #mdqt-panel a.btn{text-decoration:none}
+
+  /* ---------- Meldungen ---------- */
   #mdqt-panel .msg{margin:8px 0;font-size:12px;white-space:pre-wrap}
-  #mdqt-panel .msg.err{color:#c62828}#mdqt-panel .msg.ok{color:#2e7d32}
-  #mdqt-panel .toasts{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;display:flex;flex-direction:column;align-items:center;gap:6px;
+  #mdqt-panel .msg:empty{display:none}
+  #mdqt-panel .msg.err{color:var(--mq-danger)}#mdqt-panel .msg.ok{color:var(--mq-ok)}
+  #mdqt-panel.dark .msg.err{color:#fca5a5}#mdqt-panel.dark .msg.ok{color:#86efac}
+  #mdqt-panel .toasts{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);z-index:60;display:flex;flex-direction:column;align-items:center;gap:8px;
     width:max-content;max-width:min(560px,calc(100% - 32px));pointer-events:none}
-  #mdqt-panel .toast{pointer-events:auto;display:flex;align-items:flex-start;gap:12px;padding:9px 12px;border-radius:6px;font-size:13px;line-height:1.35;
-    white-space:pre-wrap;color:#fff;background:#c62828;box-shadow:0 4px 16px rgba(0,0,0,.35);cursor:pointer;animation:mqToastIn .15s ease-out}
-  #mdqt-panel .toast.warn{background:#e65100}
-  #mdqt-panel .toast b{font-size:16px;line-height:1;opacity:.85}
+  #mdqt-panel .toast{pointer-events:auto;display:flex;align-items:flex-start;gap:12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.4;
+    white-space:pre-wrap;color:#fff;background:#b91c1c;box-shadow:0 12px 28px -8px rgba(0,0,0,.45);cursor:pointer;animation:mqToastIn .18s ease-out}
+  #mdqt-panel .toast.warn{background:#c2410c}
+  #mdqt-panel .toast b{font-size:16px;line-height:1;opacity:.8}
   @keyframes mqToastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   #mdqt-panel .hint{color:var(--mq-muted);font-size:12px}
-  #mdqt-panel table{width:100%;border-collapse:collapse;margin-top:8px}
-  #mdqt-panel th{text-align:left;font-size:12px;color:var(--mq-muted2);border-bottom:2px solid var(--mq-border);padding:4px 6px;cursor:pointer;white-space:nowrap;position:sticky;top:-12px;background:var(--mq-bg)}
-  #mdqt-panel td{border-bottom:1px solid var(--mq-line);padding:4px 6px;vertical-align:top}
-  #mdqt-panel tr.r:hover td{background:var(--mq-accent-soft);cursor:pointer}
-  #mdqt-panel td.n{text-align:right;white-space:nowrap}
-  #mdqt-panel .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
-  #mdqt-panel .flag{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
-  #mdqt-panel tr.ghead td{background:var(--mq-soft);font-weight:700;padding-top:8px}
-  #mdqt-panel tr.gsum td{color:var(--mq-muted);border-bottom:2px solid var(--mq-border)}
-  #mdqt-panel tr.tsum td{border-top:2px solid var(--mq-border)}
-  #mdqt-panel .card{border:1px solid var(--mq-border);border-radius:6px;padding:8px 10px;margin-top:8px}
-  #mdqt-panel .card.edit{border-color:#00897b;background:var(--mq-edit)}
-  #mdqt-panel .card .meta{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--mq-muted2);align-items:center}
+  #mdqt-panel .warnbox{background:var(--mq-warn-bg);border:1px solid var(--mq-warn-bd);border-left:4px solid var(--mq-amber);border-radius:var(--mq-r);padding:8px 12px;margin-top:8px;font-size:12px}
+
+  /* ---------- Tabellen ---------- */
+  #mdqt-panel table{width:100%;border-collapse:separate;border-spacing:0;margin-top:8px;color:var(--mq-fg);font-size:inherit}
+  #mdqt-panel th{text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--mq-muted);
+    border-bottom:1px solid var(--mq-border);padding:6px 8px;cursor:pointer;white-space:nowrap;position:sticky;top:-12px;background:var(--mq-bg);z-index:1}
+  #mdqt-panel th:hover{color:var(--mq-fg)}
+  #mdqt-panel td{border-bottom:1px solid var(--mq-line);padding:5px 8px;vertical-align:top}
+  #mdqt-panel tr.r td{transition:background .08s}
+  #mdqt-panel tr.r:hover td{background:var(--mq-hover);cursor:pointer}
+  #mdqt-panel td.n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  #mdqt-panel .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle;flex:none}
+  #mdqt-panel .flag{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+  #mdqt-panel tr.ghead td{background:var(--mq-soft2);font-weight:700;padding-top:9px;border-bottom-color:var(--mq-border)}
+  #mdqt-panel tr.gsum td{color:var(--mq-muted);border-bottom:1px solid var(--mq-border2);font-size:12px}
+  #mdqt-panel tr.tsum td{border-top:2px solid var(--mq-border2);font-weight:600}
+  #mdqt-panel tr.r td.l{padding:0}
+  #mdqt-panel a.rl{display:block;padding:5px 8px;color:inherit;text-decoration:none;min-height:1em}
+
+  /* ---------- Karten (Kommentare, Anhänge, Abschnitte) ---------- */
+  #mdqt-panel .card{border:1px solid var(--mq-border);border-radius:var(--mq-r);padding:8px 12px;margin-top:8px;background:var(--mq-bg);box-shadow:var(--mq-shadow-sm)}
+  #mdqt-panel .card.edit{border-color:var(--mq-accent);background:var(--mq-edit);box-shadow:0 0 0 3px var(--mq-ring)}
+  #mdqt-panel .card .meta{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--mq-muted2);align-items:center}
   #mdqt-panel .card .meta b{color:var(--mq-fg)}
-  #mdqt-panel .card .txt{margin-top:4px;overflow-x:auto;contain:content}
+  #mdqt-panel .card .txt{margin-top:6px;overflow-x:auto;contain:content}
   #mdqt-panel .card .txt p,#mdqt-panel .rte p{margin:2px 0}
   #mdqt-panel .card .txt ul,#mdqt-panel .card .txt ol,#mdqt-panel .rte ul,#mdqt-panel .rte ol{margin:2px 0;padding-left:26px}
   #mdqt-panel .card .txt li,#mdqt-panel .rte li{margin:1px 0}
-  #mdqt-panel .tb .sep{display:inline-block;width:1px;height:18px;background:var(--mq-border);margin:0 3px;vertical-align:middle}
-  #mdqt-panel .head{background:var(--mq-soft);border-radius:6px;padding:10px}
-  #mdqt-panel .head h3{margin:0;font-size:15px;white-space:nowrap}
-  #mdqt-panel .head .hrow1{display:flex;gap:8px;align-items:center}
-  #mdqt-panel .head .hrow1 input{font-weight:600;font-size:14px}
+  #mdqt-panel .card .meta[data-ref=cHead]{cursor:pointer}
+  #mdqt-panel .card .tog::before{content:'▾';color:var(--mq-accent);font-size:11px}
+  #mdqt-panel .card.collapsed .tog::before{content:'▸'}
+  #mdqt-panel .card .prev{display:none;color:var(--mq-muted);font-style:italic;flex:1 1 0;min-width:0;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:4px}
+  #mdqt-panel .card.collapsed .prev{display:block}
+  #mdqt-panel .card.collapsed .txt,#mdqt-panel .card.collapsed .mailinfo{display:none !important}
+  #mdqt-panel details summary{cursor:pointer;color:var(--mq-accent-fg);font-weight:600;margin-top:4px;padding:2px 0;list-style-position:inside}
+  #mdqt-panel details summary:hover{color:var(--mq-accent)}
+  #mdqt-panel details[open]>summary{margin-bottom:6px}
+
+  /* ---------- Ticket-Kopf ---------- */
+  #mdqt-panel .head{background:var(--mq-soft);border:1px solid var(--mq-border);border-radius:var(--mq-r);padding:10px 12px}
+  #mdqt-panel .head h3{margin:0;font-size:16px;white-space:nowrap;color:var(--mq-accent-fg);font-variant-numeric:tabular-nums}
+  #mdqt-panel .head .hrow1{display:flex;gap:10px;align-items:center}
+  #mdqt-panel .head .hrow1 input{font-weight:600;font-size:14px;min-height:32px}
   #mdqt-panel .head .hgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:0 8px;margin-top:2px}
   #mdqt-panel .head .hgrid .wide{grid-column:span 2}
   #mdqt-panel .head .hbar{margin-top:8px;align-items:center}
-  #mdqt-panel .sug{position:relative}#mdqt-panel .sug .results{position:absolute;left:0;right:0;top:100%;z-index:6}
-  #mdqt-panel .chg{outline:2px solid #ffb300 !important;outline-offset:-1px}
-  #mdqt-panel label.chk.chg{outline-offset:2px;border-radius:3px}
-  #mdqt-panel .btabs{display:flex;align-items:center;gap:2px;margin-top:14px;border-bottom:2px solid var(--mq-border)}
-  #mdqt-panel .btabs button[data-b]{background:none;border:none;border-bottom:3px solid transparent;margin-bottom:-2px;padding:6px 12px;cursor:pointer;font:600 13px inherit;font-family:inherit;color:var(--mq-muted2)}
-  #mdqt-panel .btabs button[data-b].on{color:var(--mq-accent-fg);border-bottom-color:#00897b}
+  #mdqt-panel .sug{position:relative}#mdqt-panel .sug .results{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:6}
+  #mdqt-panel .chg{outline:2px solid var(--mq-amber) !important;outline-offset:-1px;background:var(--mq-unread) !important}
+  #mdqt-panel label.chk.chg{outline-offset:2px;border-radius:4px}
+
+  /* ---------- Unter-Reiter (Kommentare / Verlauf) ---------- */
+  #mdqt-panel .btabs{display:flex;align-items:center;gap:4px;margin-top:12px;border-bottom:1px solid var(--mq-border)}
+  #mdqt-panel .btabs button[data-b]{background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;padding:6px 10px;cursor:pointer;
+    font:600 13px/1.2 var(--mq-font);color:var(--mq-muted2);transition:color .12s,border-color .12s}
+  #mdqt-panel .btabs button[data-b]:hover{color:var(--mq-fg)}
+  #mdqt-panel .btabs button[data-b].on{color:var(--mq-accent-fg);border-bottom-color:var(--mq-accent)}
   #mdqt-panel .hist td{font-size:12px}#mdqt-panel .hist td.w{white-space:nowrap;color:var(--mq-muted2)}
-  #mdqt-panel .hist .src{font-size:10px;padding:0 4px;border-radius:3px;background:var(--mq-tag);color:var(--mq-muted2);margin-left:4px}
+  #mdqt-panel .hist .src{font-size:10px;padding:1px 5px;border-radius:4px;background:var(--mq-tag);color:var(--mq-muted2);margin-left:4px}
   #mdqt-panel .hist tr.chgrow td{background:var(--mq-soft)}
+
+  /* ---------- Vorschlagslisten ---------- */
   #mdqt-panel .inl{display:inline-flex;gap:4px;align-items:center}#mdqt-panel .inl input{width:64px !important}
   #mdqt-panel .sums{font-size:12px;color:var(--mq-muted2)}
-  #mdqt-panel .results{border:1px solid var(--mq-border);border-radius:4px;max-height:180px;overflow:auto;margin-top:2px;background:var(--mq-bg)}
-  #mdqt-panel .results div{padding:5px 8px;cursor:pointer;border-bottom:1px solid var(--mq-line)}
-  #mdqt-panel .results div:hover{background:var(--mq-accent-soft)}
-  #mdqt-panel .tag{display:inline-block;background:var(--mq-tag);border-radius:3px;padding:0 5px;font-size:11px;color:var(--mq-muted2)}
-  #mdqt-panel .tag.abr{background:var(--mq-warn-bg);color:#e65100}
-  #mdqt-panel .tag.onsite{background:#e3f2fd;color:#1565c0}#mdqt-panel.dark .tag.onsite{background:#1b2a3a;color:#90caf9}
-  #mdqt-panel details summary{cursor:pointer;color:var(--mq-accent-fg);font-weight:600;margin-top:6px}
+  #mdqt-panel .results{border:1px solid var(--mq-border);border-radius:var(--mq-r);max-height:220px;overflow:auto;margin-top:4px;background:var(--mq-bg);
+    box-shadow:0 12px 24px -8px rgba(15,23,42,.2);padding:4px}
+  #mdqt-panel .results div{padding:6px 9px;cursor:pointer;border-radius:var(--mq-r-sm)}
+  #mdqt-panel .results div:hover{background:var(--mq-accent-soft);color:var(--mq-accent-fg)}
+
+  /* ---------- Etiketten ---------- */
+  #mdqt-panel .tag{display:inline-block;background:var(--mq-tag);border-radius:999px;padding:1px 8px;font-size:11px;font-weight:500;color:var(--mq-muted2)}
+  #mdqt-panel .tag.abr{background:var(--mq-warn-bg);color:var(--mq-warn)}
+  #mdqt-panel .tag.onsite{background:#e0f2fe;color:#0369a1}#mdqt-panel.dark .tag.onsite{background:#0c2a3d;color:#7dd3fc}
+  #mdqt-panel a{color:var(--mq-link)}
   #mdqt-panel a.ic{text-decoration:none;display:inline-block}
-  #mdqt-panel tr.r td.l{padding:0}
-  #mdqt-panel a.rl{display:block;padding:4px 6px;color:inherit;text-decoration:none;min-height:1em}
   #mdqt-panel a.ibx{color:inherit;text-decoration:none}
-  #mdqt-panel a.btn{text-decoration:none;display:inline-block}
-  #mdqt-panel .hdr .ic{background:none;border:none;color:#fff;font-size:16px;padding:6px 8px;cursor:pointer;opacity:.9}
+
+  /* ---------- Fenster verschieben / Größe / Vollbild ---------- */
   #mdqt-panel .rz{position:absolute;z-index:2}
   #mdqt-panel .rz-l{left:0;top:0;bottom:0;width:6px;cursor:ew-resize}
   #mdqt-panel .rz-b{left:0;right:0;bottom:0;height:6px;cursor:ns-resize}
   #mdqt-panel .rz-bl{left:0;bottom:0;width:14px;height:14px;cursor:nesw-resize}
   #mdqt-panel .rz-r{right:0;top:0;bottom:0;width:6px;cursor:ew-resize}
   #mdqt-panel .rz-br{right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize}
-  #mdqt-panel.full,#mdqt-panel.app{top:0 !important;right:0 !important;left:0 !important;bottom:0 !important;width:auto !important;height:auto !important;border-radius:0}
+  #mdqt-panel.full,#mdqt-panel.app{top:0 !important;right:0 !important;left:0 !important;bottom:0 !important;width:auto !important;height:auto !important;border-radius:0;border:none}
   #mdqt-panel.full .rz,#mdqt-panel.app .rz{display:none}
   #mdqt-panel.app{z-index:2147483000}
   #mdqt-panel.app .hdr [data-ref=close],#mdqt-panel.app .hdr [data-ref=full]{display:none}
-  #mdqt-panel .tb{display:flex;gap:2px;margin-bottom:2px}
-  #mdqt-panel .tb{flex-wrap:wrap}
-  #mdqt-panel .tb button{border:1px solid var(--mq-border);background:var(--mq-btn);border-radius:3px;padding:1px 7px;cursor:pointer;font-size:12px;color:var(--mq-fg)}
-  #mdqt-panel .tb select,#mdqt-panel .tb input[type=number]{width:auto !important;padding:1px 4px !important;font-size:12px !important}
+  #mdqt-panel.full .body>section,#mdqt-panel.app .body>section{max-width:1400px;margin-left:auto;margin-right:auto}
+
+  /* ---------- Texteditor ---------- */
+  #mdqt-panel .tb{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin-bottom:4px;padding:3px;background:var(--mq-soft);border:1px solid var(--mq-border);border-radius:var(--mq-r)}
+  #mdqt-panel .tb button{border:1px solid transparent;background:transparent;border-radius:var(--mq-r-sm);padding:2px 7px;min-height:24px;cursor:pointer;font:12px/1.2 var(--mq-font);color:var(--mq-fg);
+    transition:background .1s,border-color .1s}
+  #mdqt-panel .tb button:hover{background:var(--mq-btn);border-color:var(--mq-border2)}
+  #mdqt-panel .tb button.on{background:var(--mq-accent-soft);border-color:var(--mq-accent);color:var(--mq-accent-fg)}
+  #mdqt-panel .tb select,#mdqt-panel .tb input[type=number]{width:auto !important;min-height:24px;padding:0 4px !important;font-size:12px !important}
+  #mdqt-panel .tb [data-ref=fFont]{max-width:120px}#mdqt-panel .tb [data-ref=tbSel]{max-width:140px}
+  #mdqt-panel .tb .sep{display:inline-block;width:1px;height:18px;background:var(--mq-border2);margin:0 4px;vertical-align:middle}
   #mdqt-panel .rte table td,#mdqt-panel .rte table th{border:1px solid #999}
   #mdqt-panel .rte img{max-width:100%}
   #mdqt-panel .txt img{max-width:100%}
-  #mdqt-panel .drop{border:2px dashed #b2dfdb;border-radius:6px;padding:8px;text-align:center;color:#00796b;margin-top:6px;cursor:pointer}
-  #mdqt-panel .drop.over{background:var(--mq-accent-soft)}
-  #mdqt-panel .files{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
-  #mdqt-panel .file{background:var(--mq-tag);border-radius:3px;padding:1px 6px;font-size:12px}
-  #mdqt-panel .file b{cursor:pointer;color:#c62828;margin-left:4px}
-  #mdqt-panel .mailbox{border-left:3px solid #1e88e5;padding:4px 0 4px 10px;margin-top:8px;background:var(--mq-mail-bg)}
-  #mdqt-panel .warnbox{background:var(--mq-warn-bg);border:1px solid #ffb74d;border-radius:4px;padding:6px 8px;margin-top:6px;font-size:12px}
-  #mdqt-panel .doc{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--mq-line)}
+
+  /* ---------- Dateien / Anhänge / Mail ---------- */
+  #mdqt-panel .drop{border:2px dashed var(--mq-border2);border-radius:var(--mq-r);padding:8px;text-align:center;color:var(--mq-muted2);margin-top:6px;cursor:pointer;
+    transition:background .12s,border-color .12s,color .12s}
+  #mdqt-panel .drop:hover,#mdqt-panel .drop.over{background:var(--mq-accent-soft);border-color:var(--mq-accent);color:var(--mq-accent-fg)}
+  #mdqt-panel .files{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  #mdqt-panel .file{background:var(--mq-tag);border-radius:999px;padding:2px 10px;font-size:12px}
+  #mdqt-panel .file b{cursor:pointer;color:var(--mq-danger);margin-left:4px}
+  #mdqt-panel .mailbox{border-left:3px solid #3b82f6;border-radius:0 var(--mq-r) var(--mq-r) 0;padding:6px 0 6px 12px;margin-top:8px;background:var(--mq-mail-bg)}
+  #mdqt-panel .doc{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--mq-line)}
+  #mdqt-panel .doc:last-child{border-bottom:none}
   #mdqt-panel .doc .nm{flex:1;word-break:break-all}
-  #mdqt-panel .mailinfo{font-size:12px;color:var(--mq-link2);margin-top:3px}
-  #mdqt-panel .kpis{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
-  #mdqt-panel .kpi{flex:1 1 140px;background:var(--mq-soft);border-radius:6px;padding:8px 10px}
-  #mdqt-panel .kpi .kl{font-size:11px;color:var(--mq-muted)}#mdqt-panel .kpi .kv{font-size:17px;font-weight:700}
+  #mdqt-panel .mailinfo{font-size:12px;color:var(--mq-link2);margin-top:4px}
+
+  /* ---------- Zeiten ---------- */
+  #mdqt-panel .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:8px 0}
+  #mdqt-panel .kpi{background:var(--mq-soft);border:1px solid var(--mq-border);border-radius:var(--mq-r);padding:7px 12px}
+  #mdqt-panel .kpi .kl{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--mq-muted)}
+  #mdqt-panel .kpi .kv{font-size:17px;font-weight:700;letter-spacing:-.01em;margin-top:2px;font-variant-numeric:tabular-nums}
   #mdqt-panel .kpi .ks{font-size:11px;color:var(--mq-muted);margin-top:2px}
-  #mdqt-panel .ztbl tr.zday td{border-top:2px solid var(--mq-border);padding-top:7px;background:var(--mq-soft)}
-  #mdqt-panel .ztbl tr.z-red td{background:#fde2e2}#mdqt-panel .ztbl tr.z-yellow td{background:#fff4cc}#mdqt-panel .ztbl tr.z-green td{background:#dff3e3}
+  #mdqt-panel .ztbl tr.zday td{border-top:1px solid var(--mq-border2);padding-top:8px;background:var(--mq-soft)}
+  #mdqt-panel .ztbl tr.z-red td{background:#fee2e2}#mdqt-panel .ztbl tr.z-yellow td{background:#fef9c3}#mdqt-panel .ztbl tr.z-green td{background:#dcfce7}
   #mdqt-panel .ztbl tr.z-free td{background:var(--mq-tag)}
-  #mdqt-panel.dark .ztbl tr.z-red td{background:#4a2326}#mdqt-panel.dark .ztbl tr.z-yellow td{background:#4a4120}#mdqt-panel.dark .ztbl tr.z-green td{background:#203d29}
+  #mdqt-panel.dark .ztbl tr.z-red td{background:#3f1d20}#mdqt-panel.dark .ztbl tr.z-yellow td{background:#3a3417}#mdqt-panel.dark .ztbl tr.z-green td{background:#16331f}
   #mdqt-panel .ztbl tr.z-we td{opacity:.85}
   #mdqt-panel .ztbl tr.zgrp td{font-size:12px;color:var(--mq-muted2);font-weight:600}
   #mdqt-panel .ztbl tr.zi td{font-size:12px;border-bottom:none}
-  #mdqt-panel td.neg{color:#c62828;font-weight:700}#mdqt-panel td.pos{color:#ef6c00;font-weight:700}
-  #mdqt-panel.dark td.neg{color:#ef9a9a}#mdqt-panel.dark td.pos{color:#ffcc80}
-  #mdqt-panel .badge{display:inline-block;min-width:16px;padding:0 4px;border-radius:8px;background:#ffb300;color:var(--mq-fg);font-size:11px;line-height:16px;text-align:center}
+  #mdqt-panel td.neg{color:var(--mq-danger);font-weight:700}#mdqt-panel td.pos{color:var(--mq-warn);font-weight:700}
+  #mdqt-panel.dark td.neg{color:#fca5a5}#mdqt-panel.dark td.pos{color:#fdba74}
+
+  /* ---------- Zähler (Inbox, Entwürfe) ---------- */
+  #mdqt-panel .badge{display:inline-block;min-width:18px;padding:0 5px;border-radius:999px;background:var(--mq-amber);color:#1f2937;font-size:11px;font-weight:700;line-height:18px;text-align:center}
   #mdqt-panel .badge:empty{display:none}
-  #mdqt-fab .badge{display:inline-block;margin-left:6px;min-width:18px;padding:0 5px;border-radius:9px;background:#ffb300;color:var(--mq-fg);font-size:11px;line-height:18px}
+  #mdqt-fab .badge{display:inline-block;margin-left:2px;min-width:18px;padding:0 5px;border-radius:999px;background:#fbbf24;color:#1f2937;font-size:11px;font-weight:700;line-height:18px;text-align:center}
   #mdqt-fab .badge:empty{display:none}
-  #mdqt-panel .ibx{display:flex;gap:10px;padding:7px 6px;border-bottom:1px solid var(--mq-line);cursor:pointer;align-items:flex-start}
+
+  /* ---------- Inbox ---------- */
+  #mdqt-panel .ibx{display:flex;gap:12px;padding:6px 8px;border-bottom:1px solid var(--mq-line);cursor:pointer;align-items:flex-start;border-radius:var(--mq-r);transition:background .08s}
   #mdqt-panel .ibx:hover{background:var(--mq-hover)}
-  #mdqt-panel .ibx.unread{background:var(--mq-unread)}
+  #mdqt-panel .ibx.unread{background:var(--mq-unread);box-shadow:inset 3px 0 0 var(--mq-amber)}
   #mdqt-panel .ibx.unread .tt{font-weight:700}
   #mdqt-panel .ibx .ty{flex:0 0 150px;font-size:12px;color:var(--mq-muted2)}
   #mdqt-panel .ibx .bd{flex:1;min-width:0}
   #mdqt-panel .ibx .sn{color:var(--mq-muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #mdqt-panel .ibx .dt{flex:0 0 auto;font-size:12px;color:var(--mq-muted);white-space:nowrap}
-  #mdqt-panel .card .meta[data-ref=cHead]{cursor:pointer}
-  #mdqt-panel .card .tog::before{content:'▾';color:#00897b;font-size:11px}
-  #mdqt-panel .card.collapsed .tog::before{content:'▸'}
-  #mdqt-panel .card .prev{display:none;color:var(--mq-muted);font-style:italic;flex:1 1 0;min-width:0;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:4px}
-  #mdqt-panel .card.collapsed .prev{display:block}
-  #mdqt-panel .card.collapsed .txt,#mdqt-panel .card.collapsed .mailinfo{display:none !important}
 
-  #mdqt-panel{--mq-bg:#fff;--mq-fg:#222;--mq-input:#fff;--mq-soft:#f5f5f5;--mq-border:#d0d0d0;--mq-line:#eee;--mq-muted:#777;--mq-muted2:#555;
-    --mq-accent-soft:#e0f2f1;--mq-accent-fg:#00695c;--mq-edit:#f4fbfa;--mq-btn:#fafafa;--mq-warn-bg:#fff3e0;--mq-mail-bg:#f5f9ff;--mq-unread:#fffdf4;
-    --mq-hover:#f1f8f7;--mq-tag:#eceff1;--mq-link2:#1565c0;--mq-link:#00796b;--mq-scheme:light}
-  #mdqt-panel.dark{--mq-bg:#1f2124;--mq-fg:#e4e6e8;--mq-input:#2a2d31;--mq-soft:#2a2c30;--mq-border:#4a4e54;--mq-line:#33363b;--mq-muted:#9aa0a6;--mq-muted2:#b6bcc2;
-    --mq-accent-soft:#1d3a37;--mq-accent-fg:#80cbc4;--mq-edit:#1c2b2a;--mq-btn:#2d3034;--mq-warn-bg:#3a2f1d;--mq-mail-bg:#1b2533;--mq-unread:#2a2920;
-    --mq-hover:#25302f;--mq-tag:#353a40;--mq-link2:#90caf9;--mq-link:#80cbc4;--mq-scheme:dark}
-  #mdqt-panel a{color:var(--mq-link)}
-  #mdqt-panel table{color:var(--mq-fg);font-size:inherit}
   /* Mail-/Kommentarinhalte im Dark Mode auf hellem „Papier“, damit fremde Textfarben lesbar bleiben */
-  #mdqt-panel.dark .rte,#mdqt-panel.dark .card .txt{background:#f4f4f4 !important;color:#222 !important;border-radius:4px}
-  #mdqt-panel.dark .card .txt{padding:6px 8px}
-  #mdqt-panel.dark .card .txt a,#mdqt-panel.dark .rte a{color:#00695c}
-  #mdqt-panel.dark .card .txt .hint{color:#666}
+  #mdqt-panel.dark .rte,#mdqt-panel.dark .card .txt{background:#f5f5f4 !important;color:#1c1917 !important;border-radius:var(--mq-r)}
+  #mdqt-panel.dark .card .txt{padding:8px 10px}
+  #mdqt-panel.dark .card .txt a,#mdqt-panel.dark .rte a{color:#0f766e}
+  #mdqt-panel.dark .card .txt .hint{color:#57534e}
   #mdqt-panel.dark .tb button,#mdqt-panel.dark .tb select{color:var(--mq-fg)}
-  #mdqt-panel.dark .chip.sel{color:#fff}
-  #mdqt-panel.dark input[type=checkbox]{accent-color:#26a69a}
   #mdqt-panel.dark .flag,#mdqt-panel.dark .dot{box-shadow:0 0 0 1px #0006}
+
+  /* ---------- Schmale Fenster ---------- */
+  @media (max-width:640px){
+    #mdqt-panel .body{padding:12px}
+    #mdqt-panel th{top:-12px}
+    #mdqt-panel .hdr .brand span{display:none}
+    #mdqt-panel .ibx .ty{flex-basis:100px}
+  }
+  @media (prefers-reduced-motion:reduce){#mdqt-panel *,#mdqt-panel,#mdqt-fab{animation:none !important;transition:none !important}}
   `;
   const styleEl = document.createElement('style'); styleEl.textContent = css; document.head.appendChild(styleEl);
 
@@ -1454,6 +1649,8 @@
   panel.id = 'mdqt-panel';
   panel.innerHTML = `
     <div class="hdr">
+      <span class="brand" title="Kopfzeile ziehen = verschieben · Doppelklick = Vollbild"><i>⚡</i><span>Werkbank</span></span>
+      <nav class="tabs">
       <button class="tab" data-tab="inbox">📥 Inbox <span class="badge" data-ref="bInbox"></span></button>
       <button class="tab active" data-tab="search">🔎 Suche</button>
       <button class="tab" data-tab="ticket">🎫 Ticket</button>
@@ -1462,6 +1659,7 @@
       <button class="tab" data-tab="drafts">📝 Entwürfe <span class="badge" data-ref="bDrafts"></span></button>
       <button class="tab" data-tab="log">📜 Protokoll</button>
       <button class="tab" data-tab="settings" title="Einstellungen: Signatur, Textbausteine">⚙</button>
+      </nav>
       <span class="sp"></span>
       <button class="ic" data-ref="theme" title="Hell / Dunkel umschalten">🌙</button>
       <a class="ic" data-ref="app" href="#" title="Werkbank als eigene Seite in neuem Tab öffnen">↗</a>
@@ -1474,37 +1672,86 @@
         <button class="btn sm" data-ref="teamHintGo">Zu den Einstellungen</button> <button class="btn sm sec" data-ref="teamHintNo">Später</button></div>
       <!-- SUCHE -->
       <section data-tab="search" class="active">
-        <div class="row" style="align-items:center">
-          <span class="hint">Vorlagen:</span><div class="chips" data-ref="sTpl" style="flex:1;margin:0"></div>
-          <span data-ref="sTplNew" style="display:none"><input type="text" data-ref="sTplName" placeholder="Name der Vorlage" style="width:200px"> <button class="btn sm" data-ref="sTplOk">Speichern</button></span>
-          <button class="btn sm sec" data-ref="sTplAdd" title="Aktuelle Filter (Bearbeiter, Kunden, Queues, Status, Zeitraum, Freitext) als Vorlage speichern">＋ Als Vorlage</button>
-        </div>
-        <div class="row">
-          <div class="c"><label class="l">Freitext (Betreff oder Ticket-ID)</label><input type="text" data-ref="sText" placeholder="z. B. Exchange oder Ticket-Nr."></div>
+        <div class="row bar">
+          <div class="c"><input type="text" data-ref="sText" placeholder="🔎 Betreff oder Ticket-Nr. …" title="Freitext: Betreff oder Ticket-ID"></div>
+          <div class="dd r" data-dd="tpl">
+            <button type="button" class="btn sec ddb" title="Gespeicherte Filter-Vorlagen">☆ Vorlagen <span class="car">▾</span></button>
+            <div class="ddm">
+              <div class="ddh">Vorlage anwenden</div>
+              <div class="chips list" data-ref="sTpl"></div>
+              <div class="ddsep"></div>
+              <div data-ref="sTplNew" style="display:none;margin-bottom:6px"><div class="row" style="align-items:center;gap:6px"><div class="c"><input type="text" data-ref="sTplName" placeholder="Name der Vorlage"></div><button class="btn sm" data-ref="sTplOk">Speichern</button></div></div>
+              <button class="btn sm sec" data-ref="sTplAdd" title="Aktuelle Filter (Bearbeiter, Kunden, Queues, Status, Zeitraum, Freitext) als Vorlage speichern">＋ Aktuelle Filter als Vorlage</button>
+            </div>
+          </div>
+          <button class="btn sec" data-ref="sReset" title="Zurücksetzen: Bearbeiter Ich · nur offene · alle Kunden · Freitext und Zeitraum leeren">↺</button>
+          <button class="btn" data-ref="sGo">Suchen</button>
         </div>
         <div class="row" style="align-items:flex-start">
-          <div class="c"><label class="l">Bearbeiter <span class="hint">(leer = alle · „ohne“ = nicht zugewiesen)</span></label><div data-ref="sUsers"></div></div>
-          <div class="c"><label class="l">Kunden <span class="hint">(suchen oder unten wählen – leer = alle)</span></label><div data-ref="sCusts"></div></div>
-          <div class="c"><label class="l">Queues <span class="hint">(leer = alle · „ohne“ = keine Queue)</span></label><div data-ref="sQueues"></div></div>
+          <div class="c"><label class="l" title="leer = alle · „ohne“ = nicht zugewiesen">Bearbeiter</label><div data-ref="sUsers"></div></div>
+          <div class="c"><label class="l" title="suchen oder über „Kunden-Übersicht“ wählen – leer = alle">Kunden</label><div data-ref="sCusts"></div></div>
+          <div class="c"><label class="l" title="leer = alle · „ohne“ = keine Queue">Queues</label><div data-ref="sQueues"></div></div>
         </div>
-        <label class="l" style="display:flex;align-items:center;gap:8px">Kunden in den aktuellen Filtern <span class="hint" data-ref="sFacetHint" style="flex:1"></span>
-          <select data-ref="sFacetSort" style="width:auto;font-size:12px;padding:2px 4px" title="Reihenfolge der Kunden">
-            <option value="n-desc">Anzahl Tickets ↓</option><option value="n-asc">Anzahl Tickets ↑</option>
-            <option value="name-asc">Name A–Z</option><option value="name-desc">Name Z–A</option></select></label>
-        <div class="chips" data-ref="sFacets"><span class="hint">…</span></div>
-        <label class="l">Status <span class="hint">(nichts gewählt = alle)</span>
-          <button class="btn sm sec" data-ref="sOpen">nur offene</button> <button class="btn sm sec" data-ref="sAll">alle</button></label>
-        <div class="chips" data-ref="sStatus"></div>
-        <div class="row">
-          <div class="c s" style="flex-basis:190px"><label class="l">Zeitraum bezieht sich auf</label>
-            <select data-ref="sDateMode"><option value="none">– kein Zeitraum –</option><option value="created">Anlagedatum</option><option value="booked">Gebuchte Zeit</option></select></div>
-          <div class="c s" style="flex-basis:150px"><label class="l">von</label><input type="date" data-ref="sFrom"></div>
-          <div class="c s" style="flex-basis:150px"><label class="l">bis</label><input type="date" data-ref="sTo"></div>
-          <div class="c"><div class="chips" data-ref="sRanges"></div></div>
-          <div><button class="btn sec" data-ref="sReset" title="Bearbeiter: Ich · nur offene · alle Kunden · Freitext und Zeitraum leeren">↺ Zurücksetzen</button>
-            <button class="btn" data-ref="sGo">Suchen</button></div>
+        <div class="row fbar">
+          <div class="dd" data-dd="status">
+            <button type="button" class="btn sm sec ddb">Status: <b data-ref="ddStatus">–</b> <span class="car">▾</span></button>
+            <div class="ddm">
+              <div class="row" style="gap:6px;margin-bottom:6px;align-items:center"><span class="ddh" style="flex:1;margin:0">Status</span><button class="btn sm sec" data-ref="sOpen">nur offene</button><button class="btn sm sec" data-ref="sAll">alle</button></div>
+              <div class="chips list check" data-ref="sStatus"></div>
+            </div>
+          </div>
+          <div class="dd" data-dd="range">
+            <button type="button" class="btn sm sec ddb">Zeitraum: <b data-ref="ddRange">–</b> <span class="car">▾</span></button>
+            <div class="ddm" style="width:320px">
+              <label class="l" style="margin-top:0">Bezieht sich auf</label>
+              <select data-ref="sDateMode"><option value="none">– kein Zeitraum –</option><option value="created">Anlagedatum</option><option value="booked">Gebuchte Zeit</option></select>
+              <div class="row" style="gap:6px"><div class="c"><label class="l">von</label><input type="date" data-ref="sFrom"></div><div class="c"><label class="l">bis</label><input type="date" data-ref="sTo"></div></div>
+              <div class="chips" data-ref="sRanges" style="margin-top:8px"></div>
+            </div>
+          </div>
+          <div class="dd" data-dd="topic">
+            <button type="button" class="btn sm sec ddb" title="Nach Stichwörtern im Betreff filtern (z. B. Wartung)">Thema: <b data-ref="ddTopic">alle</b> <span class="car">▾</span></button>
+            <div class="ddm" style="min-width:260px">
+              <div class="row" style="gap:6px;margin-bottom:6px;align-items:center"><span class="ddh" style="flex:1;margin:0">Thema (Betreff-Stichwörter)</span><button class="btn sm sec" data-ref="sTopicAll">alle</button></div>
+              <div class="chips list check" data-ref="sTopics"></div>
+              <div class="ddsep"></div>
+              <button class="btn sm sec mi" data-ref="sTopicEdit">✎ Themen und Stichwörter bearbeiten …</button>
+            </div>
+          </div>
+          <div class="dd" data-dd="more">
+            <button type="button" class="btn sm sec ddb" title="Priorität, Betreff ausschließen">Mehr Filter <b data-ref="ddMore"></b> <span class="car">▾</span></button>
+            <div class="ddm" style="width:300px">
+              <div class="row" style="gap:6px;margin-bottom:4px;align-items:center"><span class="ddh" style="flex:1;margin:0">Priorität</span><button class="btn sm sec" data-ref="sPrioAll">alle</button></div>
+              <div class="chips list check" data-ref="sPrios"></div>
+              <div class="ddsep"></div>
+              <label class="l" style="margin-top:0">Betreff enthält nicht</label>
+              <input type="text" data-ref="sNotText" placeholder="z. B. Test; Rechnung" title="Tickets ausblenden, deren Betreff eines dieser Wörter enthält (mehrere mit ; trennen)">
+            </div>
+          </div>
+          <div class="dd" data-dd="facets">
+            <button type="button" class="btn sm sec ddb" title="Kunden, die in den aktuellen Filtern vorkommen – Klick wählt aus/ab">Kunden-Übersicht <b data-ref="ddFacets"></b> <span class="car">▾</span></button>
+            <div class="ddm" style="width:460px">
+              <div class="row" style="align-items:center;gap:6px;margin-bottom:6px"><span class="hint" data-ref="sFacetHint" style="flex:1"></span>
+                <select data-ref="sFacetSort" style="width:auto" title="Reihenfolge der Kunden">
+                  <option value="n-desc">Anzahl ↓</option><option value="n-asc">Anzahl ↑</option>
+                  <option value="name-asc">Name A–Z</option><option value="name-desc">Name Z–A</option></select></div>
+              <div class="chips" data-ref="sFacets"><span class="hint">…</span></div>
+            </div>
+          </div>
+          <span style="flex:1"></span>
+          <div class="dd r" data-dd="view">
+            <button type="button" class="btn sm sec ddb" title="Gruppieren und sortieren">Ansicht: <b data-ref="ddView"></b> <span class="car">▾</span></button>
+            <div class="ddm" style="width:290px">
+              <label class="l" style="margin-top:0">Gruppieren nach</label>
+              <select data-ref="sGroupBy"><option value="none">– keine Gruppen –</option><option value="prio">Priorität</option><option value="topic">Thema (Betreff-Stichwörter)</option>
+                <option value="status">Status</option><option value="cust">Kunde</option><option value="user">Bearbeiter</option></select>
+              <label class="l">Sortieren nach</label>
+              <div class="row" style="gap:6px;flex-wrap:nowrap"><div class="c"><select data-ref="sSortKey"></select></div>
+                <button type="button" class="btn sec" data-ref="sSortDir" title="Richtung umkehren">↓</button></div>
+              <div class="hint" style="margin-top:8px">Sortiert wird innerhalb der Gruppen. Spaltenköpfe sind ebenfalls klickbar; Klick auf eine Gruppe klappt sie ein und aus.</div>
+            </div>
+          </div>
         </div>
-        <label class="chk"><input type="checkbox" data-ref="sGroup"> Nach Priorität gruppieren <span class="hint">(Sortierung gilt innerhalb der Gruppen)</span></label>
         <div class="msg" data-ref="sMsg"></div>
         <div data-ref="sResults"></div>
       </section>
@@ -1543,20 +1790,30 @@
 
       <!-- ZEITEN -->
       <section data-tab="times">
-        <div class="row" style="align-items:flex-start">
-          <div class="c" style="max-width:340px"><label class="l">Bearbeiter</label><div data-ref="zUsers"></div></div>
-          <div class="c s" style="flex-basis:150px"><label class="l">von</label><input type="date" data-ref="zFrom"></div>
-          <div class="c s" style="flex-basis:150px"><label class="l">bis</label><input type="date" data-ref="zTo"></div>
-          <div class="c"><label class="l">&nbsp;</label><div class="chips" data-ref="zRanges"></div></div>
-          <div><label class="l">&nbsp;</label><button class="btn" data-ref="zGo">Laden</button></div>
-        </div>
-        <div class="row" style="align-items:center;margin-top:4px">
-          <label class="chk"><input type="checkbox" data-ref="zColor"> Arbeitstage farbig</label>
-          <label class="chk">grün ab <input type="text" data-ref="zLow" style="width:44px"> h</label>
-          <label class="chk"><input type="checkbox" data-ref="zWeekend"> Wochenenden ohne Buchung ausblenden</label>
-          <label class="chk"><input type="checkbox" data-ref="zDetails"> Einzelbuchungen anzeigen</label>
+        <div class="row" style="align-items:flex-end">
+          <div class="c" style="max-width:320px"><label class="l">Bearbeiter</label><div data-ref="zUsers"></div></div>
+          <div class="c s" style="flex-basis:140px"><label class="l">von</label><input type="date" data-ref="zFrom"></div>
+          <div class="c s" style="flex-basis:140px"><label class="l">bis</label><input type="date" data-ref="zTo"></div>
+          <div><label class="l" data-ref="zWk" style="text-align:center">&nbsp;</label>
+            <div class="wk"><button class="btn sec" data-ref="zPrev" title="Eine Woche zurück">‹</button><button class="btn sec" data-ref="zNow" title="Aktuelle Woche">Heute</button><button class="btn sec" data-ref="zNext" title="Eine Woche vor">›</button></div></div>
+          <div class="dd" data-dd="zrange">
+            <button type="button" class="btn sec ddb" title="Schnellwahl Zeitraum">Zeitraum <span class="car">▾</span></button>
+            <div class="ddm"><div class="ddh">Zeitraum</div><div class="chips list" data-ref="zRanges"></div></div>
+          </div>
+          <button class="btn" data-ref="zGo">Laden</button>
           <span style="flex:1"></span>
-          <button class="btn sm sec" data-ref="zCsv">⬇ CSV-Export</button>
+          <div class="dd r" data-dd="zview">
+            <button type="button" class="btn sec ddb">Ansicht <span class="car">▾</span></button>
+            <div class="ddm" style="width:300px">
+              <div class="ddh">Ansicht</div>
+              <label class="chk blk"><input type="checkbox" data-ref="zColor"> Arbeitstage farbig</label>
+              <label class="chk blk" style="padding-left:23px">grün ab <input type="text" data-ref="zLow" style="width:48px"> h</label>
+              <label class="chk blk"><input type="checkbox" data-ref="zWeekend"> Wochenenden ohne Buchung ausblenden</label>
+              <label class="chk blk"><input type="checkbox" data-ref="zDetails"> Einzelbuchungen anzeigen</label>
+              <div class="ddsep"></div>
+              <button class="btn sm sec" data-ref="zCsv">⬇ CSV-Export</button>
+            </div>
+          </div>
         </div>
         <details class="card" data-ref="zPDet"><summary>⚖ Personio-Abgleich <span class="hint" data-ref="zPInfo"></span></summary>
           <div class="row" style="align-items:center;margin-bottom:6px">
@@ -1576,16 +1833,17 @@
 
       <!-- INBOX -->
       <section data-tab="inbox">
-        <div class="row">
-          <div class="c"><div class="chips" data-ref="iTypes"></div></div>
-          <button class="btn sm sec" data-ref="iRefresh">↻ Aktualisieren</button>
-          <button class="btn sm sec" data-ref="iAllRead">✓ Alle als gelesen</button>
-        </div>
-        <div class="row" style="margin-top:6px">
-          <div class="c s" style="flex-basis:220px"><select data-ref="iCust"><option value="">Alle Kunden</option></select></div>
-          <div class="c s" style="flex-basis:160px"><select data-ref="iRange"><option value="1">Heute</option><option value="7" selected>Letzte 7 Tage</option><option value="14">Letzte 14 Tage</option><option value="30">Letzte 30 Tage</option></select></div>
-          <label class="chk"><input type="checkbox" data-ref="iUnread" checked> nur ungelesene</label>
+        <div class="row" style="align-items:center">
+          <div class="dd" data-dd="itypes">
+            <button type="button" class="btn sm sec ddb">Typen: <b data-ref="ddTypes">alle</b> <span class="car">▾</span></button>
+            <div class="ddm"><div class="ddh">Ereignisse anzeigen</div><div class="chips list check" data-ref="iTypes"></div></div>
+          </div>
+          <div class="c s" style="flex-basis:200px"><select data-ref="iCust"><option value="">Alle Kunden</option></select></div>
+          <div class="c s" style="flex-basis:150px"><select data-ref="iRange"><option value="1">Heute</option><option value="7" selected>Letzte 7 Tage</option><option value="14">Letzte 14 Tage</option><option value="30">Letzte 30 Tage</option></select></div>
+          <label class="chk" style="margin:0"><input type="checkbox" data-ref="iUnread" checked> nur ungelesene</label>
           <span class="hint" data-ref="iLast" style="flex:1;text-align:right"></span>
+          <button class="btn sm sec" data-ref="iRefresh" title="Aktualisieren">↻</button>
+          <button class="btn sm sec" data-ref="iAllRead">✓ Alle gelesen</button>
         </div>
         <div class="msg" data-ref="iMsg"></div>
         <div data-ref="iList"></div>
@@ -1599,20 +1857,27 @@
 
       <!-- EINSTELLUNGEN -->
       <section data-tab="settings">
-        <h3 style="margin:0 0 6px">Darstellung</h3>
+        <details class="card set" data-set="look"><summary>Darstellung</summary>
         <div class="row"><div class="c s" style="flex-basis:260px"><select data-ref="stTheme"><option value="auto">Automatisch (wie Windows/Browser)</option><option value="light">Hell</option><option value="dark">Dunkel</option></select></div></div>
-        <h3 style="margin:14px 0 6px">Signatur</h3>
+        </details>
+        <details class="card set" data-set="sig"><summary>Signatur &amp; Textbausteine</summary>
         <div class="hint">Wird bei „Als Mail senden“ automatisch angehängt (abschaltbar) und steht im Editor unter „✍ Signatur“ bereit. Einfügen aus Outlook inkl. Logo per Strg+V möglich.</div>
         <div class="rte" contenteditable="true" spellcheck="true" lang="de" data-ref="stSig" style="margin-top:6px;font-family:Arial;font-size:10pt"></div>
         <label class="chk"><input type="checkbox" data-ref="stAuto"> Signatur bei neuen Mails automatisch anhängen</label>
-        <h3 style="margin:14px 0 6px">Eigene Textbausteine</h3>
+        <h4>Eigene Textbausteine</h4>
         <div data-ref="stBlocks"></div>
         <button class="btn sm sec" data-ref="stAdd" style="margin-top:6px">＋ Baustein hinzufügen</button>
         <label class="chk" style="display:flex;margin-top:10px"><input type="checkbox" data-ref="stMd"> Textbausteine aus MultiData zusätzlich anbieten</label>
         <div style="margin-top:12px"><button class="btn" data-ref="stSave">Einstellungen speichern</button></div>
         <div class="msg" data-ref="stMsg"></div>
 
-        <h3 style="margin:18px 0 6px">Internes Zeiten-Ticket</h3>
+        </details>
+        <details class="card set" data-set="topics"><summary>Themen (Betreff-Stichwörter)</summary>
+        <div class="hint">Tickets, deren Betreff eines der Stichwörter enthält, gehören zum Thema – z. B. „Wartung“: <i>Wartungswoche; Wartung; Patchday</i>. Groß-/Kleinschreibung egal. In der Suche: Filter „Thema“ und Ansicht „Gruppieren nach Thema“. Passt ein Betreff zu mehreren Themen, zählt das obere. Änderungen werden sofort gespeichert.</div>
+        <div data-ref="stTopics" style="margin-top:6px"></div>
+        <button class="btn sm sec" data-ref="stTopicAdd" style="margin-top:6px">＋ Thema hinzufügen</button>
+        </details>
+        <details class="card set" data-set="intern"><summary>Internes Zeiten-Ticket</summary>
         <div class="hint">Monatliches internes Ticket für übrige Zeit (z. B. „Zeiten LE NOV 26“). Im Zeiten-Tab lässt sich der Rest eines Tages als Kommentar ohne Text darauf buchen – immer auf das Ticket des jeweiligen Monats.</div>
         <div class="row" style="margin-top:4px">
           <div class="c s" style="flex-basis:90px"><label class="l">Kürzel</label><input type="text" data-ref="itK" placeholder="z. B. LE"></div>
@@ -1628,13 +1893,15 @@
         <div class="hint" style="margin-top:4px">Neues Ticket: Firma wie oben, Priorität „Niedrig“, Status „Warten intern“, keine Benachrichtigungen, Bearbeiter = ich. Das Ticket des Vormonats wird dabei per QuickClose geschlossen.</div>
         <div class="msg" data-ref="itMsg"></div>
 
-        <h3 style="margin:18px 0 6px">Personio</h3>
+        </details>
+        <details class="card set" data-set="personio"><summary>Personio</summary>
         <div class="row" style="align-items:flex-end">
           <div class="c" style="flex-basis:340px"><label class="l">Personio-Adresse <span class="hint">für „⟳ Aus Personio holen“ im Zeiten-Tab</span></label><input type="text" data-ref="stPUrl" placeholder="${CFG.personioUrl}"></div>
         </div>
         <div class="msg" data-ref="stPMsg"></div>
 
-        <h3 style="margin:18px 0 6px">Team-Konfiguration (Abrechenbarkeit)</h3>
+        </details>
+        <details class="card set" data-set="team"><summary>Team-Konfiguration (Abrechenbarkeit)</summary>
         <div class="hint">Steuert nur den Vorschlag für die Checkbox „abrechenbar“ und die Gruppierung im Zeiten-Tab. Änderungen werden sofort gespeichert.</div>
         <div style="margin-top:8px"><b>Nicht abrechenbar</b> <span class="hint">– Kunden mit Servicevertrag/Pauschale</span></div>
         <div data-ref="stNb"></div>
@@ -1644,19 +1911,22 @@
         <div class="row" style="margin-top:8px;align-items:center">
           <button class="btn sm sec" data-ref="stExport">⤓ Exportieren</button>
           <button class="btn sm sec" data-ref="stImport">⤒ Importieren …</button>
-          <label class="chk" style="margin:0"><input type="checkbox" data-ref="stExpTpl"> Suchvorlagen mit exportieren</label>
+          <label class="chk" style="margin:0"><input type="checkbox" data-ref="stExpTpl"> Suchvorlagen und Themen mit exportieren</label>
           <input type="file" data-ref="stImportFile" accept=".json,application/json" style="display:none">
         </div>
-        <h3 style="margin:14px 0 6px">Office-Dateien (Word, Excel, PowerPoint, Visio)</h3>
+        <div class="hint" style="margin-top:8px">Die exportierte Team-Datei (JSON) enthält die Kundenlisten und kann an Kolleg:innen weitergegeben werden.</div>
+        <div class="msg" data-ref="stTeamMsg"></div>
+        </details>
+        <details class="card set" data-set="office"><summary>Office-Dateien (Word, Excel, PowerPoint, Visio)</summary>
         <div class="hint">„🖥 In Office öffnen“ lädt die Originaldatei herunter, der Browser öffnet sie im installierten Office. Damit das ohne weiteren Klick passiert, einmal je Dateityp „Dateien dieses Typs immer öffnen“ wählen – die Werkbank zeigt dazu beim ersten Öffnen eine kurze Anleitung. Änderungen werden nicht nach MultiData zurückgeschrieben.</div>
         <div class="row" style="margin-top:6px;align-items:center"><span class="hint" data-ref="oStatus" style="flex:1"></span>
           <button class="btn sm sec" data-ref="oReset">Hinweise wieder anzeigen</button></div>
-        <div class="hint" style="margin-top:8px">Die exportierte Team-Datei (JSON) enthält die Kundenlisten und kann an Kolleg:innen weitergegeben werden.</div>
-        <div class="msg" data-ref="stTeamMsg"></div>
 
-        <h3 style="margin:18px 0 6px">Lokale Daten</h3>
+        </details>
+        <details class="card set" data-set="data"><summary>Lokale Daten</summary>
         <div class="hint">Signatur, Bausteine, Entwürfe, Filter, Personio-Zeiten, Posteingang und Protokoll liegen nur in diesem Browser (localStorage) – nichts davon wird in MultiData oder anderswo gespeichert.</div>
         <button class="btn sm warn" data-ref="stWipe" style="margin-top:6px">Alle Werkbank-Daten in diesem Browser löschen</button>
+        </details>
       </section>
 
       <!-- PROTOKOLL -->
@@ -1810,7 +2080,11 @@
     if (tab === 'inbox') renderInbox();
     if (tab === 'drafts') renderDrafts();
     if (tab === 'settings') renderSettings();
-    if (tab === 'times') { renderTimes(); renderInternInfo(); if (ui.timesStale && tm.data) { ui.timesStale = false; runTimes(); } }
+    if (tab === 'times') {
+      // Beim ersten Öffnen automatisch die aktuelle Woche laden
+      if (!ui.timesAuto) { ui.timesAuto = true; ui.timesStale = false; setWeek(weekStart(todayStr())); }
+      else { renderTimes(); renderInternInfo(); if (ui.timesStale && tm.data) { ui.timesStale = false; runTimes(); } }
+    }
     if (tab === 'search' && ui.searchStale) { ui.searchStale = false; runSearch(true); }
     if (tab === 'search' && ui.facetsStale) scheduleFacets();
     setRoute(); updateTitle();
@@ -1970,6 +2244,31 @@
     if (t) openTicket(t.SID, false);
   }
 
+  // --- Aufklappmenüs (Filter in Suche, Zeiten, Inbox) ---
+  // Inhalt bleibt im DOM (gleiche data-refs wie vorher), das Menü blendet ihn nur ein/aus.
+  function closeDds(except = null) { panel.querySelectorAll('.dd.open').forEach(d => { if (d !== except) d.classList.remove('open'); }); }
+  panel.addEventListener('click', e => {
+    const b = e.target.closest('.dd > .ddb');
+    if (b) { e.stopPropagation(); const d = b.parentElement; closeDds(d); d.classList.toggle('open'); return; }
+    // Menüeinträge (.mi) schließen das Menü – außer sie zeigen ihr Ergebnis selbst an (data-keep)
+    const mi = e.target.closest('.ddm .mi');
+    if (mi && !mi.hasAttribute('data-keep')) closeDds();
+  });
+  document.addEventListener('mousedown', e => { if (!e.target.closest || !e.target.closest('#mdqt-panel .dd')) closeDds(); }, true);
+  panel.addEventListener('mousedown', e => { if (e.target.closest('.tb .ddb')) e.preventDefault(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && panel.querySelector('.dd.open')) { e.stopPropagation(); closeDds(); } }, true);
+  // Kurztext im Menüknopf aktuell halten (z. B. „Status: offene“); set = Filter weicht von „alle“ ab → Knopf hervorheben
+  function ddSummary(ref, fn, watch) {
+    const upd = () => { const [text, set] = fn(); $(ref).textContent = text; $(ref).closest('.ddb').classList.toggle('set', !!set); };
+    const mo = new MutationObserver(upd);
+    for (const w of watch) {
+      const n = $(w);
+      mo.observe(n, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+      n.addEventListener('input', upd); n.addEventListener('change', upd);
+    }
+    return upd;
+  }
+
   // ================= SUCHE =================
   function renderStatusChips() {
     const box = $('sStatus'); box.innerHTML = '';
@@ -2104,6 +2403,7 @@
     const box = $('sFacets'), chips = [...box.querySelectorAll('.chip:not(.more)')];
     box.querySelector('.chip.more')?.remove();
     chips.forEach(c => { c.style.display = ''; });
+    if (box.closest('.ddm')) return; // im Aufklappmenü scrollt die Liste
     if (!chips.length || !box.offsetWidth) return;
     const tops = [...new Set(chips.map(c => c.offsetTop))].sort((a, b) => a - b);
     if (tops.length <= 2) return;
@@ -2145,12 +2445,56 @@
   ['sDateMode', 'sFrom', 'sTo'].forEach(r => $(r).addEventListener('change', scheduleFacets));
   $('sText').addEventListener('input', scheduleFacets);
 
+  // --- Themen: eigene Stichwörter im Betreff (z. B. „Wartung“: Wartungswoche, Wartung) zum Filtern und Gruppieren ---
+  const NO_TOPIC = '__none__';
+  const DEFAULT_TOPICS = [{ id: 'wartung', name: 'Wartung', words: ['Wartungswoche', 'Wartung'] }];
+  const topicsRaw = () => store.get(CFG.store.topics, null) ?? DEFAULT_TOPICS;
+  const topics = () => topicsRaw().filter(t => t && t.name && (t.words || []).length);
+  const topicHit = (title, t) => { const s = String(title || '').toLowerCase(); return t.words.some(w => s.includes(String(w).toLowerCase())); };
+  const topicOf = title => topics().find(t => topicHit(title, t)) || null;
+  const splitWords = v => String(v || '').split(/[;,\n]/).map(x => x.trim()).filter(Boolean);
+  ui.selTopics = new Set(); ui.selPrios = new Set();
+  function renderTopicChips() {
+    const box = $('sTopics'); box.innerHTML = '';
+    const known = new Set([NO_TOPIC, ...topics().map(t => t.id)]);
+    for (const id of [...ui.selTopics]) if (!known.has(id)) ui.selTopics.delete(id); // gelöschte Themen
+    for (const t of [...topics(), { id: NO_TOPIC, name: 'Ohne Thema' }]) {
+      const c = el('button', { type: 'button', className: 'chip' + (ui.selTopics.has(t.id) ? ' sel' : ''), title: t.words ? 'Stichwörter: ' + t.words.join(' · ') : 'Betreff passt zu keinem Thema' });
+      c.textContent = (t.id === NO_TOPIC ? '∅ ' : '🏷 ') + t.name;
+      c.addEventListener('click', () => { ui.selTopics.has(t.id) ? ui.selTopics.delete(t.id) : ui.selTopics.add(t.id); renderTopicChips(); scheduleFacets(); });
+      box.appendChild(c);
+    }
+    if (!topics().length) box.prepend(el('div', { className: 'hint', textContent: 'Noch keine Themen – unten anlegen.' }));
+  }
+  function renderPrioChips() {
+    const box = $('sPrios'); box.innerHTML = '';
+    for (const [id, name, color] of CFG.priorities) {
+      const c = el('button', { type: 'button', className: 'chip' + (ui.selPrios.has(id) ? ' sel' : '') }, `<span class="flag" style="background:${color}"></span>${esc(name)}`);
+      c.addEventListener('click', () => { ui.selPrios.has(id) ? ui.selPrios.delete(id) : ui.selPrios.add(id); renderPrioChips(); scheduleFacets(); });
+      box.appendChild(c);
+    }
+  }
+  $('sTopicAll').addEventListener('click', () => { ui.selTopics.clear(); renderTopicChips(); scheduleFacets(); });
+  $('sPrioAll').addEventListener('click', () => { ui.selPrios.clear(); renderPrioChips(); scheduleFacets(); });
+  $('sTopicEdit').addEventListener('click', () => { showTab('settings'); const d = panel.querySelector('details[data-set=topics]'); d.open = true; d.scrollIntoView({ block: 'start' }); });
+  $('sNotText').addEventListener('keydown', e => { if (e.key === 'Enter') { closeDds(); runSearch(); } });
+  // Sortierung: Auswahl im Menü „Ansicht“ = Klick auf den Spaltenkopf
+  const SORT_KEYS = [['SID', 'ID'], ['TITEL', 'Betreff'], ['MATCHCODE', 'Kunde'], ['STATUS', 'Status'], ['PRIORITY', 'Priorität'], ['ANLAGE_DATUM', 'Angelegt'],
+    ['BEARBEITER_USER_ID', 'Bearbeiter'], ['SUM_STD', 'Std.'], ['MEMO_SUM_ABRSTD', 'abr.'], ['_BSTD', 'Std. im Zeitraum'], ['_BABR', 'abr. im Zeitraum']];
+  $('sSortKey').innerHTML = SORT_KEYS.map(([k, n]) => `<option value="${k}">${n}</option>`).join('');
+  const syncSortUi = () => { $('sSortKey').value = ui.sort.key; $('sSortDir').textContent = ui.sort.desc ? '↓ absteigend' : '↑ aufsteigend'; };
+  $('sSortKey').addEventListener('change', () => { ui.sort = { key: $('sSortKey').value, desc: ['SID', 'ANLAGE_DATUM', 'SUM_STD', 'MEMO_SUM_ABRSTD', '_BSTD', '_BABR'].includes($('sSortKey').value) }; syncSortUi(); readFilters(); renderResults(); });
+  $('sSortDir').addEventListener('click', () => { ui.sort = { ...ui.sort, desc: !ui.sort.desc }; syncSortUi(); readFilters(); renderResults(); });
+  $('sGroupBy').addEventListener('change', () => { readFilters(); renderResults(); });
+
   // Filterzustand der Suche. Gilt pro Browser-Tab (sessionStorage); der zuletzt benutzte ist Vorgabe für neue Tabs.
   const OPEN_STATUSES = CFG.statuses.filter(s => s[0] !== 'Z').map(s => s[0]);
-  const defaultFilterState = () => ({ users: [userItem('__ME__')], custs: [], queues: [], statuses: OPEN_STATUSES, dateMode: 'none', from: '', to: '', range: null, text: '', group: true });
+  const defaultFilterState = () => ({ users: [userItem('__ME__')], custs: [], queues: [], statuses: OPEN_STATUSES, dateMode: 'none', from: '', to: '', range: null, text: '', group: true,
+    topics: [], prios: [], notText: '', sort: { key: 'SID', desc: true } });
   function getFilterState() {
     return { users: userPick.items(), custs: custPick.items(), queues: queuePick.items(), statuses: [...ui.selStatus], dateMode: $('sDateMode').value,
-      from: $('sFrom').value, to: $('sTo').value, range: ui.rangeKey || null, text: $('sText').value.trim(), group: $('sGroup').checked };
+      from: $('sFrom').value, to: $('sTo').value, range: ui.rangeKey || null, text: $('sText').value.trim(),
+      group: $('sGroupBy').value !== 'none', groupBy: $('sGroupBy').value, topics: [...ui.selTopics], prios: [...ui.selPrios], notText: $('sNotText').value.trim(), sort: { ...ui.sort } };
   }
   function applyFilterState(fs) {
     fs = { ...defaultFilterState(), ...fs };
@@ -2162,16 +2506,52 @@
     ui.rangeKey = fs.range || null;
     const [a, b] = fs.range ? rangeDates(fs.range) : [fs.from || '', fs.to || ''];
     $('sFrom').value = a; $('sTo').value = b;
-    $('sGroup').checked = fs.group !== false;
+    $('sGroupBy').value = fs.groupBy || (fs.group === false ? 'none' : 'prio'); // ältere Vorlagen: nur „nach Priorität ja/nein“
+    ui.selTopics = new Set(fs.topics || []); ui.selPrios = new Set((fs.prios || []).map(Number));
+    $('sNotText').value = fs.notText || '';
+    ui.sort = fs.sort && fs.sort.key ? { key: fs.sort.key, desc: !!fs.sort.desc } : { key: 'SID', desc: true };
+    syncSortUi(); renderTopicChips(); renderPrioChips();
     renderStatusChips(); renderRanges(); renderFacets(); scheduleFacets();
   }
   function readFilters(save = true) {
     const fs = getFilterState();
-    const f = { users: userPick.get(), kndIds: custPick.get(), queues: queuePick.get(), statuses: fs.statuses, dateMode: fs.dateMode, from: fs.from, to: fs.to, text: fs.text };
+    const f = { users: userPick.get(), kndIds: custPick.get(), queues: queuePick.get(), statuses: fs.statuses, dateMode: fs.dateMode, from: fs.from, to: fs.to, text: fs.text,
+      prios: fs.prios, selTopics: fs.topics, notWords: splitWords(fs.notText).map(w => w.toLowerCase()) };
+    // Thema: nur ausgewählte Themen (ohne „Ohne Thema“) gehen als Betreff-Filter an MultiData, der Rest wird im Browser gefiltert
+    const selT = topics().filter(t => ui.selTopics.has(t.id));
+    if (selT.length && !ui.selTopics.has(NO_TOPIC)) f.titleAny = [...new Set(selT.flatMap(t => t.words))];
     if (f.dateMode !== 'none' && !f.from && !f.to) f.dateMode = 'none';
     if (save) { tabStore.set('filters', fs); store.set(CFG.store.filters, fs); }
     return f;
   }
+
+  ddSummary('ddStatus', () => {
+    const sel = ui.selStatus || new Set();
+    if (!sel.size || sel.size === CFG.statuses.length) return ['alle', false];
+    if (sel.size === OPEN_STATUSES.length && OPEN_STATUSES.every(x => sel.has(x))) return ['offene', false];
+    if (sel.size === 1) return [statusInfo([...sel][0])[1], true];
+    return [`${sel.size} gewählt`, true];
+  }, ['sStatus'])();
+  ddSummary('ddRange', () => {
+    const mode = $('sDateMode').value, a = $('sFrom').value, b = $('sTo').value;
+    if (mode === 'none' || (!a && !b)) return ['beliebig', false];
+    const r = RANGES.find(x => x[0] === ui.rangeKey);
+    const span = r ? r[1] : a === b ? fmtDate(a) : `${fmtDate(a) || '…'} – ${fmtDate(b) || '…'}`;
+    return [`${span} (${mode === 'created' ? 'Anlage' : 'gebucht'})`, true];
+  }, ['sDateMode', 'sFrom', 'sTo', 'sRanges'])();
+  ddSummary('ddTopic', () => {
+    const sel = [...ui.selTopics];
+    if (!sel.length) return ['alle', false];
+    if (sel.length === 1) return [sel[0] === NO_TOPIC ? 'ohne Thema' : (topics().find(t => t.id === sel[0]) || {}).name || '?', true];
+    return [`${sel.length} gewählt`, true];
+  }, ['sTopics'])();
+  ddSummary('ddMore', () => { const n = (ui.selPrios.size ? 1 : 0) + ($('sNotText').value.trim() ? 1 : 0); return [n ? `(${n})` : '', n > 0]; }, ['sPrios', 'sNotText'])();
+  ddSummary('ddView', () => {
+    const g = $('sGroupBy'), k = SORT_KEYS.find(x => x[0] === ui.sort.key);
+    return [`${g.value === 'none' ? '' : g.options[g.selectedIndex].text.replace(/ \(.*\)$/, '') + ' · '}${k ? k[1] : ui.sort.key} ${ui.sort.desc ? '↓' : '↑'}`, false];
+  }, ['sGroupBy', 'sSortKey', 'sSortDir'])();
+  ddSummary('ddFacets', () => [ui.facets ? `(${ui.facets.length})` : '', false], ['sFacets'])();
+  $('sTpl').addEventListener('click', e => { if (e.target.closest('.chip') && e.target.tagName !== 'B') closeDds(); });
 
   // Suchvorlagen (für alle Tabs dieses Browsers; über ⚙ exportierbar)
   const templates = () => store.get(CFG.store.templates, null) ?? [
@@ -2206,12 +2586,24 @@
     if (!silent) msg('sMsg', 'Suche …');
     const body = panel.querySelector('.body'), top = body.scrollTop;
     try {
-      const res = await searchTickets(readFilters(!silent));
+      const f = readFilters(!silent);
+      const res = await searchTickets(f);
+      // Filter, die MultiData nicht kann: „Betreff enthält nicht“, „Ohne Thema“
+      const n0 = res.rows.length, truncated = (res.total ?? n0) > n0;
+      const known = topics(), selT = known.filter(t => (f.selTopics || []).includes(t.id)), selNone = (f.selTopics || []).includes(NO_TOPIC);
+      res.rows = res.rows.filter(r => {
+        const t = String(r.TITEL || '').toLowerCase();
+        if (f.notWords.some(w => t.includes(w))) return false;
+        if (selT.length || selNone) return selT.some(x => topicHit(r.TITEL, x)) || (selNone && !known.some(x => topicHit(r.TITEL, x)));
+        return true;
+      });
       ui.lastResult = res; ui.lastSearchAt = Date.now();
       renderResults();
       if (silent) body.scrollTop = top;
-      const shown = res.rows.length, total = res.total ?? shown;
-      msg('sMsg', `${total} Ticket(s)${total > shown ? ` – angezeigt werden die neuesten ${shown}` : ''}.${silent ? ` · automatisch aktualisiert ${new Date().toLocaleTimeString('de-DE').slice(0, 5)}` : ''}`, 'ok');
+      const shown = res.rows.length, total = res.total ?? shown, cut = n0 - shown;
+      msg('sMsg', (cut ? `${shown} Ticket(s) nach Betreff-Filter${truncated ? ` (geprüft wurden die neuesten ${n0} von ${total})` : ''}`
+        : `${total} Ticket(s)${total > shown ? ` – angezeigt werden die neuesten ${shown}` : ''}`) +
+        `.${silent ? ` · automatisch aktualisiert ${new Date().toLocaleTimeString('de-DE').slice(0, 5)}` : ''}`, 'ok');
     } catch (e) { msg('sMsg', '✖ ' + e.message, 'err'); }
   }
   $('sGo').addEventListener('click', () => busy($('sGo'), () => runSearch()));
@@ -2225,17 +2617,37 @@
     if (bh) cols.push(['_BSTD', 'Std. im Zeitraum'], ['_BABR', 'abr. im Zeitraum']);
     const rows = res.rows.map(r => ({ ...r, _BSTD: bh?.[r.SID]?.std ?? null, _BABR: bh?.[r.SID]?.abr ?? null }));
     const { key, desc } = ui.sort;
-    const group = $('sGroup').checked;
+    const gb = $('sGroupBy').value, group = gb !== 'none';
+    const stIdx = id => { const i = CFG.statuses.findIndex(x => x[0] === id); return i < 0 ? 99 : i; };
+    const custName = r => (r.MATCHCODE || '').replace(/^\d+\s*-\s*/, '');
+    const tops = topics();
+    for (const r of rows) r._TOPIC = tops.find(t => topicHit(r.TITEL, t)) || null;
+    // Gruppe: Schlüssel, Rang (Reihenfolge), Anzeige
+    const G = {
+      prio: { key: r => r.PRIORITY ?? null, rank: k => k ?? 99, html: k => prioHtml(k), text: k => prioInfo(k)[1] },
+      topic: { key: r => r._TOPIC ? r._TOPIC.id : NO_TOPIC, rank: k => { const i = tops.findIndex(t => t.id === k); return i < 0 ? 1e6 : i; },
+        html: k => k === NO_TOPIC ? '<span class="hint">∅ Ohne Thema</span>' : '🏷 ' + esc((tops.find(t => t.id === k) || {}).name || k), text: k => k === NO_TOPIC ? 'ohne Thema' : (tops.find(t => t.id === k) || {}).name || k },
+      status: { key: r => r.STATUS, rank: stIdx, html: k => `<span class="dot" style="background:${statusInfo(k)[2]}"></span>${esc(statusInfo(k)[1])}`, text: k => statusInfo(k)[1] },
+      cust: { key: r => custName(r), rank: k => k ? k.toLowerCase() : '\uffff', html: k => esc(k || '– ohne Kunde –'), text: k => k || 'ohne Kunde' },
+      user: { key: r => r.BEARBEITER_USER_ID || '', rank: k => k ? userLabel(k).toLowerCase() : '\uffff', html: k => k ? esc(userLabel(k)) : '<span class="hint">∅ ohne Bearbeiter</span>', text: k => k ? userLabel(k) : 'ohne Bearbeiter' },
+    }[gb];
+    const cmp = (x, y) => {
+      if (x == null || x === '') return y == null || y === '' ? 0 : -1;
+      if (y == null || y === '') return 1;
+      return typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'de', { numeric: true, sensitivity: 'base' });
+    };
+    const sortVal = r => key === 'MATCHCODE' ? custName(r) : key === 'STATUS' ? stIdx(r.STATUS) : r[key];
     rows.sort((a, b) => {
-      if (group) { const pa = a.PRIORITY ?? 99, pb = b.PRIORITY ?? 99; if (pa !== pb) return pa - pb; } // wichtigste Gruppe zuerst
-      const x = a[key] ?? '', y = b[key] ?? ''; return (x > y ? 1 : x < y ? -1 : 0) * (desc ? -1 : 1);
+      if (group) { const c = cmp(G.rank(G.key(a)), G.rank(G.key(b))); if (c) return c; } // Gruppen in fester Reihenfolge
+      return cmp(sortVal(a), sortVal(b)) * (desc ? -1 : 1) || (b.SID - a.SID);
     });
+    syncSortUi();
 
     const tbl = el('table');
     const thr = el('tr');
     for (const [k, n] of cols) {
       const th = el('th', { textContent: n + (key === k ? (desc ? ' ↓' : ' ↑') : '') });
-      th.addEventListener('click', () => { ui.sort = { key: k, desc: key === k ? !desc : false }; renderResults(); });
+      th.addEventListener('click', () => { ui.sort = { key: k, desc: key === k ? !desc : false }; readFilters(); renderResults(); });
       thr.appendChild(th);
     }
     tbl.appendChild(el('thead')).appendChild(thr);
@@ -2247,30 +2659,42 @@
         (bh ? `<td class="n"><b>${fmtH(s_.b)}</b></td><td class="n"><b>${fmtH(s_.ba)}</b></td>` : '');
       tb.appendChild(tf);
     };
-    let cur, gs = null, gn = 0;
-    const flush = () => { if (gs && group) sumRow('Summe ' + prioInfo(cur)[1], gs, gn, 'gsum'); };
+    // Gruppen vorab bilden (Anzahl und Stunden stehen im Gruppenkopf; eingeklappte Gruppen zeigen nur den Kopf)
+    const groups = [];
     for (const r of rows) {
-      if (group && (gs === null || r.PRIORITY !== cur)) {
-        flush(); cur = r.PRIORITY; gs = { std: 0, abr: 0, b: 0, ba: 0 }; gn = 0;
-        const gh = el('tr', { className: 'ghead' }); gh.innerHTML = `<td colspan="${cols.length}">${prioHtml(cur)}</td>`; tb.appendChild(gh);
-      }
-      const [, sn, sc] = statusInfo(r.STATUS);
-      const tr = el('tr', { className: 'r' });
-      tr.innerHTML = `<td style="white-space:nowrap">${prioHtml(r.PRIORITY)}</td><td class="n">${r.SID}</td><td>${esc(r.TITEL)}</td><td>${esc((r.MATCHCODE || '').replace(/^\d+\s*-\s*/, ''))}</td>
-        <td><span class="dot" style="background:${sc}"></span>${esc(sn)}</td><td>${fmtDate(r.ANLAGE_DATUM)}</td><td>${esc(r.BEARBEITER_USER_ID || '')}</td>
-        <td class="n">${fmtH(r.SUM_STD)}</td><td class="n">${fmtH(r.MEMO_SUM_ABRSTD)}</td>` +
-        (bh ? `<td class="n">${fmtH(r._BSTD)}</td><td class="n">${fmtH(r._BABR)}</td>` : '');
-      tr.title = 'Klick: öffnen · Mittelklick oder Strg+Klick: in neuem Tab im Hintergrund';
-      wbRow(tr, ticketRoute(r.SID), () => openTicket(r.SID));
-      tb.appendChild(tr);
-      for (const t of [sum, gs].filter(Boolean)) { t.std += r.SUM_STD || 0; t.abr += r.MEMO_SUM_ABRSTD || 0; t.b += r._BSTD || 0; t.ba += r._BABR || 0; }
-      gn++;
+      const k = group ? G.key(r) : '';
+      let g = groups[groups.length - 1];
+      if (!g || g.k !== k) groups.push(g = { k, rows: [], s: { std: 0, abr: 0, b: 0, ba: 0 } });
+      g.rows.push(r); g.s.std += r.SUM_STD || 0; g.s.abr += r.MEMO_SUM_ABRSTD || 0; g.s.b += r._BSTD || 0; g.s.ba += r._BABR || 0;
     }
-    flush();
+    ui.collapsedGroups ||= new Set();
+    for (const g of groups) {
+      const gid = gb + ':' + g.k, closed = group && ui.collapsedGroups.has(gid);
+      if (group) {
+        const gh = el('tr', { className: 'ghead' + (closed ? ' closed' : ''), title: 'Klick: Gruppe ein-/ausklappen' });
+        gh.innerHTML = `<td colspan="${cols.length}"><span class="gtog">${closed ? '▸' : '▾'}</span>${G.html(g.k)} <span class="gcnt">${g.rows.length} Ticket(s) · ${fmtH(g.s.std)} h${g.s.abr ? ` · abr. ${fmtH(g.s.abr)}` : ''}</span></td>`;
+        gh.addEventListener('click', () => { closed ? ui.collapsedGroups.delete(gid) : ui.collapsedGroups.add(gid); renderResults(); });
+        tb.appendChild(gh);
+      }
+      for (const r of g.rows) {
+        for (const t of [sum]) { t.std += r.SUM_STD || 0; t.abr += r.MEMO_SUM_ABRSTD || 0; t.b += r._BSTD || 0; t.ba += r._BABR || 0; }
+        if (closed) continue;
+        const [, sn, sc] = statusInfo(r.STATUS);
+        const tr = el('tr', { className: 'r' });
+        const ttag = r._TOPIC && gb !== 'topic' ? ` <span class="tag topic" title="Thema">🏷 ${esc(r._TOPIC.name)}</span>` : '';
+        tr.innerHTML = `<td style="white-space:nowrap">${prioHtml(r.PRIORITY)}</td><td class="n">${r.SID}</td><td>${esc(r.TITEL)}${ttag}</td><td>${esc(custName(r))}</td>
+          <td><span class="dot" style="background:${sc}"></span>${esc(sn)}</td><td>${fmtDate(r.ANLAGE_DATUM)}</td><td>${esc(r.BEARBEITER_USER_ID || '')}</td>
+          <td class="n">${fmtH(r.SUM_STD)}</td><td class="n">${fmtH(r.MEMO_SUM_ABRSTD)}</td>` +
+          (bh ? `<td class="n">${fmtH(r._BSTD)}</td><td class="n">${fmtH(r._BABR)}</td>` : '');
+        tr.title = 'Klick: öffnen · Mittelklick oder Strg+Klick: in neuem Tab im Hintergrund';
+        wbRow(tr, ticketRoute(r.SID), () => openTicket(r.SID));
+        tb.appendChild(tr);
+      }
+      if (group && !closed && groups.length > 1) sumRow('Summe ' + G.text(g.k), g.s, g.rows.length, 'gsum');
+    }
     sumRow('Summe', sum, rows.length, 'tsum');
     const box = $('sResults'); box.innerHTML = ''; box.appendChild(tbl);
   }
-  $('sGroup').addEventListener('change', () => { readFilters(); renderResults(); });
   $('sReset').addEventListener('click', () => { applyFilterState(defaultFilterState()); readFilters(); msg('sMsg', 'Filter zurückgesetzt.'); });
 
   // ================= TICKET =================
@@ -2316,9 +2740,17 @@
       <div class="hrow1">
         <h3>#${t.SID}</h3>
         <input type="text" data-ref="hTitle" spellcheck="true" lang="de" title="Betreff">
-        <a href="#" data-ref="hOpen" target="_blank" class="btn sm sec" title="Öffnet MultiData mit diesem Ticket in einem neuen Tab">MultiData ↗</a>
-        <a href="#" data-ref="hNewTab" class="btn sm sec" title="Dieses Ticket in einem weiteren Werkbank-Tab öffnen">Neuer Tab ⧉</a>
-        <button class="btn sm sec" data-ref="hShare" title="MultiData-Link des Tickets kopieren (Umschalt+Klick: „#Nr. Betreff“ + Link)">🔗 Teilen</button>
+        <div class="dd r" data-dd="tmore">
+          <button type="button" class="btn sec ddb" title="Öffnen, Teilen, Child-Tickets, Zusammenführen">⋯</button>
+          <div class="ddm" style="min-width:220px">
+            <a href="#" data-ref="hOpen" target="_blank" class="btn sm sec mi" title="Öffnet MultiData mit diesem Ticket in einem neuen Tab">↗ In MultiData öffnen</a>
+            <a href="#" data-ref="hNewTab" class="btn sm sec mi" title="Dieses Ticket in einem weiteren Werkbank-Tab öffnen">⧉ In neuem Tab</a>
+            <button class="btn sm sec mi" data-ref="hShare" data-keep title="MultiData-Link des Tickets kopieren (Umschalt+Klick: „#Nr. Betreff“ + Link)">🔗 Link kopieren</button>
+            <div class="ddsep"></div>
+            <button class="btn sm sec mi" data-ref="hKids" title="Child-Tickets anzeigen, zuordnen, erstellen">🌿 Child-Tickets</button>
+            <button class="btn sm sec mi" data-ref="hMerge" title="Dieses Ticket in ein anderes zusammenführen">🔀 Zusammenführen</button>
+          </div>
+        </div>
       </div>
       <div class="hgrid">
         <div><label class="l">Status</label><select data-ref="hStatus"></select></div>
@@ -2338,8 +2770,6 @@
       <div class="warnbox" data-ref="hFirmWarn" style="display:none">Firmenwechsel: MultiData kann dabei abrechenbare Stunden zurücksetzen – bitte nach dem Speichern prüfen.</div>
       <div class="row hbar">
         <div class="sums" data-ref="hSums" style="flex:1;min-width:240px"></div>
-        <button class="btn sm sec" data-ref="hKids" title="Child-Tickets anzeigen, zuordnen, erstellen">🌿 Child-Tickets</button>
-        <button class="btn sm sec" data-ref="hMerge" title="Dieses Ticket in ein anderes zusammenführen">🔀 Zusammenführen</button>
         <button class="btn sm warn" data-ref="hQC" title="Ticket per QuickClose schließen (erzeugt den Abschlusstext)">QuickClose</button>
       </div>
       <div data-ref="hExtra"></div>`;
@@ -2415,7 +2845,7 @@
     $('hOpen', head).href = mdTicketUrl(t.SID); // immer neuer Tab (Linksklick: wechseln, Mittelklick: im Hintergrund)
     $('hShare', head).addEventListener('click', async ev => {
       const url = mdShareUrl(t.SID), text = ev.shiftKey ? `#${t.SID} ${t.TITEL || ''}\n${url}` : url;
-      try { await copyText(text); const b = ev.currentTarget || $('hShare', head); b.textContent = '✔ Kopiert'; setTimeout(() => { b.textContent = '🔗 Teilen'; }, 1800); msg('tMsg', `✔ In die Zwischenablage kopiert: ${text.replace('\n', ' · ')}`, 'ok'); }
+      try { await copyText(text); const b = ev.currentTarget || $('hShare', head); b.textContent = '✔ Kopiert'; setTimeout(() => { b.textContent = '🔗 Link kopieren'; }, 1800); msg('tMsg', `✔ In die Zwischenablage kopiert: ${text.replace('\n', ' · ')}`, 'ok'); }
       catch (e) { msg('tMsg', '✖ Kopieren nicht möglich: ' + e.message + ' – Link: ' + url, 'err'); }
     });
     $('hSave', head).addEventListener('click', ev => busy(ev.target, async () => {
@@ -2821,7 +3251,7 @@
         <div class="c s"><label class="l">abr. Stunden</label><input type="text" data-ref="eAbr"></div>
         <div class="c"><div class="hint" data-ref="eHint"></div></div>
       </div>
-      ${WEG_OK ? '<label class="chk" title="Wegzeit und Wegstrecke = 1 (Kennzeichen für die Buchhaltung)"><input type="checkbox" data-ref="eOnsite"> 🚗 Vor-Ort-Termin</label>' : ''}
+      ${WEG_OK ? '<div class="togs"><label class="chk tgl" title="Vor-Ort-Termin: Wegzeit und Wegstrecke = 1 (Kennzeichen für die Buchhaltung)"><input type="checkbox" data-ref="eOnsite"> 🚗 Vor Ort</label></div>' : ''}
       <label class="l">Text</label>
       <div class="rte" contenteditable="true" spellcheck="true" lang="de" data-ref="eTxt"></div>
       <div class="row" style="margin-top:8px">
@@ -3244,14 +3674,14 @@
     }
     return um;
   }
-  const LIST_BTNS = `<button type="button" data-li="ul" title="Aufzählung ein/aus">• Liste</button><button type="button" data-li="ol" title="Nummerierung ein/aus">1. Liste</button>
+  const LIST_BTNS = `<button type="button" data-li="ul" title="Aufzählung ein/aus">•≡</button><button type="button" data-li="ol" title="Nummerierung ein/aus">1≡</button>
     <button type="button" data-li="out" title="Einzug verringern (Umschalt+Tab; am Anfang eines Punkts auch Rücktaste)">⇤</button><button type="button" data-li="in" title="Einzug vergrößern (Tab)">⇥</button>`;
   // Kleine Werkzeugleiste für Kommentar bearbeiten, Signatur, Textbausteine
   function rteBar(rte, sizeKey = null) {
     const tb = el('div', { className: 'tb' });
     tb.innerHTML = `<button type="button" data-cmd="bold" title="Fett (Strg+B)"><b>F</b></button><button type="button" data-cmd="italic" title="Kursiv (Strg+I)"><i>K</i></button>
       <button type="button" data-cmd="underline" title="Unterstrichen (Strg+U)"><u>U</u></button><span class="sep"></span>${LIST_BTNS}<span class="sep"></span>
-      <button type="button" data-cmd="removeFormat" title="Formatierung entfernen">✕ Format</button>`;
+      <button type="button" data-cmd="removeFormat" title="Formatierung entfernen">✕</button>`;
     rte.before(tb);
     const um = setupRte(rte, { toolbar: tb, sizeKey });
     tb.querySelectorAll('button[data-cmd]').forEach(b => b.addEventListener('mousedown', e => {
@@ -3268,15 +3698,19 @@
     w.innerHTML = `
       <div class="row">
         <div class="c s" style="flex-basis:150px"><label class="l">Datum</label><input type="date" data-ref="fDate"></div>
-        <div class="c s" style="flex-basis:150px"><label class="l">Dauer in h (0,25 · 1,5 · 1:10 · 20m${allowZero ? ' · 0 = ohne Zeit' : ''})</label><input type="text" data-ref="fDur"></div>
+        <div class="c s" style="flex-basis:170px"><label class="l" title="Stunden: 0,25 · 1,5 · 1:10 · Minuten: 20m${allowZero ? ' · 0 = ohne Zeit' : ''}">Dauer (h)</label>
+          <div class="inpdd"><input type="text" data-ref="fDur" placeholder="0,25 · 1:10 · 20m${allowZero ? ' · 0' : ''}">
+            <div class="dd r"><button type="button" class="btn sec ddb" title="Schnellwahl Dauer"><span class="car">▾</span></button>
+              <div class="ddm" style="min-width:120px"><div class="chips list" data-ref="fChips"></div></div></div></div></div>
         <div class="c s" style="flex-basis:170px"><label class="l">Kontaktart</label><select data-ref="fKa"></select></div>
-        <div class="c"><div class="chips" data-ref="fChips"></div></div>
       </div>
       <div class="hint" data-ref="fCalc"></div>
-      <label class="chk"><input type="checkbox" data-ref="fBill"> Abrechenbar</label>
-      <span data-ref="fAbrBox" style="display:none"><label class="chk">abr. Stunden (leer = wie gebucht) <input type="text" data-ref="fAbr" style="width:80px"></label></span>
-      ${allowOnsite ? '<label class="chk" style="margin-left:12px" title="Setzt im Kommentar Wegzeit und Wegstrecke auf 1 (Kennzeichen für die Buchhaltung)"><input type="checkbox" data-ref="fOnsite"> 🚗 Vor-Ort-Termin</label>' : ''}
-      ${allowMail ? `<label class="chk" style="margin-left:12px"><input type="checkbox" data-ref="fMailOn"> <b>✉ Als Mail senden</b> („Antwort sofort senden“)</label>
+      <div class="togs">
+        <span class="tgrp"><label class="chk tgl" title="Zeit abrechenbar buchen"><input type="checkbox" data-ref="fBill"> 💶 Abrechenbar</label><span data-ref="fAbrBox" class="abr" style="display:none"><input type="text" data-ref="fAbr" placeholder="= gebucht" title="Abrechenbare Stunden – leer = wie gebucht"><span class="hint">h</span></span></span>
+        ${allowOnsite ? '<label class="chk tgl" title="Vor-Ort-Termin: setzt im Kommentar Wegzeit und Wegstrecke auf 1 (Kennzeichen für die Buchhaltung)"><input type="checkbox" data-ref="fOnsite"> 🚗 Vor Ort</label>' : ''}
+        ${allowMail ? '<label class="chk tgl" title="Als Mail an den Kunden senden („Antwort sofort senden“)"><input type="checkbox" data-ref="fMailOn"> ✉ Als Mail senden</label>' : ''}
+      </div>
+      ${allowMail ? `
       <div class="mailbox" data-ref="fMailBox" style="display:none">
         <div class="warnbox" data-ref="fSupp" style="display:none">Am Ticket ist „Keine Benachrichtigungen“ gesetzt – so geht keine Mail raus.
           <button class="btn sm" data-ref="fSuppBtn">Haken am Ticket entfernen</button></div>
@@ -3290,19 +3724,24 @@
         </div>
         <div class="hint" data-ref="fSugg"></div>
       </div>` : ''}
-      <label class="l">Text <span class="hint">(Formatierung und eingefügte Bilder werden übernommen)</span></label>
+      <label class="l" title="Formatierung und eingefügte Bilder werden übernommen">Text</label>
       <div class="tb">
         <select data-ref="fFont" title="Schriftart">${CFG.fonts.map(f => `<option value="${f}"${f === CFG.defaultFont ? ' selected' : ''}>${f}</option>`).join('')}</select>
         <select data-ref="fSize" title="Schriftgröße">${CFG.fontSizes.map(z => `<option value="${z}"${z === CFG.defaultFontSize ? ' selected' : ''}>${z} pt</option>`).join('')}</select>
         <button type="button" data-cmd="bold" title="Fett"><b>F</b></button><button type="button" data-cmd="italic" title="Kursiv"><i>K</i></button>
         <button type="button" data-cmd="underline" title="Unterstrichen"><u>U</u></button>
         <span class="sep"></span>${LIST_BTNS}<span class="sep"></span>
-        <button type="button" data-ref="tblBtn" title="Tabelle einfügen">⊞ Tabelle</button>
-        <button type="button" data-tbl="row+" title="Zeile unter der aktuellen Zelle einfügen">+Zeile</button><button type="button" data-tbl="col+" title="Spalte rechts einfügen">+Spalte</button>
-        <button type="button" data-tbl="row-" title="Aktuelle Zeile löschen">−Zeile</button><button type="button" data-tbl="col-" title="Aktuelle Spalte löschen">−Spalte</button>
-        <button type="button" data-cmd="removeFormat" title="Formatierung entfernen">✕ Format</button>
-        <button type="button" data-ref="sigBtn" title="Signatur einfügen (⚙ Einstellungen)">✍ Signatur</button>
-        <select data-ref="tbSel" title="Textbaustein einfügen"><option value="">📋 Textbaustein …</option></select>
+        <div class="dd"><button type="button" class="ddb" title="Tabelle einfügen oder bearbeiten">⊞ <span class="car">▾</span></button>
+          <div class="ddm" style="min-width:210px">
+            <button type="button" class="mi" data-ref="tblBtn" title="Tabelle einfügen">⊞ Neue Tabelle …</button>
+            <div class="ddsep"></div>
+            <button type="button" class="mi" data-tbl="row+" title="Zeile unter der aktuellen Zelle einfügen">＋ Zeile darunter</button><button type="button" class="mi" data-tbl="col+" title="Spalte rechts einfügen">＋ Spalte rechts</button>
+            <button type="button" class="mi" data-tbl="row-" title="Aktuelle Zeile löschen">− Zeile löschen</button><button type="button" class="mi" data-tbl="col-" title="Aktuelle Spalte löschen">− Spalte löschen</button>
+          </div></div>
+        <span class="sep"></span>
+        <button type="button" data-cmd="removeFormat" title="Formatierung entfernen">✕</button>
+        <button type="button" data-ref="sigBtn" title="Signatur einfügen (⚙ Einstellungen)">✍</button>
+        <select data-ref="tbSel" title="Textbaustein einfügen"><option value="">📋 Baustein …</option></select>
       </div>
       <div class="tb" data-ref="tblPop" style="display:none;align-items:center">Tabelle: <input type="number" data-ref="tblR" value="3" min="1" max="50" style="width:50px"> Zeilen ×
         <input type="number" data-ref="tblC" value="3" min="1" max="20" style="width:50px"> Spalten <label class="chk" style="margin:0 6px"><input type="checkbox" data-ref="tblH" checked> Kopfzeile</label>
@@ -3328,7 +3767,7 @@
     $('fDur', w).addEventListener('input', calc);
     for (const m of [15, 30, 45, 60, 90, 120, 240]) {
       const hv = String(m / 60).replace('.', ',');
-      const c = el('button', { className: 'chip', textContent: `${hv} h` });
+      const c = el('button', { type: 'button', className: 'chip mi', textContent: `${hv} h` });
       c.addEventListener('click', () => { $('fDur', w).value = hv; calc(); });
       $('fChips', w).appendChild(c);
     }
@@ -3614,6 +4053,10 @@
       box.appendChild(c);
     }
   }
+  ddSummary('ddTypes', () => {
+    const n = ui.inboxTypes.size, all = Object.keys(INBOX_TYPES).length;
+    return [n === all ? 'alle' : n === 0 ? 'keine' : n === 1 ? INBOX_TYPES[[...ui.inboxTypes][0]] : `${n} von ${all}`, n !== all];
+  }, ['iTypes'])();
   function inboxItems() {
     const st = inboxState(), days = +$('iRange').value, from = addDays(todayStr(), -(days - 1));
     return Object.values(st.items)
@@ -3819,13 +4262,40 @@
   function updateTeamHint() {
     $('teamHint').style.display = !teamConfigured() && !store.get('mdqt.teamHintOff', false) ? '' : 'none';
   }
-  $('teamHintGo').addEventListener('click', () => showTab('settings'));
+  $('teamHintGo').addEventListener('click', () => { showTab('settings'); const d = panel.querySelector('details[data-set=team]'); d.open = true; d.scrollIntoView({ block: 'start' }); });
   $('teamHintNo').addEventListener('click', () => { store.set('mdqt.teamHintOff', true); updateTeamHint(); });
+
+  // Themen bearbeiten (sofort gespeichert; Suche aktualisiert Filter und Gruppen)
+  function saveTopics() {
+    const list = [...$('stTopics').querySelectorAll('.topic-row')].map(r => ({ id: r.dataset.id, name: r.querySelector('[data-a=name]').value.trim(), words: splitWords(r.querySelector('[data-a=words]').value) }));
+    store.set(CFG.store.topics, list);
+    renderTopicChips(); if (ui.lastResult) renderResults();
+  }
+  function renderTopicEditor() {
+    const box = $('stTopics'); box.innerHTML = '';
+    for (const t of topicsRaw()) {
+      const r = el('div', { className: 'row topic-row' }); r.dataset.id = t.id || ('t' + Date.now() + Math.random().toString(36).slice(2, 6));
+      r.innerHTML = `<div class="c s" style="flex-basis:160px"><input type="text" data-a="name" placeholder="Name, z. B. Wartung"></div>
+        <div class="c"><input type="text" data-a="words" placeholder="Stichwörter, mit ; trennen – z. B. Wartungswoche; Wartung"></div>
+        <button type="button" class="btn sm sec" data-a="up" title="Nach oben (hat Vorrang)">↑</button><button type="button" class="btn sm warn" data-a="del" title="Thema löschen">✕</button>`;
+      r.querySelector('[data-a=name]').value = t.name || ''; r.querySelector('[data-a=words]').value = (t.words || []).join('; ');
+      r.querySelectorAll('input').forEach(i => i.addEventListener('input', saveTopics));
+      r.querySelector('[data-a=del]').addEventListener('click', () => { r.remove(); saveTopics(); });
+      r.querySelector('[data-a=up]').addEventListener('click', () => { if (r.previousElementSibling) { r.previousElementSibling.before(r); saveTopics(); } });
+      box.appendChild(r);
+    }
+    if (!box.children.length) box.innerHTML = '<div class="hint">Noch keine Themen.</div>';
+  }
+  $('stTopicAdd').addEventListener('click', () => {
+    store.set(CFG.store.topics, [...topicsRaw(), { id: 't' + Date.now(), name: '', words: [] }]); renderTopicEditor();
+    const rows = $('stTopics').querySelectorAll('.topic-row'); rows[rows.length - 1].querySelector('input').focus();
+  });
+  renderTopicEditor();
 
   $('stExport').addEventListener('click', () => {
     const tc = team();
     const data = { type: 'mdqt-team', version: 1, exportedAt: new Date().toISOString(), nonBillable: tc.nonBillable, intern: tc.intern, othersBillable: tc.othersBillable !== false };
-    if ($('stExpTpl').checked) data.templates = templates();
+    if ($('stExpTpl').checked) { data.templates = templates(); data.topics = topics(); }
     download('werkbank-team-config.json', JSON.stringify(data, null, 2), 'application/json');
     msg('stTeamMsg', '✔ Exportiert.', 'ok');
   });
@@ -3844,6 +4314,13 @@
         const add = d.templates.filter(t => t && t.name && t.fs && !names.has(t.name));
         store.set(CFG.store.templates, [...own, ...add]); renderTemplates();
         extra = `, ${add.length} Suchvorlage(n) ergänzt`;
+      }
+      if (Array.isArray(d.topics) && d.topics.length) {
+        const own = topicsRaw(), names = new Set(own.map(t => String(t.name).toLowerCase()));
+        const add = d.topics.filter(t => t && t.name && Array.isArray(t.words) && !names.has(String(t.name).toLowerCase()))
+          .map(t => ({ id: 't' + Date.now() + Math.random().toString(36).slice(2, 6), name: String(t.name), words: t.words.map(String) }));
+        store.set(CFG.store.topics, [...own, ...add]); renderTopicEditor(); renderTopicChips();
+        extra += `, ${add.length} Thema/Themen ergänzt`;
       }
       renderTeam(); updateTeamHint();
       msg('stTeamMsg', `✔ Importiert: ${clean(d.nonBillable).length} nicht abrechenbar, ${clean(d.intern).length} intern${extra}.`, 'ok');
@@ -3927,6 +4404,8 @@
   });
   timesUserPick.set([{ value: '__ME__', label: '👤 Ich' }]);
   persistDetails($('zPDet'), 'zeiten.personio', false);
+  $('zRanges').addEventListener('click', e => { if (e.target.closest('.chip')) closeDds(); });
+  panel.querySelectorAll('section[data-tab=settings] details[data-set]').forEach(d => persistDetails(d, 'settings.' + d.dataset.set, d.dataset.set === 'look'));
   (function initTimes() {
     const z = store.get(CFG.store.timesView, {});
     const d = new Date(), first = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`;
@@ -3974,15 +4453,47 @@
   ['zFrom', 'zTo'].forEach(r => $(r).addEventListener('change', () => { if (ui.tab === 'times') renderInternInfo(); }));
 
   async function runTimes() {
+    updWeek();
     const from = $('zFrom').value, to = $('zTo').value;
     if (!from || !to || to < from) { msg('zMsg', 'Bitte einen gültigen Zeitraum wählen.', 'err'); return; }
     if ((new Date(to) - new Date(from)) / 864e5 > 186) { msg('zMsg', 'Zeitraum bitte auf max. 6 Monate begrenzen.', 'err'); return; }
     saveTimesView();
     msg('zMsg', 'Lade Zeiten …');
-    try { tm.data = await loadTimes({ users: timesUserPick.get(), from, to }); tm.from = from; tm.to = to; renderTimes(); msg('zMsg', ''); }
-    catch (e) { msg('zMsg', '✖ ' + e.message, 'err'); }
+    const seq = tm.seq = (tm.seq || 0) + 1; // schnelles Blättern: nur die letzte Anfrage zählt
+    try {
+      const data = await loadTimes({ users: timesUserPick.get(), from, to });
+      if (seq !== tm.seq) return;
+      tm.data = data; tm.from = from; tm.to = to; renderTimes(); msg('zMsg', '');
+    } catch (e) { if (seq === tm.seq) msg('zMsg', '✖ ' + e.message, 'err'); }
   }
   $('zGo').addEventListener('click', ev => busy(ev.target, runTimes));
+
+  // Wochenweise blättern: Montag–Sonntag, die laufende Woche nur bis heute
+  const weekStart = s => addDays(s, -((weekday(s) + 6) % 7));
+  const isoWeek = s => {
+    const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
+    const j4 = new Date(d.getFullYear(), 0, 4, 12);
+    return 1 + Math.round(((d - j4) / 864e5 - 3 + (j4.getDay() + 6) % 7) / 7);
+  };
+  function updWeek() {
+    const f = $('zFrom').value, t = $('zTo').value, cur = weekStart(todayStr());
+    const isWeek = f && t && weekStart(f) === f && t >= f && t <= addDays(f, 6);
+    $('zWk').textContent = isWeek ? `KW ${isoWeek(f)}` : '\u00a0';
+    $('zNext').disabled = !!f && weekStart(f) >= cur;
+    $('zNow').disabled = isWeek && f === cur;
+  }
+  function setWeek(monday) {
+    const cur = weekStart(todayStr()); if (monday > cur) monday = cur;
+    const sun = addDays(monday, 6);
+    $('zFrom').value = monday; $('zTo').value = sun > todayStr() ? todayStr() : sun;
+    renderInternInfo();
+    return runTimes();
+  }
+  const weekBase = () => weekStart($('zFrom').value || todayStr());
+  $('zPrev').addEventListener('click', () => setWeek(addDays(weekBase(), -7)));
+  $('zNext').addEventListener('click', () => setWeek(addDays(weekBase(), 7)));
+  $('zNow').addEventListener('click', () => setWeek(weekStart(todayStr())));
+  ['zFrom', 'zTo'].forEach(r => $(r).addEventListener('change', updWeek));
 
   // --- Personio: Arbeitsminuten je Tag (aus „⟳ Aus Personio holen“ oder der CSV „Stundenzettel exportieren“) ---
   const personioBase = () => {
