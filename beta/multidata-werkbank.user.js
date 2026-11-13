@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.6
+// @version      1.8.0.8
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1437,6 +1437,33 @@
   #mdqt-panel tr.ghead .gcnt{font-weight:500;font-size:12px;color:var(--mq-muted);margin-left:8px}
   #mdqt-panel .tag.topic{background:var(--mq-accent-soft);color:var(--mq-accent-fg);margin-left:4px}
   #mdqt-panel .topic-row{margin-top:6px;align-items:center;gap:6px}
+  #mdqt-panel .favbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-2px 0 10px;padding-bottom:10px;border-bottom:1px solid var(--mq-line)}
+  #mdqt-panel .favbar::before{content:'★';color:var(--mq-amber);font-size:14px;margin-right:2px}
+  #mdqt-panel .fchip{border:1px solid var(--mq-border2);background:var(--mq-btn);color:var(--mq-fg);border-radius:999px;padding:4px 12px;font:600 12px/1.3 var(--mq-font);cursor:pointer;
+    transition:background .12s,border-color .12s,color .12s}
+  #mdqt-panel .fchip:hover{border-color:var(--mq-accent);color:var(--mq-accent-fg);background:var(--mq-accent-soft)}
+  #mdqt-panel .fchip.on{background:var(--mq-accent);border-color:var(--mq-accent);color:var(--mq-on-accent)}
+  #mdqt-panel .fchip:focus-visible{outline:none;box-shadow:0 0 0 3px var(--mq-ring)}
+  #mdqt-panel .chips.list .chip .star{font-style:normal;color:var(--mq-muted);margin-right:8px;padding:0 2px;border-radius:4px;font-size:14px}
+  #mdqt-panel .chips.list .chip .star:hover{color:var(--mq-amber);background:var(--mq-soft2)}
+  #mdqt-panel .chips.list .chip .star.on{color:var(--mq-amber)}
+  #mdqt-panel .mic{border:1px solid transparent;background:transparent;border-radius:var(--mq-r-sm);cursor:pointer;font-size:13px;line-height:1;padding:3px 7px;min-height:24px}
+  #mdqt-panel .tb .mic{margin-left:auto}
+  #mdqt-panel .mic:hover:not(:disabled){background:var(--mq-btn);border-color:var(--mq-border2)}
+  #mdqt-panel .mic:disabled{opacity:.35;cursor:not-allowed}
+  #mdqt-panel .mic.on{background:#fee2e2;border-color:#ef4444;animation:mqRec 1.2s ease-in-out infinite}
+  #mdqt-panel.dark .mic.on{background:#3b1d1d}
+  @keyframes mqRec{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.45)}50%{box-shadow:0 0 0 5px rgba(239,68,68,0)}}
+  #mdqt-panel label.lmic{display:flex;align-items:center;gap:6px}
+  #mdqt-panel .mic.inl{padding:1px 6px;min-height:22px;font-size:12px}
+  #mdqt-panel.nomic .mic{display:none}
+  #mdqt-panel .dictbar{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);z-index:59;display:none;align-items:center;gap:10px;max-width:min(640px,calc(100% - 32px));
+    padding:7px 8px 7px 14px;border-radius:999px;background:var(--mq-bg);border:1px solid #fca5a5;box-shadow:0 12px 28px -8px rgba(0,0,0,.35);font-size:13px}
+  #mdqt-panel .dictbar.show{display:flex}
+  #mdqt-panel .dictbar .rec{width:10px;height:10px;border-radius:50%;background:#ef4444;flex:none;animation:mqBlink 1s ease-in-out infinite}
+  @keyframes mqBlink{50%{opacity:.25}}
+  #mdqt-panel .dictbar .dt{font-weight:600;white-space:nowrap}
+  #mdqt-panel .dictbar .im{color:var(--mq-muted);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
   #mdqt-panel .wk{display:flex}
   #mdqt-panel .wk .btn{border-radius:0;margin-left:-1px;box-shadow:none;padding:5px 10px}
   #mdqt-panel .wk .btn:first-child{border-radius:var(--mq-r) 0 0 var(--mq-r);margin-left:0;font-size:16px;line-height:1}
@@ -1672,6 +1699,7 @@
         <button class="btn sm" data-ref="teamHintGo">Zu den Einstellungen</button> <button class="btn sm sec" data-ref="teamHintNo">Später</button></div>
       <!-- SUCHE -->
       <section data-tab="search" class="active">
+        <div class="favbar" data-ref="sFavBar" style="display:none"></div>
         <div class="row bar">
           <div class="c"><input type="text" data-ref="sText" placeholder="🔎 Betreff oder Ticket-Nr. …" title="Freitext: Betreff oder Ticket-ID"></div>
           <div class="dd r" data-dd="tpl">
@@ -1778,8 +1806,8 @@
         <div class="results" data-ref="nResults" style="display:none"></div>
         <div class="chips" data-ref="nRecent"></div>
         <div class="msg" data-ref="nFirm"></div>
-        <label class="l">Betreff *</label><input type="text" data-ref="nTitle" spellcheck="true" lang="de">
-        <label class="l">Beschreibung</label><textarea data-ref="nDesc" spellcheck="true" lang="de"></textarea>
+        <label class="l lmic" data-ref="nTitleL">Betreff *</label><input type="text" data-ref="nTitle" spellcheck="true" lang="de">
+        <label class="l lmic" data-ref="nDescL">Beschreibung</label><textarea data-ref="nDesc" spellcheck="true" lang="de"></textarea>
         <label class="chk"><input type="checkbox" data-ref="nNoNotify"> Keine Benachrichtigungen (dann gehen zu diesem Ticket keine Mails raus)</label>
         <label class="chk"><input type="checkbox" data-ref="nWithTime"> Direkt Zeit buchen</label>
         <div data-ref="nTimeBox" style="display:none"></div>
@@ -1859,6 +1887,17 @@
       <section data-tab="settings">
         <details class="card set" data-set="look"><summary>Darstellung</summary>
         <div class="row"><div class="c s" style="flex-basis:260px"><select data-ref="stTheme"><option value="auto">Automatisch (wie Windows/Browser)</option><option value="light">Hell</option><option value="dark">Dunkel</option></select></div></div>
+        <label class="chk" style="display:flex;margin-top:8px"><input type="checkbox" data-ref="stFavBar"> Favorisierte Suchvorlagen (★) als Leiste über der Suche anzeigen</label>
+        <div class="hint" style="margin:2px 0 0 22px">Vorlagen favorisieren: in der Suche unter ☆ Vorlagen auf den Stern klicken. Ein Klick in der Leiste wendet die Vorlage an und sucht sofort.</div>
+        </details>
+        <details class="card set" data-set="dict"><summary>Diktieren (Spracheingabe)</summary>
+        <div class="hint">Der Knopf 🎤 an Kommentar, Beschreibung, Betreff, Signatur und Textbausteinen startet das Diktat; ein zweiter Klick oder Esc beendet es. Der Text landet an der Einfügemarke.
+          Es wird die Spracherkennung des Browsers genutzt (Chrome oder Edge). <b>Dabei schickt der Browser die Sprachaufnahme an seinen Anbieter</b> (Chrome: Google, Edge: Microsoft) – bitte keine vertraulichen Daten diktieren, wenn das nicht erlaubt ist.</div>
+        <div class="row" style="margin-top:6px;align-items:center">
+          <div class="c s" style="flex-basis:200px"><label class="l">Sprache</label><select data-ref="stDictLang"><option value="de-DE">Deutsch (Deutschland)</option><option value="de-AT">Deutsch (Österreich)</option><option value="de-CH">Deutsch (Schweiz)</option><option value="en-US">Englisch (USA)</option><option value="en-GB">Englisch (UK)</option></select></div>
+        </div>
+        <label class="chk" style="display:flex;margin-top:8px"><input type="checkbox" data-ref="stDictCmd"> Sprachbefehle: „Punkt“, „Komma“, „Doppelpunkt“, „Fragezeichen“, „Ausrufezeichen“, „neue Zeile“, „neuer Absatz“</label>
+        <label class="chk" style="display:flex;margin-top:4px"><input type="checkbox" data-ref="stDictShow"> Mikrofon-Knopf 🎤 anzeigen</label>
         </details>
         <details class="card set" data-set="sig"><summary>Signatur &amp; Textbausteine</summary>
         <div class="hint">Wird bei „Als Mail senden“ automatisch angehängt (abschaltbar) und steht im Editor unter „✍ Signatur“ bereit. Einfügen aus Outlook inkl. Logo per Strg+V möglich.</div>
@@ -2558,24 +2597,51 @@
     { id: 'my-open', name: 'Meine offenen Tickets', fs: { users: [userItem('__ME__')], statuses: OPEN_STATUSES } },
     { id: 'all-open', name: 'Alle offenen Tickets', fs: { users: [], statuses: OPEN_STATUSES } },
   ];
+  // Vorlage anwenden: gilt vollständig (fehlende Felder = alle) und sucht sofort
+  function applyTemplate(tp) {
+    ui.activeTpl = tp.id;
+    applyFilterState({ users: [], custs: [], queues: [], ...tp.fs }); runSearch();
+    renderFavBar();
+  }
   function renderTemplates() {
     const box = $('sTpl'); box.innerHTML = '';
     for (const tp of templates()) {
-      const c = el('button', { className: 'chip', title: 'Vorlage anwenden und suchen' }); c.textContent = tp.name;
+      const c = el('button', { className: 'chip', title: 'Vorlage anwenden und suchen' });
+      const star = el('i', { className: 'star' + (tp.fav ? ' on' : ''), textContent: tp.fav ? '★' : '☆', title: tp.fav ? 'Aus der Favoritenleiste entfernen' : 'Als Favorit in die Leiste über der Suche' });
+      c.append(star, el('span', { textContent: tp.name }));
       const x = el('b', { textContent: ' ×', title: 'Vorlage löschen' }); x.style.marginLeft = '4px';
       c.appendChild(x);
       c.addEventListener('click', e => {
         if (e.target === x) return;
-        applyFilterState({ users: [], custs: [], queues: [], ...tp.fs }); runSearch(); // Vorlage gilt vollständig (fehlende Felder = alle)
+        if (e.target === star) { // Favorit umschalten, Menü bleibt offen
+          e.stopPropagation();
+          store.set(CFG.store.templates, templates().map(t => t.id === tp.id ? { ...t, fav: !t.fav } : t));
+          renderTemplates(); return;
+        }
+        applyTemplate(tp);
       });
       confirmBtn(x, ' Löschen?', async () => { store.set(CFG.store.templates, templates().filter(t => t.id !== tp.id)); renderTemplates(); });
       box.appendChild(c);
+    }
+    renderFavBar();
+  }
+  // Favoritenleiste über der Suche: favorisierte Vorlagen als Knöpfe zum schnellen Wechseln (abschaltbar unter ⚙ → Darstellung)
+  function renderFavBar() {
+    const bar = $('sFavBar'), favs = templates().filter(t => t.fav);
+    bar.innerHTML = '';
+    bar.style.display = settings().favBar !== false && favs.length ? '' : 'none';
+    for (const tp of favs) {
+      const b = el('button', { type: 'button', className: 'fchip' + (ui.activeTpl === tp.id ? ' on' : ''), title: 'Vorlage „' + tp.name + '“ anwenden und suchen' });
+      b.textContent = tp.name;
+      b.addEventListener('click', () => applyTemplate(tp));
+      bar.appendChild(b);
     }
   }
   $('sTplAdd').addEventListener('click', () => { $('sTplNew').style.display = ''; $('sTplName').focus(); });
   const saveTemplate = () => {
     const name = $('sTplName').value.trim(); if (!name) return;
-    store.set(CFG.store.templates, [...templates().filter(t => t.name !== name), { id: 't' + Date.now(), name, fs: getFilterState() }]);
+    const old = templates().find(t => t.name === name);
+    store.set(CFG.store.templates, [...templates().filter(t => t.name !== name), { id: old ? old.id : 't' + Date.now(), name, fs: getFilterState(), ...(old && old.fav ? { fav: true } : {}) }]);
     $('sTplName').value = ''; $('sTplNew').style.display = 'none'; renderTemplates();
     msg('sMsg', `✔ Vorlage „${name}“ gespeichert.`, 'ok');
   };
@@ -2695,7 +2761,7 @@
     sumRow('Summe', sum, rows.length, 'tsum');
     const box = $('sResults'); box.innerHTML = ''; box.appendChild(tbl);
   }
-  $('sReset').addEventListener('click', () => { applyFilterState(defaultFilterState()); readFilters(); msg('sMsg', 'Filter zurückgesetzt.'); });
+  $('sReset').addEventListener('click', () => { ui.activeTpl = null; applyFilterState(defaultFilterState()); readFilters(); renderFavBar(); msg('sMsg', 'Filter zurückgesetzt.'); });
 
   // ================= TICKET =================
   async function openTicket(sid, switchTab = true) {
@@ -3676,12 +3742,109 @@
   }
   const LIST_BTNS = `<button type="button" data-li="ul" title="Aufzählung ein/aus">•≡</button><button type="button" data-li="ol" title="Nummerierung ein/aus">1≡</button>
     <button type="button" data-li="out" title="Einzug verringern (Umschalt+Tab; am Anfang eines Punkts auch Rücktaste)">⇤</button><button type="button" data-li="in" title="Einzug vergrößern (Tab)">⇥</button>`;
+  // ================= DIKTIEREN (Spracheingabe) =================
+  // Spracherkennung des Browsers (Web Speech API; Chrome/Edge). Der Browser schickt das Audio dafür an seinen Anbieter.
+  // Erkannter Text wird an der Einfügemarke eingefügt (Editor: wie getippt, mit Rückgängig; Textfeld: an der Cursorposition).
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const dict = { rec: null, target: null, btn: null, on: false };
+  const MIC_TITLE = 'Diktieren: Klick startet, erneuter Klick oder Esc beendet.\nSprachbefehle: „Punkt“, „Komma“, „Fragezeichen“, „neue Zeile“, „neuer Absatz“ (⚙ → Diktieren)';
+  const SPOKEN = [[/\s*\bneuer absatz\b\s*/gi, '\n\n'], [/\s*\bneue zeile\b\s*/gi, '\n'], [/\s*\bdoppelpunkt\b/gi, ':'], [/\s*\bfragezeichen\b/gi, '?'],
+    [/\s*\bausrufezeichen\b/gi, '!'], [/\s*\bkomma\b/gi, ','], [/\s*\bpunkt\b/gi, '.']];
+  const dictBar = el('div', { className: 'dictbar' });
+  dictBar.innerHTML = '<span class="rec"></span><span class="dt">Diktat läuft …</span><span class="im"></span><button type="button" class="btn sm sec">■ Stopp</button>';
+  dictBar.querySelector('button').addEventListener('click', () => dictStop());
+  panel.appendChild(dictBar);
+  const applyDictShow = () => panel.classList.toggle('nomic', settings().dictShow === false);
+  applyDictShow();
+  function dictInsert(target, raw) {
+    let t = String(raw || '').trim(); if (!t) return;
+    if (settings().dictCommands !== false) for (const [re, r] of SPOKEN) t = t.replace(re, r);
+    const isRte = target.isContentEditable;
+    let before;
+    if (isRte) {
+      target.focus();
+      const sel = getSelection();
+      if (!sel.rangeCount || !target.contains(sel.anchorNode)) { const r = document.createRange(); r.selectNodeContents(target); r.collapse(false); sel.removeAllRanges(); sel.addRange(r); }
+      const r = sel.getRangeAt(0).cloneRange(); r.setStart(target, 0); before = r.toString();
+    } else before = target.value.slice(0, target.selectionStart ?? target.value.length);
+    // Satzanfang groß, Leerzeichen zum vorhandenen Text
+    if (!before.trim() || /[.!?:]\s*$|\n\s*$/.test(before)) t = t.replace(/^(\s*)(\p{Ll})/u, (m, a, c) => a + c.toUpperCase());
+    t = t.replace(/([.!?]\s+|\n)(\p{Ll})/gu, (m, a, c) => a + c.toUpperCase());
+    if (before && !/\s$/.test(before) && !/^[\s.,:!?]/.test(t)) t = ' ' + t;
+    if (isRte) {
+      if (target._um) target._um.checkpoint();
+      t.split('\n').forEach((part, i) => { if (i) document.execCommand('insertLineBreak'); if (part) document.execCommand('insertText', false, part); });
+    } else {
+      if (target.tagName === 'INPUT') t = t.replace(/\s*\n+\s*/g, ' ');
+      const a = target.selectionStart ?? target.value.length, b = target.selectionEnd ?? a;
+      target.setRangeText(t, a, b, 'end');
+    }
+    target.dispatchEvent(new Event('input', { bubbles: true })); // Entwurf speichern usw.
+  }
+  const dictErr = {
+    'not-allowed': 'Mikrofon nicht erlaubt – in der Adressleiste beim Symbol links das Mikrofon für diese Seite erlauben.',
+    'service-not-allowed': 'Spracherkennung ist in diesem Browser gesperrt (Richtlinie?). Chrome oder Edge verwenden.',
+    'audio-capture': 'Kein Mikrofon gefunden.',
+    'network': 'Spracherkennung nicht erreichbar – Internetverbindung prüfen (der Dienst des Browsers wird benötigt).',
+    'language-not-supported': 'Diese Sprache wird von der Spracherkennung nicht unterstützt (⚙ → Diktieren).',
+  };
+  function dictUi(interim = '') {
+    panel.querySelectorAll('.mic').forEach(b => { const on = dict.on && b === dict.btn; b.classList.toggle('on', on); b.title = on ? 'Diktat beenden (Klick oder Esc)' : (SR ? MIC_TITLE : b.title); });
+    dictBar.classList.toggle('show', dict.on);
+    dictBar.querySelector('.im').textContent = interim;
+  }
+  function dictStop() {
+    dict.on = false;
+    try { if (dict.rec) dict.rec.stop(); } catch { /* schon beendet */ }
+    dictUi();
+  }
+  function dictStart(target, btn) {
+    if (dict.on) { const same = dict.target === target; dictStop(); if (same) return; }
+    const rec = new SR();
+    rec.lang = settings().dictLang || 'de-DE'; rec.continuous = true; rec.interimResults = true;
+    Object.assign(dict, { rec, target, btn, on: true });
+    rec.onresult = e => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) dictInsert(target, r[0].transcript); else interim += r[0].transcript;
+      }
+      if (dict.rec === rec) dictUi(interim);
+    };
+    rec.onerror = e => {
+      if (e.error === 'no-speech' || e.error === 'aborted') return; // Pause beim Sprechen bzw. selbst beendet
+      if (dict.rec === rec) { dict.on = false; dictUi(); }
+      toast(dictErr[e.error] || 'Diktat abgebrochen: ' + e.error);
+    };
+    // Der Browser beendet die Erkennung nach längeren Pausen von selbst → weiterlaufen lassen, bis der Nutzer stoppt
+    rec.onend = () => {
+      if (dict.rec !== rec) return;
+      if (dict.on && target.isConnected) { try { rec.start(); return; } catch { /* neu starten nicht möglich */ } }
+      dict.on = false; dictUi();
+    };
+    try { rec.start(); } catch (e) { dict.on = false; toast('Diktat konnte nicht starten: ' + e.message); }
+    dictUi();
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && dict.on) { e.stopPropagation(); dictStop(); } }, true);
+  // Mikrofon-Knopf für ein Textfeld (Editor, textarea oder input)
+  function micBtn(target, extraClass = '') {
+    const b = el('button', { type: 'button', className: 'mic' + (extraClass ? ' ' + extraClass : ''), textContent: '🎤',
+      title: SR ? MIC_TITLE : 'Diktieren wird von diesem Browser nicht unterstützt – bitte Chrome oder Edge verwenden.' });
+    if (!SR) b.disabled = true;
+    b.addEventListener('mousedown', e => e.preventDefault()); // Einfügemarke im Textfeld behalten
+    b.addEventListener('click', () => dictStart(target, b));
+    return b;
+  }
+  $('nTitleL').appendChild(micBtn($('nTitle'), 'inl'));
+  $('nDescL').appendChild(micBtn($('nDesc'), 'inl'));
+
   // Kleine Werkzeugleiste für Kommentar bearbeiten, Signatur, Textbausteine
   function rteBar(rte, sizeKey = null) {
     const tb = el('div', { className: 'tb' });
     tb.innerHTML = `<button type="button" data-cmd="bold" title="Fett (Strg+B)"><b>F</b></button><button type="button" data-cmd="italic" title="Kursiv (Strg+I)"><i>K</i></button>
       <button type="button" data-cmd="underline" title="Unterstrichen (Strg+U)"><u>U</u></button><span class="sep"></span>${LIST_BTNS}<span class="sep"></span>
       <button type="button" data-cmd="removeFormat" title="Formatierung entfernen">✕</button>`;
+    tb.appendChild(micBtn(rte));
     rte.before(tb);
     const um = setupRte(rte, { toolbar: tb, sizeKey });
     tb.querySelectorAll('button[data-cmd]').forEach(b => b.addEventListener('mousedown', e => {
@@ -3774,6 +3937,7 @@
 
     // Text-Editor: Toolbar + Bilder aus der Zwischenablage als eingebettete Bilder (wie MultiData)
     const rte = $('fText', w);
+    w.querySelector('.tb').appendChild(micBtn(rte));
     // Auswahl im Editor merken (Toolbar-Felder nehmen den Fokus weg)
     let savedRange = null;
     const saveSel = () => { const sel = getSelection(); if (sel.rangeCount && rte.contains(sel.anchorNode)) savedRange = sel.getRangeAt(0).cloneRange(); };
@@ -4164,6 +4328,8 @@
   function renderSettings() {
     const st = settings();
     $('stTheme').value = st.theme || 'auto';
+    $('stFavBar').checked = st.favBar !== false;
+    $('stDictLang').value = st.dictLang || 'de-DE'; $('stDictCmd').checked = st.dictCommands !== false; $('stDictShow').checked = st.dictShow !== false;
     $('stSig').innerHTML = sanitize(st.signature || '');
     $('stAuto').checked = st.autoSignature !== false;
     $('stMd').checked = st.showMdBlocks !== false;
@@ -4345,6 +4511,10 @@
     box.appendChild(c);
   }
   rteBar($('stSig'), 'sig');
+  $('stDictLang').addEventListener('change', () => saveSettings({ ...settings(), dictLang: $('stDictLang').value }));
+  $('stDictCmd').addEventListener('change', () => saveSettings({ ...settings(), dictCommands: $('stDictCmd').checked }));
+  $('stDictShow').addEventListener('change', () => { saveSettings({ ...settings(), dictShow: $('stDictShow').checked }); applyDictShow(); });
+  $('stFavBar').addEventListener('change', () => { saveSettings({ ...settings(), favBar: $('stFavBar').checked }); renderFavBar(); });
   $('stTheme').addEventListener('change', () => { saveSettings({ ...settings(), theme: $('stTheme').value }); applyTheme(); });
 
   // Dark Mode: automatisch nach System oder fest hell/dunkel
