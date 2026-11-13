@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.6
+// @version      1.8.0.7
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1437,6 +1437,16 @@
   #mdqt-panel tr.ghead .gcnt{font-weight:500;font-size:12px;color:var(--mq-muted);margin-left:8px}
   #mdqt-panel .tag.topic{background:var(--mq-accent-soft);color:var(--mq-accent-fg);margin-left:4px}
   #mdqt-panel .topic-row{margin-top:6px;align-items:center;gap:6px}
+  #mdqt-panel .favbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-2px 0 10px;padding-bottom:10px;border-bottom:1px solid var(--mq-line)}
+  #mdqt-panel .favbar::before{content:'★';color:var(--mq-amber);font-size:14px;margin-right:2px}
+  #mdqt-panel .fchip{border:1px solid var(--mq-border2);background:var(--mq-btn);color:var(--mq-fg);border-radius:999px;padding:4px 12px;font:600 12px/1.3 var(--mq-font);cursor:pointer;
+    transition:background .12s,border-color .12s,color .12s}
+  #mdqt-panel .fchip:hover{border-color:var(--mq-accent);color:var(--mq-accent-fg);background:var(--mq-accent-soft)}
+  #mdqt-panel .fchip.on{background:var(--mq-accent);border-color:var(--mq-accent);color:var(--mq-on-accent)}
+  #mdqt-panel .fchip:focus-visible{outline:none;box-shadow:0 0 0 3px var(--mq-ring)}
+  #mdqt-panel .chips.list .chip .star{font-style:normal;color:var(--mq-muted);margin-right:8px;padding:0 2px;border-radius:4px;font-size:14px}
+  #mdqt-panel .chips.list .chip .star:hover{color:var(--mq-amber);background:var(--mq-soft2)}
+  #mdqt-panel .chips.list .chip .star.on{color:var(--mq-amber)}
   #mdqt-panel .wk{display:flex}
   #mdqt-panel .wk .btn{border-radius:0;margin-left:-1px;box-shadow:none;padding:5px 10px}
   #mdqt-panel .wk .btn:first-child{border-radius:var(--mq-r) 0 0 var(--mq-r);margin-left:0;font-size:16px;line-height:1}
@@ -1672,6 +1682,7 @@
         <button class="btn sm" data-ref="teamHintGo">Zu den Einstellungen</button> <button class="btn sm sec" data-ref="teamHintNo">Später</button></div>
       <!-- SUCHE -->
       <section data-tab="search" class="active">
+        <div class="favbar" data-ref="sFavBar" style="display:none"></div>
         <div class="row bar">
           <div class="c"><input type="text" data-ref="sText" placeholder="🔎 Betreff oder Ticket-Nr. …" title="Freitext: Betreff oder Ticket-ID"></div>
           <div class="dd r" data-dd="tpl">
@@ -1859,6 +1870,8 @@
       <section data-tab="settings">
         <details class="card set" data-set="look"><summary>Darstellung</summary>
         <div class="row"><div class="c s" style="flex-basis:260px"><select data-ref="stTheme"><option value="auto">Automatisch (wie Windows/Browser)</option><option value="light">Hell</option><option value="dark">Dunkel</option></select></div></div>
+        <label class="chk" style="display:flex;margin-top:8px"><input type="checkbox" data-ref="stFavBar"> Favorisierte Suchvorlagen (★) als Leiste über der Suche anzeigen</label>
+        <div class="hint" style="margin:2px 0 0 22px">Vorlagen favorisieren: in der Suche unter ☆ Vorlagen auf den Stern klicken. Ein Klick in der Leiste wendet die Vorlage an und sucht sofort.</div>
         </details>
         <details class="card set" data-set="sig"><summary>Signatur &amp; Textbausteine</summary>
         <div class="hint">Wird bei „Als Mail senden“ automatisch angehängt (abschaltbar) und steht im Editor unter „✍ Signatur“ bereit. Einfügen aus Outlook inkl. Logo per Strg+V möglich.</div>
@@ -2558,24 +2571,51 @@
     { id: 'my-open', name: 'Meine offenen Tickets', fs: { users: [userItem('__ME__')], statuses: OPEN_STATUSES } },
     { id: 'all-open', name: 'Alle offenen Tickets', fs: { users: [], statuses: OPEN_STATUSES } },
   ];
+  // Vorlage anwenden: gilt vollständig (fehlende Felder = alle) und sucht sofort
+  function applyTemplate(tp) {
+    ui.activeTpl = tp.id;
+    applyFilterState({ users: [], custs: [], queues: [], ...tp.fs }); runSearch();
+    renderFavBar();
+  }
   function renderTemplates() {
     const box = $('sTpl'); box.innerHTML = '';
     for (const tp of templates()) {
-      const c = el('button', { className: 'chip', title: 'Vorlage anwenden und suchen' }); c.textContent = tp.name;
+      const c = el('button', { className: 'chip', title: 'Vorlage anwenden und suchen' });
+      const star = el('i', { className: 'star' + (tp.fav ? ' on' : ''), textContent: tp.fav ? '★' : '☆', title: tp.fav ? 'Aus der Favoritenleiste entfernen' : 'Als Favorit in die Leiste über der Suche' });
+      c.append(star, el('span', { textContent: tp.name }));
       const x = el('b', { textContent: ' ×', title: 'Vorlage löschen' }); x.style.marginLeft = '4px';
       c.appendChild(x);
       c.addEventListener('click', e => {
         if (e.target === x) return;
-        applyFilterState({ users: [], custs: [], queues: [], ...tp.fs }); runSearch(); // Vorlage gilt vollständig (fehlende Felder = alle)
+        if (e.target === star) { // Favorit umschalten, Menü bleibt offen
+          e.stopPropagation();
+          store.set(CFG.store.templates, templates().map(t => t.id === tp.id ? { ...t, fav: !t.fav } : t));
+          renderTemplates(); return;
+        }
+        applyTemplate(tp);
       });
       confirmBtn(x, ' Löschen?', async () => { store.set(CFG.store.templates, templates().filter(t => t.id !== tp.id)); renderTemplates(); });
       box.appendChild(c);
+    }
+    renderFavBar();
+  }
+  // Favoritenleiste über der Suche: favorisierte Vorlagen als Knöpfe zum schnellen Wechseln (abschaltbar unter ⚙ → Darstellung)
+  function renderFavBar() {
+    const bar = $('sFavBar'), favs = templates().filter(t => t.fav);
+    bar.innerHTML = '';
+    bar.style.display = settings().favBar !== false && favs.length ? '' : 'none';
+    for (const tp of favs) {
+      const b = el('button', { type: 'button', className: 'fchip' + (ui.activeTpl === tp.id ? ' on' : ''), title: 'Vorlage „' + tp.name + '“ anwenden und suchen' });
+      b.textContent = tp.name;
+      b.addEventListener('click', () => applyTemplate(tp));
+      bar.appendChild(b);
     }
   }
   $('sTplAdd').addEventListener('click', () => { $('sTplNew').style.display = ''; $('sTplName').focus(); });
   const saveTemplate = () => {
     const name = $('sTplName').value.trim(); if (!name) return;
-    store.set(CFG.store.templates, [...templates().filter(t => t.name !== name), { id: 't' + Date.now(), name, fs: getFilterState() }]);
+    const old = templates().find(t => t.name === name);
+    store.set(CFG.store.templates, [...templates().filter(t => t.name !== name), { id: old ? old.id : 't' + Date.now(), name, fs: getFilterState(), ...(old && old.fav ? { fav: true } : {}) }]);
     $('sTplName').value = ''; $('sTplNew').style.display = 'none'; renderTemplates();
     msg('sMsg', `✔ Vorlage „${name}“ gespeichert.`, 'ok');
   };
@@ -2695,7 +2735,7 @@
     sumRow('Summe', sum, rows.length, 'tsum');
     const box = $('sResults'); box.innerHTML = ''; box.appendChild(tbl);
   }
-  $('sReset').addEventListener('click', () => { applyFilterState(defaultFilterState()); readFilters(); msg('sMsg', 'Filter zurückgesetzt.'); });
+  $('sReset').addEventListener('click', () => { ui.activeTpl = null; applyFilterState(defaultFilterState()); readFilters(); renderFavBar(); msg('sMsg', 'Filter zurückgesetzt.'); });
 
   // ================= TICKET =================
   async function openTicket(sid, switchTab = true) {
@@ -4164,6 +4204,7 @@
   function renderSettings() {
     const st = settings();
     $('stTheme').value = st.theme || 'auto';
+    $('stFavBar').checked = st.favBar !== false;
     $('stSig').innerHTML = sanitize(st.signature || '');
     $('stAuto').checked = st.autoSignature !== false;
     $('stMd').checked = st.showMdBlocks !== false;
@@ -4345,6 +4386,7 @@
     box.appendChild(c);
   }
   rteBar($('stSig'), 'sig');
+  $('stFavBar').addEventListener('change', () => { saveSettings({ ...settings(), favBar: $('stFavBar').checked }); renderFavBar(); });
   $('stTheme').addEventListener('change', () => { saveSettings({ ...settings(), theme: $('stTheme').value }); applyTheme(); });
 
   // Dark Mode: automatisch nach System oder fest hell/dunkel
