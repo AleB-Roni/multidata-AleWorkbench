@@ -133,7 +133,8 @@ Damit sich die Datei nach dem Download sofort in Office öffnet, braucht der Bro
 ## Datenschutz
 
 - Lokal im Browser (localStorage) liegen: Signatur, Textbausteine, Entwürfe, Filter und Vorlagen, Personio-Zeiten und -Abwesenheiten (falls übernommen), Posteingangs-Vorschau, Protokoll, Ticket-Verlauf (zuletzt gesehener Stand der letzten 400 Tickets) und die Nummern der internen Zeiten-Tickets.
-- Diese Daten werden nirgendwohin übertragen. **Ausnahme Diktieren:** Nur solange ein Diktat läuft (🎤), schickt der Browser die Sprachaufnahme an seinen Spracherkennungsdienst (Chrome: Google, Edge: Microsoft). Die Werkbank selbst speichert oder sendet keine Aufnahmen. Wer das nicht möchte, blendet den Knopf unter ⚙ → Diktieren aus. Unter ⚙ → „Alle Werkbank-Daten in diesem Browser löschen“ lassen sie sich entfernen.
+- Diese Daten werden nirgendwohin übertragen. Unter ⚙ → „Alle Werkbank-Daten in diesem Browser löschen“ lassen sie sich entfernen.
+- **Diktieren:** Nur solange ein Diktat läuft (🎤), schickt der Browser die Sprachaufnahme an seinen Spracherkennungsdienst (Chrome: Google, Edge: Microsoft). Die Werkbank selbst speichert oder sendet keine Aufnahmen. Wer das nicht möchte, blendet den Knopf unter ⚙ → Diktieren aus.
 - Das Skript spricht im Betrieb nur mit `csp.synaforce.com` und – bei „⟳ Aus Personio holen“ – im Personio-Fenster mit der eigenen Personio-Instanz. Vorschauen entstehen im Browser; „In Office öffnen“ lädt in den Downloads-Ordner. Nichts wird in eine Cloud hochgeladen.
 - Tampermonkey lädt beim Installieren/Aktualisieren zusätzlich die Vorschau-Bibliotheken von `cdn.jsdelivr.net` und `cdn.sheetjs.com` (fest versioniert, mit Prüfsumme).
 
