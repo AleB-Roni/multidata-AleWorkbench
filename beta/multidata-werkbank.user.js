@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.9
+// @version      1.8.0.10
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -744,6 +744,9 @@
 
   // --- Tickets ---
   const ticketBy = async filter => (await load('MDERRDA', { filter, sqlColumns: TICKET_DETAIL_COLS }))[0] || null;
+  // Alle Felder eines Tickets (ohne Spaltenauswahl) – für Kontaktdaten wie Telefon oder Ansprechpartner.
+  // Welche Felder es gibt, hängt von der MultiData-Konfiguration ab; die Werkbank erkennt sie am Namen.
+  const ticketAllFields = sid => load('MDERRDA', { filter: [['SID', '=', Number(sid)]], take: 1 }).then(r => r[0] || null);
   const ticketBySid = sid => ticketBy([['SID', '=', Number(sid)]]);
   const ticketByRowId = id => ticketBy([['ROW_ID', '=', id]]);
   const orFilter = (field, vals) => vals.map(v => [field, '=', v]).flatMap((f, i) => i ? ['or', f] : [f]);
@@ -1576,6 +1579,22 @@
   #mdqt-panel .tcom .btabs button[data-b]{font-size:15px;font-weight:700;padding:4px 8px 10px}
   #mdqt-panel .tcom>div>.card:first-child{margin-top:6px}
   #mdqt-panel .doc .nm{flex:1;word-break:break-all}
+  #mdqt-panel .contact{margin-top:10px;display:flex;flex-direction:column;gap:4px}
+  #mdqt-panel .crow{display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--mq-line);min-width:0}
+  #mdqt-panel .crow:last-of-type{border-bottom:none}
+  #mdqt-panel .crow .cl{flex:0 0 34%;max-width:170px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:var(--mq-muted);line-height:1.3}
+  #mdqt-panel .crow .btn.cp{opacity:0;transition:opacity .1s}
+  #mdqt-panel .crow:hover .btn.cp,#mdqt-panel .crow .btn.cp:focus-visible{opacity:1}
+  #mdqt-panel .crow .cv{flex:1;min-width:0;overflow-wrap:anywhere;font-weight:600}
+  #mdqt-panel .crow a.cv.ph{text-decoration:none;font-variant-numeric:tabular-nums}
+  #mdqt-panel .crow a.cv.ph:hover{text-decoration:underline}
+  #mdqt-panel .crow .btn.sm{flex:none}
+  #mdqt-panel .crow a.btn{color:var(--mq-on-accent)}
+  #mdqt-panel .cfields{margin-top:6px}
+  #mdqt-panel .cfields summary{font-weight:500;font-size:12px;color:var(--mq-muted2)}
+  #mdqt-panel .cflist{display:flex;flex-direction:column;gap:2px;margin-top:4px;max-height:220px;overflow:auto}
+  #mdqt-panel .cflist .chk{margin:2px 0;font-size:12px}
+  #mdqt-panel .cflist .chk i{color:var(--mq-muted);font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #mdqt-panel .doc .dinfo{flex:1;min-width:0;display:flex;flex-direction:column}
   #mdqt-panel .doc .dinfo .nm{word-break:break-all}
   #mdqt-panel .doc .dinfo .hint{font-size:11px}
@@ -1919,6 +1938,14 @@
         <div class="row"><div class="c s" style="flex-basis:260px"><select data-ref="stTheme"><option value="auto">Automatisch (wie Windows/Browser)</option><option value="light">Hell</option><option value="dark">Dunkel</option></select></div></div>
         <label class="chk" style="display:flex;margin-top:8px"><input type="checkbox" data-ref="stFavBar"> Favorisierte Suchvorlagen (★) als Leiste über der Suche anzeigen</label>
         <div class="hint" style="margin:2px 0 0 22px">Vorlagen favorisieren: in der Suche unter ☆ Vorlagen auf den Stern klicken. Ein Klick in der Leiste wendet die Vorlage an und sucht sofort.</div>
+        </details>
+        <details class="card set" data-set="phone"><summary>Telefon &amp; Kontakt</summary>
+        <div class="hint">Telefonnummern in der Ticket-Kachel „Übersicht &amp; Kontakt“ lassen sich direkt anrufen oder kopieren. Welche Felder angezeigt werden, wählt man dort unter „⚙ Felder“.</div>
+        <div class="row" style="margin-top:4px">
+          <div class="c s" style="flex-basis:260px"><label class="l">Anrufen über</label><select data-ref="stCallMode"><option value="teams">Microsoft Teams (Link)</option><option value="tel">Standard-Telefon-App (tel:)</option></select></div>
+          <div class="c s" style="flex-basis:140px"><label class="l">Ländervorwahl</label><input type="text" data-ref="stPhoneCc" placeholder="+49"></div>
+        </div>
+        <div class="hint" style="margin-top:4px">Teams braucht eine Telefonie-Lizenz für Anrufe ins Telefonnetz. Ohne Lizenz die Nummer mit 📋 kopieren. Ist Teams als Standard-App für Telefonlinks eingerichtet, funktioniert auch „tel:“.</div>
         </details>
         <details class="card set" data-set="dict"><summary>Diktieren (Spracheingabe)</summary>
         <div class="hint">Der Knopf 🎤 an Kommentar, Beschreibung, Betreff, Signatur und Textbausteinen startet das Diktat; ein zweiter Klick oder Esc beendet es. Der Text landet an der Einfügemarke.
@@ -2793,6 +2820,112 @@
   }
   $('sReset').addEventListener('click', () => { ui.activeTpl = null; applyFilterState(defaultFilterState()); readFilters(); renderFavBar(); msg('sMsg', 'Filter zurückgesetzt.'); });
 
+  // ================= KONTAKT & TELEFON =================
+  // Kontaktfelder aus dem Ticket (alle Felder) und der Firmenadresse. Telefonnummern: Anruf über Teams (bzw. tel:) oder kopieren.
+  const PHONE_KEY = /(^|_)(TEL|PHONE|FON|MOBIL|HANDY|DURCHWAHL)/i; // „(^|_)“: nicht in TITEL, HOTEL …
+  const FAX_KEY = /FAX/i;
+  const CONTACT_KEY = /(^|_)(TEL|PHONE|FON|MOBIL|HANDY|FAX|DURCHWAHL|ANSPRECH|KONTAKT|CONTACT|ASP|E_?MAIL|ANREDE|VORNAME|ZUNAME|NACHNAME|STRASSE|STR|PLZ|ORT|ABTEILUNG|POSITION)/i;
+  const CONTACT_SKIP = new Set([...TICKET_DETAIL_COLS, 'EMAIL_TO', 'EMAIL_CC', 'ROW_ID', 'ERRQ_ID', 'ERR_ID', 'ABT_ID']);
+  const LABEL_WORDS = { ASP: 'Ansprechpartner', ANSPRECH: 'Ansprechpartner', TEL: 'Telefon', TELEFON: 'Telefon', MOBIL: 'Mobil', HANDY: 'Handy', FAX: 'Fax', PHONE: 'Telefon',
+    STRASSE: 'Straße', STR: 'Straße', PLZ: 'PLZ', ORT: 'Ort', EMAIL: 'E-Mail', MAIL: 'E-Mail', NAME: 'Name', VORNAME: 'Vorname', ZUNAME: 'Nachname', NACHNAME: 'Nachname',
+    ABTEILUNG: 'Abteilung', ANREDE: 'Anrede', DURCHWAHL: 'Durchwahl', KONTAKT: 'Kontakt', POSITION: 'Position', NR: 'Nr.' };
+  const fieldLabel = k => {
+    const last = String(k).split('__').pop().replace(/^(MEMO|FK)_/, '');
+    const pre = /ASP|ANSPRECH|KONTAKT/i.test(k) && !/ASP|ANSPRECH|KONTAKT/i.test(last) ? 'Ansprechpartner · ' : '';
+    return pre + last.split('_').filter(Boolean).map(w => LABEL_WORDS[w.toUpperCase()] || (w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())).join(' ');
+  };
+  const showVal = v => v != null && typeof v !== 'object' && String(v).trim() !== '' && String(v).length <= 300;
+  const isPhoneKey = k => PHONE_KEY.test(k) && !FAX_KEY.test(k) && !/(_ID|_SID)$/i.test(k);
+  // Telefonnummer → internationales Format (+49 …) für Teams/tel:
+  function e164(raw) {
+    let n = String(raw || '').replace(/\(0\)/g, '').replace(/[^\d+]/g, '');
+    const cc = String(settings().phoneCountry || '+49').replace(/[^\d+]/g, '') || '+49';
+    if (n.startsWith('00')) n = '+' + n.slice(2);
+    else if (n.startsWith('0')) n = cc + n.slice(1);
+    else if (!n.startsWith('+') && n.length > 6) n = cc + n;
+    return n.length >= 6 ? n : '';
+  }
+  const callUrl = num => settings().callMode === 'tel' ? 'tel:' + num : 'https://teams.microsoft.com/l/call/0/0?users=4:' + encodeURIComponent(num);
+  // Firmenadresse über die Firmensuche des Dialogs „Ticket anlegen“ (Name muss eindeutig passen)
+  const addrCache = {};
+  async function firmAddress(t) {
+    const name = String(t.MATCHCODE || '').replace(/^\d+\s*-\s*/, '').trim();
+    if (name.length < 3) return null;
+    if (name in addrCache) return addrCache[name];
+    const rows = await searchAddresses(name.slice(0, 40)).catch(() => []);
+    const same = rows.filter(r => normName(r.MATCH) === normName(name));
+    return (addrCache[name] = same.length === 1 ? same[0] : rows.length === 1 ? rows[0] : null);
+  }
+  async function renderContact(box, t) {
+    const sid = t.SID;
+    let all = null, addr = null, err = null;
+    try { [all, addr] = await Promise.all([ticketAllFields(sid), firmAddress(t)]); } catch (e) { err = e; }
+    if (!box.isConnected || !ui.ticket || ui.ticket.SID !== sid) return;
+    // Kandidaten: Ticketfelder (t:) und Firmenfelder (a:)
+    const cand = [];
+    for (const [src, row] of [['t', all], ['a', addr]]) if (row) for (const [k, v] of Object.entries(row)) {
+      if (!showVal(v) || (src === 't' && CONTACT_SKIP.has(k)) || /^(ROW_ID|SID|KND_ID|MATCH)$/.test(k)) continue;
+      cand.push({ id: src + ':' + k, src, k, v: String(v).trim(), auto: CONTACT_KEY.test(k) });
+    }
+    const chosen = settings().contactFields; // null = automatisch
+    const shown = cand.filter(c => chosen ? chosen.includes(c.id) : c.auto);
+    box.innerHTML = '';
+    const row = (label, valueNode, extra = []) => { const r = el('div', { className: 'crow' }); r.append(el('span', { className: 'cl', textContent: label }), valueNode, ...extra); box.appendChild(r); return r; };
+    const copyBtn = (text, title = 'Kopieren', hover = false) => {
+      const b = el('button', { type: 'button', className: 'btn sm sec' + (hover ? ' cp' : ''), textContent: '📋', title });
+      b.addEventListener('click', async () => { try { await copyText(text); b.textContent = '✔'; setTimeout(() => { b.textContent = '📋'; }, 1500); } catch (e) { toast('Kopieren nicht möglich: ' + e.message); } });
+      return b;
+    };
+    const textNode = v => el('span', { className: 'cv', textContent: v });
+    // E-Mail-Empfänger des Tickets
+    if (t.EMAIL_TO) row('An', textNode(t.EMAIL_TO), [copyBtn(t.EMAIL_TO, 'Adresse kopieren', true)]);
+    if (t.EMAIL_CC) row('Cc', textNode(t.EMAIL_CC), [copyBtn(t.EMAIL_CC, 'Adressen kopieren', true)]);
+    // Firmenadresse (Straße, PLZ, Ort) in einer Zeile
+    const disp = [...shown]; // Anzeige (Auswahl in „⚙ Felder“ bleibt feldweise)
+    const part = re => disp.find(c => c.src === 'a' && re.test(c.k));
+    const [aStr, aPlz, aOrt] = [part(/(^|_)STR/i), part(/(^|_)PLZ/i), part(/(^|_)ORT/i)];
+    const adrParts = [aStr, aPlz, aOrt].filter(Boolean);
+    if (adrParts.length >= 2) {
+      const adr = [aStr && aStr.v, [aPlz && aPlz.v, aOrt && aOrt.v].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+      disp.splice(disp.indexOf(adrParts[0]), 0, { id: '_adr', src: 'a', k: 'ADRESSE', v: adr });
+      for (const x of adrParts) disp.splice(disp.indexOf(x), 1);
+    }
+    for (const c of disp) {
+      const label = (c.src === 'a' ? 'Firma · ' : '') + fieldLabel(c.k);
+      const num = isPhoneKey(c.k) ? e164(c.v) : '';
+      if (num) {
+        const a = el('a', { className: 'cv ph', textContent: c.v, href: callUrl(num), target: '_blank', rel: 'noopener', title: (settings().callMode === 'tel' ? 'Anrufen (Standard-App)' : 'Mit Teams anrufen') + ': ' + num });
+        const call = el('a', { className: 'btn sm', textContent: settings().callMode === 'tel' ? '📞 Anrufen' : '📞 Teams', href: callUrl(num), target: '_blank', rel: 'noopener', title: a.title });
+        for (const x of [a, call]) x.addEventListener('click', () => log('Anruf gestartet', `#${t.SID}: ${num}`));
+        row(label, a, [call, copyBtn(num, 'Nummer kopieren (' + num + ')')]).title = c.k;
+      } else row(label, textNode(c.v), [copyBtn(c.v, 'Kopieren', true)]).title = c.k;
+    }
+    if (err) box.appendChild(el('div', { className: 'hint', textContent: 'Weitere Kontaktdaten nicht abrufbar: ' + err.message }));
+    else if (!shown.length && !t.EMAIL_TO) box.appendChild(el('div', { className: 'hint', textContent: 'Keine Kontaktdaten gefunden – unter „⚙ Felder“ auswählen.' }));
+    // Felder wählen: alle nicht leeren Felder von Ticket und Firma; Auswahl gilt für alle Tickets
+    if (cand.length) {
+      const det = el('details', { className: 'cfields' });
+      det.innerHTML = `<summary>⚙ Felder (${cand.length})</summary><div class="hint">Angezeigte Felder wählen (gilt für alle Tickets). Ohne Auswahl erkennt die Werkbank Telefon- und Kontaktfelder automatisch.</div><div class="cflist"></div>
+        <div class="tfoot"><button type="button" class="btn sm sec" data-a="auto">Automatisch</button></div>`;
+      const list = det.querySelector('.cflist');
+      for (const c of cand) {
+        const l = el('label', { className: 'chk', title: c.k });
+        const cb = el('input', { type: 'checkbox', checked: shown.includes(c) });
+        cb.addEventListener('change', () => {
+          const cur = new Set(settings().contactFields || shown.map(x => x.id));
+          cb.checked ? cur.add(c.id) : cur.delete(c.id);
+          saveSettings({ ...settings(), contactFields: [...cur] }); secSet('ticket.cfields', true); renderContact(box, t);
+        });
+        l.append(cb, el('span', { textContent: `${c.src === 'a' ? 'Firma · ' : ''}${fieldLabel(c.k)}: ` }), el('i', { textContent: c.v.length > 40 ? c.v.slice(0, 40) + '…' : c.v }));
+        list.appendChild(l);
+      }
+      det.querySelector('[data-a=auto]').addEventListener('click', () => { const st = settings(); delete st.contactFields; saveSettings(st); renderContact(box, t); });
+      det.open = secGet('ticket.cfields', false);
+      det.addEventListener('toggle', () => secSet('ticket.cfields', det.open));
+      box.appendChild(det);
+    }
+  }
+
   // ================= TICKET =================
   async function openTicket(sid, switchTab = true) {
     if (switchTab) showTab('ticket');
@@ -2873,8 +3006,9 @@
           </div>
         </div>
         <div class="tile">
-          <div class="tth">📊 Übersicht</div>
+          <div class="tth">📇 Übersicht & Kontakt</div>
           <div class="stats" data-ref="hSums"></div>
+          <div class="contact" data-ref="hContact"><div class="hint">Kontaktdaten werden geladen …</div></div>
         </div>
       </div>`;
     view.appendChild(head);
@@ -2946,8 +3080,8 @@
     wbLink($('hNewTab', head), ticketRoute(t.SID), () => openInNewTab(ticketRoute(t.SID)));
     const st = (label, val, cls = '') => `<div class="st${cls ? ' ' + cls : ''}"><span>${label}</span><b>${val}</b></div>`;
     $('hSums', head).innerHTML = st('Angelegt', esc(fmtDateTime(t.ANLAGE_DATUM)) || '–') + st('Ersteller', `<i data-ref="hCreator">${esc(t.ANLAGE_USER_ID || '–')}</i>`) +
-      st('Stunden', fmtH(t.SUM_STD)) + st('abrechenbar', fmtH(t.MEMO_SUM_ABRSTD)) +
-      st('An', esc(t.EMAIL_TO || '–'), 'wide') + (t.EMAIL_CC ? st('Cc', esc(t.EMAIL_CC), 'wide') : '');
+      st('Stunden', fmtH(t.SUM_STD)) + st('abrechenbar', fmtH(t.MEMO_SUM_ABRSTD));
+    renderContact($('hContact', head), t);
     $('hOpen', head).href = mdTicketUrl(t.SID); // immer neuer Tab (Linksklick: wechseln, Mittelklick: im Hintergrund)
     $('hShare', head).addEventListener('click', async ev => {
       const url = mdShareUrl(t.SID), text = ev.shiftKey ? `#${t.SID} ${t.TITEL || ''}\n${url}` : url;
@@ -4371,6 +4505,7 @@
     const st = settings();
     $('stTheme').value = st.theme || 'auto';
     $('stFavBar').checked = st.favBar !== false;
+    $('stCallMode').value = st.callMode || 'teams'; $('stPhoneCc').value = st.phoneCountry || '';
     $('stDictLang').value = st.dictLang || 'de-DE'; $('stDictCmd').checked = st.dictCommands !== false; $('stDictShow').checked = st.dictShow !== false;
     $('stSig').innerHTML = sanitize(st.signature || '');
     $('stAuto').checked = st.autoSignature !== false;
@@ -4553,6 +4688,8 @@
     box.appendChild(c);
   }
   rteBar($('stSig'), 'sig');
+  $('stCallMode').addEventListener('change', () => { saveSettings({ ...settings(), callMode: $('stCallMode').value }); if (ui.ticket) renderTicket(); });
+  $('stPhoneCc').addEventListener('change', () => { const v = $('stPhoneCc').value.trim(); saveSettings({ ...settings(), phoneCountry: /^\+\d{1,4}$/.test(v) ? v : '' }); });
   $('stDictLang').addEventListener('change', () => saveSettings({ ...settings(), dictLang: $('stDictLang').value }));
   $('stDictCmd').addEventListener('change', () => saveSettings({ ...settings(), dictCommands: $('stDictCmd').checked }));
   $('stDictShow').addEventListener('change', () => { saveSettings({ ...settings(), dictShow: $('stDictShow').checked }); applyDictShow(); });
