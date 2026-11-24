@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.11
+// @version      1.8.0.12
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1468,6 +1468,8 @@
   #mdqt-panel label.lmic .dd.ai .ddm{font-weight:400;text-transform:none}
   #mdqt-panel .dictbar.aibar{border-color:#a5b4fc;border-radius:var(--mq-r-lg);max-width:min(720px,calc(100% - 32px))}
   #mdqt-panel .dictbar.aibar .im{white-space:normal;font-style:normal;font-size:12px;color:var(--mq-muted2);line-height:1.35}
+  #mdqt-panel .ai-row{margin-top:8px;padding:8px;border:1px solid var(--mq-line);border-radius:var(--mq-r);display:flex;flex-direction:column;gap:6px}
+  #mdqt-panel .ai-row textarea{min-height:48px}
   #mdqt-panel .aipaste{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);z-index:61;width:min(420px,calc(100% - 32px));background:var(--mq-bg);border:1px solid var(--mq-border);
     border-radius:var(--mq-r-lg);box-shadow:var(--mq-shadow);padding:14px;display:flex;flex-direction:column;gap:8px}
   #mdqt-panel .aipaste .dt{font-weight:700;font-size:14px}
@@ -1966,9 +1968,17 @@
           <div class="c" style="flex-basis:340px"><label class="l">Copilot-Adresse</label><input type="text" data-ref="stAiUrl" placeholder="https://m365.cloud.microsoft/chat"></div>
         </div>
         <div class="hint">Mit Arbeitskonto: <code>https://m365.cloud.microsoft/chat</code> · privat: <code>https://copilot.microsoft.com</code></div>
+        <div class="row" style="margin-top:4px">
+          <div class="c" style="flex-basis:340px"><label class="l">Copilot öffnen</label><select data-ref="stAiOpen">
+            <option value="same">Neuer Chat, immer im selben Tab</option><option value="new">Neuer Chat in einem neuen Tab</option>
+            <option value="none">Nicht öffnen – nur kopieren (in einen offenen Chat einfügen)</option></select></div>
+        </div>
         <label class="chk" style="display:flex;margin-top:8px"><input type="checkbox" data-ref="stAiPrefill"> Text zusätzlich über die Adresse übergeben (falls Copilot ihn dann schon eingetragen hat)</label>
-        <label class="l">Anweisung für „Korrigieren“</label><textarea data-ref="stAiFix" rows="3"></textarea>
-        <div class="tfoot"><button type="button" class="btn sm sec" data-ref="stAiFixReset">Standard-Anweisung</button></div>
+        <h4>Vorlagen im ✨-Menü</h4>
+        <div class="hint">Name (erscheint im Menü) und Anweisung an Copilot. Der Text wird hinten angehängt – oder dort eingesetzt, wo <code>{text}</code> steht. Änderungen werden sofort gespeichert.</div>
+        <div data-ref="stAiList"></div>
+        <div class="tfoot"><button type="button" class="btn sm sec" data-ref="stAiAdd">＋ Vorlage hinzufügen</button>
+          <button type="button" class="btn sm sec" data-ref="stAiReset">Standard-Vorlagen wiederherstellen</button></div>
         </details>
         <details class="card set" data-set="dict"><summary>Diktieren (Spracheingabe)</summary>
         <div class="hint">Der Knopf 🎤 an Kommentar, Beschreibung, Betreff, Signatur und Textbausteinen startet das Diktat; ein zweiter Klick oder Esc beendet es. Der Text landet an der Einfügemarke.
@@ -4043,12 +4053,16 @@
   // dann „📋 Antwort einfügen“: ersetzt die Auswahl bzw. den eigenen Text (Signatur und zitierte Mail bleiben unverändert).
   const AI_DEFAULT_URL = 'https://m365.cloud.microsoft/chat';
   const AI_FIX = 'Korrigiere Rechtschreibung, Grammatik und Zeichensetzung des folgenden Textes. Ändere Inhalt, Tonfall und Aufbau nicht; behalte Absätze und Aufzählungen bei.';
-  const AI_ACTIONS = [
-    ['fix', '✓ Korrigieren', () => settings().aiFixPrompt || AI_FIX],
-    ['polish', '✨ Freundlicher & klarer', () => 'Formuliere den folgenden Text freundlich, professionell und gut verständlich für Kunden. Inhalt nicht verändern, Absätze und Aufzählungen beibehalten.'],
-    ['short', '✂ Kürzer', () => 'Kürze den folgenden Text auf das Wesentliche, ohne Informationen wegzulassen. Aufzählungen beibehalten.'],
-    ['en', '🇬🇧 Auf Englisch', () => 'Übersetze den folgenden Text ins Englische (professioneller IT-Support-Ton). Absätze und Aufzählungen beibehalten.'],
+  // Vorlagen (eigene unter ⚙ → Copilot): Name im Menü + Anweisung. {text} in der Anweisung = Stelle, an der der Text eingesetzt wird.
+  const AI_DEFAULTS = [
+    { id: 'fix', name: '✓ Korrigieren', prompt: AI_FIX },
+    { id: 'polish', name: '✨ Freundlicher & klarer', prompt: 'Formuliere den folgenden Text freundlich, professionell und gut verständlich für Kunden. Inhalt nicht verändern, Absätze und Aufzählungen beibehalten.' },
+    { id: 'short', name: '✂ Kürzer', prompt: 'Kürze den folgenden Text auf das Wesentliche, ohne Informationen wegzulassen. Aufzählungen beibehalten.' },
+    { id: 'en', name: '🇬🇧 Auf Englisch', prompt: 'Übersetze den folgenden Text ins Englische (professioneller IT-Support-Ton). Absätze und Aufzählungen beibehalten.' },
   ];
+  // ältere Einstellung „eigene Anweisung für Korrigieren“ wird übernommen
+  const aiActionsRaw = () => settings().aiActions ?? AI_DEFAULTS.map(a => a.id === 'fix' && settings().aiFixPrompt ? { ...a, prompt: settings().aiFixPrompt } : a);
+  const aiActions = () => aiActionsRaw().filter(a => a && a.name && a.prompt);
   const AI_SUFFIX = 'Antworte ausschließlich mit dem fertigen Text – ohne Einleitung, Erklärung oder Anführungszeichen.';
   const ai = { target: null, range: null, start: 0, end: 0 };
   const aiBar = el('div', { className: 'dictbar aibar' });
@@ -4111,7 +4125,8 @@
     return r;
   }
   async function aiStart(target, key) {
-    const [, , prompt] = AI_ACTIONS.find(a => a[0] === key);
+    const act = aiActions().find(a => a.id === key);
+    if (!act) { toast('Diese Copilot-Vorlage gibt es nicht mehr.', 'warn'); return; }
     let text;
     if (target.isContentEditable) {
       ai.range = aiRange(target);
@@ -4123,14 +4138,23 @@
     }
     if (!text) { toast('Kein Text zum Bearbeiten – erst etwas schreiben oder Text markieren.', 'warn'); return; }
     ai.target = target;
-    const full = `${prompt()} ${AI_SUFFIX}\n\n${text}`;
+    const p = act.prompt.trim();
+    const full = (p.includes('{text}') ? p.replace('{text}', '\n\n' + text + '\n\n') + '\n\n' + AI_SUFFIX : `${p} ${AI_SUFFIX}\n\n${text}`).replace(/[ \t]*\n{3,}/g, '\n\n');
     try { await copyText(full); } catch (e) { toast('Kopieren nicht möglich: ' + e.message); }
-    const base = (settings().aiUrl || AI_DEFAULT_URL).trim();
-    let url = base;
-    if (settings().aiPrefill !== false && full.length < 1800) url += (base.includes('?') ? '&' : '?') + 'q=' + encodeURIComponent(full);
-    window.open(url, '_blank', 'noopener');
+    // Öffnen: im selben Tab (neuer Chat, Standard), je Anfrage ein neuer Tab, oder gar nicht (in einen offenen Chat einfügen)
+    const mode = settings().aiOpen || 'same';
+    if (mode !== 'none') {
+      const base = (settings().aiUrl || AI_DEFAULT_URL).trim();
+      let url = base;
+      if (settings().aiPrefill !== false && full.length < 1800) url += (base.includes('?') ? '&' : '?') + 'q=' + encodeURIComponent(full);
+      if (mode === 'new') window.open(url, '_blank', 'noopener');
+      else { const w = window.open(url, 'mdqtCopilot'); try { if (w) w.focus(); } catch { /* fremdes Fenster */ } }
+    }
+    aiBar.querySelector('.im').textContent = mode === 'none'
+      ? 'Text ist kopiert. In deinem Copilot-Chat mit Strg+V einfügen und senden, die Antwort kopieren – dann hier:'
+      : 'Text ist kopiert. In Copilot ggf. mit Strg+V einfügen und senden, dort die Antwort kopieren – dann hier:';
     aiBar.classList.add('show');
-    log('Copilot geöffnet', AI_ACTIONS.find(a => a[0] === key)[1].replace(/^\S+\s/, '') + ` (${text.length} Zeichen)`);
+    log('Copilot', act.name.replace(/^[^\p{L}\d]+/u, '') + ` (${text.length} Zeichen)`);
   }
   // Antwort aus der Zwischenablage holen (HTML bevorzugt); ohne Leserecht: Einfügefeld zum Strg+V
   async function aiPaste() {
@@ -4195,15 +4219,27 @@
   function aiBtn(target, extraClass = '') {
     const d = el('div', { className: 'dd r ai' + (extraClass ? ' ' + extraClass : '') });
     d.innerHTML = `<button type="button" class="ddb aib" title="Mit Copilot korrigieren oder umformulieren">✨ <span class="car">▾</span></button>
-      <div class="ddm" style="min-width:230px"><div class="ddh">Mit Copilot</div>
-        ${AI_ACTIONS.map(([k, l]) => `<button type="button" class="mi" data-ai="${k}">${l}</button>`).join('')}
+      <div class="ddm" style="min-width:230px"></div>`;
+    const menu = d.querySelector('.ddm');
+    const fill = () => {
+      menu.innerHTML = `<div class="ddh">Mit Copilot</div>
+        ${aiActions().map(a => `<button type="button" class="mi" data-ai="${esc(a.id)}" title="${esc(a.prompt)}">${esc(a.name)}</button>`).join('')}
         <div class="ddsep"></div><button type="button" class="mi" data-ai="paste">📋 Antwort einfügen</button>
-        <div class="hint" style="margin:6px 2px 0;max-width:240px">Bearbeitet die Markierung oder den ganzen eigenen Text (ohne Signatur und Zitat).</div></div>`;
-    d.querySelector('.ddb').addEventListener('mousedown', e => e.preventDefault()); // Markierung im Text behalten
-    d.querySelectorAll('[data-ai]').forEach(b => {
-      b.addEventListener('mousedown', e => e.preventDefault());
-      b.addEventListener('click', () => { closeDds(); if (b.dataset.ai === 'paste') { if (ai.target !== target) ai.target = target; aiPaste(); } else aiStart(target, b.dataset.ai); });
-    });
+        <button type="button" class="mi" data-ai="edit">✎ Vorlagen bearbeiten …</button>
+        <div class="hint" style="margin:6px 2px 0;max-width:240px">Bearbeitet die Markierung oder den ganzen eigenen Text (ohne Signatur und Zitat).</div>`;
+      menu.querySelectorAll('[data-ai]').forEach(b => {
+        b.addEventListener('mousedown', e => e.preventDefault());
+        b.addEventListener('click', () => {
+          closeDds();
+          const k = b.dataset.ai;
+          if (k === 'paste') { if (ai.target !== target) ai.target = target; aiPaste(); }
+          else if (k === 'edit') { showTab('settings'); const st = panel.querySelector('details[data-set=ai]'); st.open = true; st.scrollIntoView({ block: 'start' }); }
+          else aiStart(target, k);
+        });
+      });
+    };
+    d.querySelector('.ddb').addEventListener('mousedown', e => { e.preventDefault(); fill(); }); // Markierung im Text behalten
+    fill();
     return d;
   }
   $('nDescL').appendChild(aiBtn($('nDesc'), 'inl'));
@@ -4699,7 +4735,7 @@
     const st = settings();
     $('stTheme').value = st.theme || 'auto';
     $('stFavBar').checked = st.favBar !== false;
-    $('stAiUrl').value = st.aiUrl || ''; $('stAiPrefill').checked = st.aiPrefill !== false; $('stAiFix').value = st.aiFixPrompt || AI_FIX;
+    $('stAiUrl').value = st.aiUrl || ''; $('stAiPrefill').checked = st.aiPrefill !== false; $('stAiOpen').value = st.aiOpen || 'same'; renderAiTemplates();
     $('stCallMode').value = st.callMode || 'teams'; $('stPhoneCc').value = st.phoneCountry || '';
     $('stDictLang').value = st.dictLang || 'de-DE'; $('stDictCmd').checked = st.dictCommands !== false; $('stDictShow').checked = st.dictShow !== false;
     $('stSig').innerHTML = sanitize(st.signature || '');
@@ -4885,8 +4921,32 @@
   rteBar($('stSig'), 'sig');
   $('stAiUrl').addEventListener('change', () => { const v = $('stAiUrl').value.trim(); saveSettings({ ...settings(), aiUrl: /^https:\/\/\S+$/.test(v) ? v : '' }); });
   $('stAiPrefill').addEventListener('change', () => saveSettings({ ...settings(), aiPrefill: $('stAiPrefill').checked }));
-  $('stAiFix').addEventListener('change', () => { const v = $('stAiFix').value.trim(); saveSettings({ ...settings(), aiFixPrompt: v && v !== AI_FIX ? v : '' }); });
-  $('stAiFixReset').addEventListener('click', () => { $('stAiFix').value = AI_FIX; saveSettings({ ...settings(), aiFixPrompt: '' }); });
+  $('stAiOpen').addEventListener('change', () => saveSettings({ ...settings(), aiOpen: $('stAiOpen').value }));
+  // Copilot-Vorlagen bearbeiten: Name, Anweisung, Reihenfolge, löschen
+  function saveAiTemplates() {
+    const list = [...$('stAiList').querySelectorAll('.ai-row')].map(r => ({ id: r.dataset.id, name: r.querySelector('[data-a=name]').value.trim(), prompt: r.querySelector('[data-a=prompt]').value.trim() }));
+    const st = settings(); delete st.aiFixPrompt; saveSettings({ ...st, aiActions: list });
+  }
+  function renderAiTemplates() {
+    const box = $('stAiList'); box.innerHTML = '';
+    for (const a of aiActionsRaw()) {
+      const r = el('div', { className: 'ai-row' }); r.dataset.id = a.id || ('a' + Date.now() + Math.random().toString(36).slice(2, 6));
+      r.innerHTML = `<div class="row" style="align-items:center;gap:6px"><div class="c"><input type="text" data-a="name" placeholder="Name im Menü, z. B. 📝 Als Kundenantwort"></div>
+          <button type="button" class="btn sm sec" data-a="up" title="Nach oben">↑</button><button type="button" class="btn sm warn" data-a="del" title="Vorlage löschen">✕</button></div>
+        <textarea data-a="prompt" rows="2" placeholder="Anweisung an Copilot, z. B. „Formuliere aus den Stichpunkten eine höfliche Antwort an den Kunden.“"></textarea>`;
+      r.querySelector('[data-a=name]').value = a.name || ''; r.querySelector('[data-a=prompt]').value = a.prompt || '';
+      r.querySelectorAll('input,textarea').forEach(i => i.addEventListener('input', saveAiTemplates));
+      r.querySelector('[data-a=del]').addEventListener('click', () => { r.remove(); saveAiTemplates(); });
+      r.querySelector('[data-a=up]').addEventListener('click', () => { if (r.previousElementSibling) { r.previousElementSibling.before(r); saveAiTemplates(); } });
+      box.appendChild(r);
+    }
+    if (!box.children.length) box.innerHTML = '<div class="hint">Keine Vorlagen.</div>';
+  }
+  $('stAiAdd').addEventListener('click', () => {
+    saveSettings({ ...settings(), aiActions: [...aiActionsRaw(), { id: 'a' + Date.now(), name: '', prompt: '' }] }); renderAiTemplates();
+    const rows = $('stAiList').querySelectorAll('.ai-row'); rows[rows.length - 1].querySelector('input').focus();
+  });
+  confirmBtn($('stAiReset'), 'Eigene Vorlagen verwerfen?', async () => { const st = settings(); delete st.aiActions; delete st.aiFixPrompt; saveSettings(st); renderAiTemplates(); });
   $('stCallMode').addEventListener('change', () => { saveSettings({ ...settings(), callMode: $('stCallMode').value }); if (ui.ticket) renderTicket(); });
   $('stPhoneCc').addEventListener('change', () => { const v = $('stPhoneCc').value.trim(); saveSettings({ ...settings(), phoneCountry: /^\+\d{1,4}$/.test(v) ? v : '' }); });
   $('stDictLang').addEventListener('change', () => saveSettings({ ...settings(), dictLang: $('stDictLang').value }));
