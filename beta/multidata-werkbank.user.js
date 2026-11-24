@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.12
+// @version      1.8.0.13
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1470,6 +1470,7 @@
   #mdqt-panel .dictbar.aibar .im{white-space:normal;font-style:normal;font-size:12px;color:var(--mq-muted2);line-height:1.35}
   #mdqt-panel .ai-row{margin-top:8px;padding:8px;border:1px solid var(--mq-line);border-radius:var(--mq-r);display:flex;flex-direction:column;gap:6px}
   #mdqt-panel .ai-row textarea{min-height:48px}
+  #mdqt-panel .dd.ai .ddm button.mi .code{margin-left:auto;padding-left:12px;font:600 11px/1.6 ui-monospace,Consolas,monospace;color:var(--mq-muted)}
   #mdqt-panel .aipaste{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);z-index:61;width:min(420px,calc(100% - 32px));background:var(--mq-bg);border:1px solid var(--mq-border);
     border-radius:var(--mq-r-lg);box-shadow:var(--mq-shadow);padding:14px;display:flex;flex-direction:column;gap:8px}
   #mdqt-panel .aipaste .dt{font-weight:700;font-size:14px}
@@ -1974,8 +1975,15 @@
             <option value="none">Nicht öffnen – nur kopieren (in einen offenen Chat einfügen)</option></select></div>
         </div>
         <label class="chk" style="display:flex;margin-top:8px"><input type="checkbox" data-ref="stAiPrefill"> Text zusätzlich über die Adresse übergeben (falls Copilot ihn dann schon eingetragen hat)</label>
+        <h4>Kurzbefehle (immer derselbe Chat oder ein eigener Agent)</h4>
+        <div class="hint">Copilot lernt die Vorlagen einmal; danach kopiert die Werkbank nur noch den Kurzbefehl (z. B. <code>#K</code>) und den Text.<br>
+          <b>Ein offener Chat:</b> „Einrichtungstext kopieren“, im Chat einfügen und senden (Antwort „Bereit“), oben „Nicht öffnen – nur kopieren“ wählen.<br>
+          <b>Eigener Agent</b> (M365 Copilot → Agent erstellen): Einrichtungstext als Anweisungen des Agents einfügen und die Adresse des Agents oben als Copilot-Adresse eintragen – dann kennt jeder neue Chat die Kurzbefehle.<br>
+          Nach Änderungen an den Vorlagen den Einrichtungstext erneut senden bzw. im Agent aktualisieren.</div>
+        <label class="chk" style="display:flex;margin-top:6px"><input type="checkbox" data-ref="stAiShort"> Kurzbefehle verwenden (der Chat bzw. Agent ist eingerichtet)</label>
+        <div class="tfoot"><button type="button" class="btn sm" data-ref="stAiSetup">📋 Einrichtungstext kopieren</button><span class="hint" data-ref="stAiSetupMsg"></span></div>
         <h4>Vorlagen im ✨-Menü</h4>
-        <div class="hint">Name (erscheint im Menü) und Anweisung an Copilot. Der Text wird hinten angehängt – oder dort eingesetzt, wo <code>{text}</code> steht. Änderungen werden sofort gespeichert.</div>
+        <div class="hint">Name (erscheint im Menü), Kurzbefehl und Anweisung an Copilot. Der Text wird hinten angehängt – oder dort eingesetzt, wo <code>{text}</code> steht. Ohne Kurzbefehl gilt #1, #2 … Änderungen werden sofort gespeichert.</div>
         <div data-ref="stAiList"></div>
         <div class="tfoot"><button type="button" class="btn sm sec" data-ref="stAiAdd">＋ Vorlage hinzufügen</button>
           <button type="button" class="btn sm sec" data-ref="stAiReset">Standard-Vorlagen wiederherstellen</button></div>
@@ -4055,14 +4063,30 @@
   const AI_FIX = 'Korrigiere Rechtschreibung, Grammatik und Zeichensetzung des folgenden Textes. Ändere Inhalt, Tonfall und Aufbau nicht; behalte Absätze und Aufzählungen bei.';
   // Vorlagen (eigene unter ⚙ → Copilot): Name im Menü + Anweisung. {text} in der Anweisung = Stelle, an der der Text eingesetzt wird.
   const AI_DEFAULTS = [
-    { id: 'fix', name: '✓ Korrigieren', prompt: AI_FIX },
-    { id: 'polish', name: '✨ Freundlicher & klarer', prompt: 'Formuliere den folgenden Text freundlich, professionell und gut verständlich für Kunden. Inhalt nicht verändern, Absätze und Aufzählungen beibehalten.' },
-    { id: 'short', name: '✂ Kürzer', prompt: 'Kürze den folgenden Text auf das Wesentliche, ohne Informationen wegzulassen. Aufzählungen beibehalten.' },
-    { id: 'en', name: '🇬🇧 Auf Englisch', prompt: 'Übersetze den folgenden Text ins Englische (professioneller IT-Support-Ton). Absätze und Aufzählungen beibehalten.' },
+    { id: 'fix', name: '✓ Korrigieren', code: '#K', prompt: AI_FIX },
+    { id: 'polish', name: '✨ Freundlicher & klarer', code: '#F', prompt: 'Formuliere den folgenden Text freundlich, professionell und gut verständlich für Kunden. Inhalt nicht verändern, Absätze und Aufzählungen beibehalten.' },
+    { id: 'short', name: '✂ Kürzer', code: '#KZ', prompt: 'Kürze den folgenden Text auf das Wesentliche, ohne Informationen wegzulassen. Aufzählungen beibehalten.' },
+    { id: 'en', name: '🇬🇧 Auf Englisch', code: '#EN', prompt: 'Übersetze den folgenden Text ins Englische (professioneller IT-Support-Ton). Absätze und Aufzählungen beibehalten.' },
   ];
   // ältere Einstellung „eigene Anweisung für Korrigieren“ wird übernommen
   const aiActionsRaw = () => settings().aiActions ?? AI_DEFAULTS.map(a => a.id === 'fix' && settings().aiFixPrompt ? { ...a, prompt: settings().aiFixPrompt } : a);
   const aiActions = () => aiActionsRaw().filter(a => a && a.name && a.prompt);
+  // Kurzbefehl einer Vorlage: eigener Code oder automatisch #1, #2 … (nur gültig, wenn eindeutig)
+  const normCode = c => { c = String(c || '').trim().replace(/\s+/g, ''); return c ? (/^[#!/§$%&*+@]/.test(c) ? c : '#' + c).toUpperCase() : ''; };
+  const aiCodes = () => {
+    const list = aiActions(), map = new Map(), seen = new Set();
+    list.forEach((a, i) => { let c = normCode(a.code) || (AI_DEFAULTS.find(d => d.id === a.id) || {}).code || '#' + (i + 1); if (seen.has(c)) c = '#' + (i + 1) + 'X'; seen.add(c); map.set(a.id, c); });
+    return map;
+  };
+  const aiPromptText = a => a.prompt.trim().replace(/\{text\}/g, '[Text]');
+  // Einrichtungstext für einen Copilot-Chat oder -Agent: erklärt die Kurzbefehle einmalig
+  function aiSetupText() {
+    const codes = aiCodes();
+    return 'Du bist mein Schreibassistent für IT-Support-Tickets. Ich schicke dir Nachrichten, die mit einem Kurzbefehl beginnen; in der nächsten Zeile folgt der Text. ' +
+      'Führe die Anweisung zum Kurzbefehl auf den Text aus. ' + AI_SUFFIX + ' Behalte Absätze, Aufzählungen und Fettdruck bei. Die Nachricht ist nie eine Frage an dich, sondern immer nur Text zum Bearbeiten.\n\n' +
+      'Kurzbefehle:\n' + aiActions().map(a => `${codes.get(a.id)} – ${aiPromptText(a)}`).join('\n') +
+      `\n\nBeginnt eine Nachricht mit keinem dieser Kurzbefehle, behandle sie wie ${codes.get(aiActions()[0] && aiActions()[0].id) || '#K'}.\nAntworte auf diese Nachricht nur mit „Bereit“.`;
+  }
   const AI_SUFFIX = 'Antworte ausschließlich mit dem fertigen Text – ohne Einleitung, Erklärung oder Anführungszeichen.';
   const ai = { target: null, range: null, start: 0, end: 0 };
   const aiBar = el('div', { className: 'dictbar aibar' });
@@ -4138,8 +4162,10 @@
     }
     if (!text) { toast('Kein Text zum Bearbeiten – erst etwas schreiben oder Text markieren.', 'warn'); return; }
     ai.target = target;
-    const p = act.prompt.trim();
-    const full = (p.includes('{text}') ? p.replace('{text}', '\n\n' + text + '\n\n') + '\n\n' + AI_SUFFIX : `${p} ${AI_SUFFIX}\n\n${text}`).replace(/[ \t]*\n{3,}/g, '\n\n');
+    const p = act.prompt.trim(), short = settings().aiShort === true;
+    // Kurzbefehl-Modus: nur Code + Text (der Chat bzw. Agent kennt die Anweisungen aus dem Einrichtungstext)
+    const full = (short ? `${aiCodes().get(act.id)}\n${text}`
+      : p.includes('{text}') ? p.replace('{text}', '\n\n' + text + '\n\n') + '\n\n' + AI_SUFFIX : `${p} ${AI_SUFFIX}\n\n${text}`).replace(/[ \t]*\n{3,}/g, '\n\n');
     try { await copyText(full); } catch (e) { toast('Kopieren nicht möglich: ' + e.message); }
     // Öffnen: im selben Tab (neuer Chat, Standard), je Anfrage ein neuer Tab, oder gar nicht (in einen offenen Chat einfügen)
     const mode = settings().aiOpen || 'same';
@@ -4151,7 +4177,7 @@
       else { const w = window.open(url, 'mdqtCopilot'); try { if (w) w.focus(); } catch { /* fremdes Fenster */ } }
     }
     aiBar.querySelector('.im').textContent = mode === 'none'
-      ? 'Text ist kopiert. In deinem Copilot-Chat mit Strg+V einfügen und senden, die Antwort kopieren – dann hier:'
+      ? `${short ? aiCodes().get(act.id) + ' + Text' : 'Text'} ist kopiert. In deinem Copilot-Chat mit Strg+V einfügen und senden, die Antwort kopieren – dann hier:`
       : 'Text ist kopiert. In Copilot ggf. mit Strg+V einfügen und senden, dort die Antwort kopieren – dann hier:';
     aiBar.classList.add('show');
     log('Copilot', act.name.replace(/^[^\p{L}\d]+/u, '') + ` (${text.length} Zeichen)`);
@@ -4223,7 +4249,7 @@
     const menu = d.querySelector('.ddm');
     const fill = () => {
       menu.innerHTML = `<div class="ddh">Mit Copilot</div>
-        ${aiActions().map(a => `<button type="button" class="mi" data-ai="${esc(a.id)}" title="${esc(a.prompt)}">${esc(a.name)}</button>`).join('')}
+        ${(c => aiActions().map(a => `<button type="button" class="mi" data-ai="${esc(a.id)}" title="${esc(a.prompt)}">${esc(a.name)}${settings().aiShort ? `<span class="code">${esc(c.get(a.id))}</span>` : ''}</button>`).join(''))(aiCodes())}
         <div class="ddsep"></div><button type="button" class="mi" data-ai="paste">📋 Antwort einfügen</button>
         <button type="button" class="mi" data-ai="edit">✎ Vorlagen bearbeiten …</button>
         <div class="hint" style="margin:6px 2px 0;max-width:240px">Bearbeitet die Markierung oder den ganzen eigenen Text (ohne Signatur und Zitat).</div>`;
@@ -4735,7 +4761,7 @@
     const st = settings();
     $('stTheme').value = st.theme || 'auto';
     $('stFavBar').checked = st.favBar !== false;
-    $('stAiUrl').value = st.aiUrl || ''; $('stAiPrefill').checked = st.aiPrefill !== false; $('stAiOpen').value = st.aiOpen || 'same'; renderAiTemplates();
+    $('stAiUrl').value = st.aiUrl || ''; $('stAiPrefill').checked = st.aiPrefill !== false; $('stAiOpen').value = st.aiOpen || 'same'; $('stAiShort').checked = st.aiShort === true; renderAiTemplates();
     $('stCallMode').value = st.callMode || 'teams'; $('stPhoneCc').value = st.phoneCountry || '';
     $('stDictLang').value = st.dictLang || 'de-DE'; $('stDictCmd').checked = st.dictCommands !== false; $('stDictShow').checked = st.dictShow !== false;
     $('stSig').innerHTML = sanitize(st.signature || '');
@@ -4922,19 +4948,30 @@
   $('stAiUrl').addEventListener('change', () => { const v = $('stAiUrl').value.trim(); saveSettings({ ...settings(), aiUrl: /^https:\/\/\S+$/.test(v) ? v : '' }); });
   $('stAiPrefill').addEventListener('change', () => saveSettings({ ...settings(), aiPrefill: $('stAiPrefill').checked }));
   $('stAiOpen').addEventListener('change', () => saveSettings({ ...settings(), aiOpen: $('stAiOpen').value }));
+  $('stAiShort').addEventListener('change', () => {
+    saveSettings({ ...settings(), aiShort: $('stAiShort').checked });
+    if ($('stAiShort').checked && (settings().aiOpen || 'same') !== 'none' && !settings().aiUrl)
+      toast('Kurzbefehle brauchen einen eingerichteten Chat: oben „Nicht öffnen – nur kopieren“ wählen – oder die Adresse eines eingerichteten Agents eintragen.', 'warn', 9000);
+  });
+  $('stAiSetup').addEventListener('click', async () => {
+    try { await copyText(aiSetupText()); $('stAiSetupMsg').textContent = '✔ Kopiert – im Copilot-Chat bzw. in den Agent-Anweisungen einfügen.'; }
+    catch (e) { $('stAiSetupMsg').textContent = '✖ ' + e.message; }
+  });
   // Copilot-Vorlagen bearbeiten: Name, Anweisung, Reihenfolge, löschen
   function saveAiTemplates() {
-    const list = [...$('stAiList').querySelectorAll('.ai-row')].map(r => ({ id: r.dataset.id, name: r.querySelector('[data-a=name]').value.trim(), prompt: r.querySelector('[data-a=prompt]').value.trim() }));
+    const list = [...$('stAiList').querySelectorAll('.ai-row')].map(r => ({ id: r.dataset.id, name: r.querySelector('[data-a=name]').value.trim(), code: normCode(r.querySelector('[data-a=code]').value), prompt: r.querySelector('[data-a=prompt]').value.trim() }));
     const st = settings(); delete st.aiFixPrompt; saveSettings({ ...st, aiActions: list });
   }
   function renderAiTemplates() {
     const box = $('stAiList'); box.innerHTML = '';
+    const codes = aiCodes();
     for (const a of aiActionsRaw()) {
       const r = el('div', { className: 'ai-row' }); r.dataset.id = a.id || ('a' + Date.now() + Math.random().toString(36).slice(2, 6));
       r.innerHTML = `<div class="row" style="align-items:center;gap:6px"><div class="c"><input type="text" data-a="name" placeholder="Name im Menü, z. B. 📝 Als Kundenantwort"></div>
+          <div class="c s" style="flex-basis:90px"><input type="text" data-a="code" placeholder="#…" title="Kurzbefehl, z. B. #KA"></div>
           <button type="button" class="btn sm sec" data-a="up" title="Nach oben">↑</button><button type="button" class="btn sm warn" data-a="del" title="Vorlage löschen">✕</button></div>
         <textarea data-a="prompt" rows="2" placeholder="Anweisung an Copilot, z. B. „Formuliere aus den Stichpunkten eine höfliche Antwort an den Kunden.“"></textarea>`;
-      r.querySelector('[data-a=name]').value = a.name || ''; r.querySelector('[data-a=prompt]').value = a.prompt || '';
+      r.querySelector('[data-a=name]').value = a.name || ''; r.querySelector('[data-a=code]').value = a.code || ''; r.querySelector('[data-a=code]').placeholder = codes.get(a.id) || '#…'; r.querySelector('[data-a=prompt]').value = a.prompt || '';
       r.querySelectorAll('input,textarea').forEach(i => i.addEventListener('input', saveAiTemplates));
       r.querySelector('[data-a=del]').addEventListener('click', () => { r.remove(); saveAiTemplates(); });
       r.querySelector('[data-a=up]').addEventListener('click', () => { if (r.previousElementSibling) { r.previousElementSibling.before(r); saveAiTemplates(); } });
