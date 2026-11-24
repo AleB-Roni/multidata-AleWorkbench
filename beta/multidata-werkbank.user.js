@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.8
+// @version      1.8.0.9
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1527,8 +1527,9 @@
   #mdqt-panel .card .meta{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--mq-muted2);align-items:center}
   #mdqt-panel .card .meta b{color:var(--mq-fg)}
   #mdqt-panel .card .txt{margin-top:6px;overflow-x:auto;contain:content}
-  #mdqt-panel .card .txt p,#mdqt-panel .rte p{margin:2px 0}
-  #mdqt-panel .card .txt ul,#mdqt-panel .card .txt ol,#mdqt-panel .rte ul,#mdqt-panel .rte ol{margin:2px 0;padding-left:26px}
+  #mdqt-panel .card .txt p,#mdqt-panel .tile .txt p,#mdqt-panel .rte p{margin:2px 0}
+  #mdqt-panel .tile>.txt{overflow-x:auto;contain:content}
+  #mdqt-panel .card .txt ul,#mdqt-panel .card .txt ol,#mdqt-panel .tile .txt ul,#mdqt-panel .tile .txt ol,#mdqt-panel .rte ul,#mdqt-panel .rte ol{margin:2px 0;padding-left:26px}
   #mdqt-panel .card .txt li,#mdqt-panel .rte li{margin:1px 0}
   #mdqt-panel .card .meta[data-ref=cHead]{cursor:pointer}
   #mdqt-panel .card .tog::before{content:'▾';color:var(--mq-accent);font-size:11px}
@@ -1541,13 +1542,43 @@
   #mdqt-panel details[open]>summary{margin-bottom:6px}
 
   /* ---------- Ticket-Kopf ---------- */
-  #mdqt-panel .head{background:var(--mq-soft);border:1px solid var(--mq-border);border-radius:var(--mq-r);padding:10px 12px}
-  #mdqt-panel .head h3{margin:0;font-size:16px;white-space:nowrap;color:var(--mq-accent-fg);font-variant-numeric:tabular-nums}
-  #mdqt-panel .head .hrow1{display:flex;gap:10px;align-items:center}
-  #mdqt-panel .head .hrow1 input{font-weight:600;font-size:14px;min-height:32px}
-  #mdqt-panel .head .hgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:0 8px;margin-top:2px}
-  #mdqt-panel .head .hgrid .wide{grid-column:span 2}
-  #mdqt-panel .head .hbar{margin-top:8px;align-items:center}
+  #mdqt-panel .body{container:wb / inline-size}
+  #mdqt-panel .thero{padding:10px 12px;border:1px solid var(--mq-border);border-radius:var(--mq-r-lg);background:var(--mq-soft)}
+  #mdqt-panel .thero .hrow1{display:flex;gap:8px;align-items:center}
+  #mdqt-panel .thero .sid{font-size:19px;font-weight:700;letter-spacing:-.01em;color:var(--mq-accent-fg);white-space:nowrap;font-variant-numeric:tabular-nums}
+  #mdqt-panel .thero .hrow1 input{font-weight:600;font-size:15px;min-height:36px}
+  #mdqt-panel .tgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px;align-items:start}
+  @container wb (max-width:760px){#mdqt-panel .tgrid{grid-template-columns:minmax(0,1fr)}}
+  #mdqt-panel .tile{border:1px solid var(--mq-border);border-radius:var(--mq-r-lg);background:var(--mq-bg);padding:12px 14px;box-shadow:var(--mq-shadow-sm);min-width:0}
+  #mdqt-panel .tile.tfull{margin-top:12px}
+  #mdqt-panel [data-ref=hExtra]>.card{margin-top:12px;border-radius:var(--mq-r-lg);padding:12px 14px}
+  #mdqt-panel [data-ref=hExtra]>.card>b:first-child{display:block;font-size:15px;margin:0 -14px 10px;padding:0 14px 10px;border-bottom:1px solid var(--mq-line)}
+  #mdqt-panel .tth,#mdqt-panel details.tile>summary{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:700;letter-spacing:-.005em;color:var(--mq-fg);
+    margin:0 -14px 10px;padding:0 14px 10px;border-bottom:1px solid var(--mq-line);list-style:none}
+  #mdqt-panel details.tile>summary{cursor:pointer;user-select:none}
+  #mdqt-panel details.tile>summary::-webkit-details-marker{display:none}
+  #mdqt-panel details.tile>summary::after{content:'▾';margin-left:auto;color:var(--mq-muted);font-size:12px;font-weight:400}
+  #mdqt-panel details.tile:not([open])>summary{border-bottom:none;margin-bottom:0;padding-bottom:0}
+  #mdqt-panel details.tile:not([open])>summary::after{content:'▸'}
+  #mdqt-panel details.tile>summary:hover{color:var(--mq-accent-fg)}
+  #mdqt-panel .cnt{display:inline-block;min-width:20px;padding:0 7px;border-radius:999px;background:var(--mq-tag);color:var(--mq-muted2);font-size:12px;font-weight:600;line-height:20px;text-align:center}
+  #mdqt-panel .fgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 10px}
+  #mdqt-panel .fgrid label.l{margin-top:4px}
+  #mdqt-panel .fgrid .wide{grid-column:1/-1}
+  #mdqt-panel .tfoot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px}
+  #mdqt-panel .stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  #mdqt-panel .st{background:var(--mq-soft);border-radius:var(--mq-r);padding:7px 10px;min-width:0}
+  #mdqt-panel .st span{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--mq-muted)}
+  #mdqt-panel .st b{display:block;font-size:14px;overflow-wrap:anywhere}
+  #mdqt-panel .st b i{font-style:normal}
+  #mdqt-panel .st.wide{grid-column:1/-1}
+  #mdqt-panel .tcom .btabs{margin:-2px -14px 4px;padding:0 10px;border-bottom:1px solid var(--mq-line)}
+  #mdqt-panel .tcom .btabs button[data-b]{font-size:15px;font-weight:700;padding:4px 8px 10px}
+  #mdqt-panel .tcom>div>.card:first-child{margin-top:6px}
+  #mdqt-panel .doc .nm{flex:1;word-break:break-all}
+  #mdqt-panel .doc .dinfo{flex:1;min-width:0;display:flex;flex-direction:column}
+  #mdqt-panel .doc .dinfo .nm{word-break:break-all}
+  #mdqt-panel .doc .dinfo .hint{font-size:11px}
   #mdqt-panel .sug{position:relative}#mdqt-panel .sug .results{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:6}
   #mdqt-panel .chg{outline:2px solid var(--mq-amber) !important;outline-offset:-1px;background:var(--mq-unread) !important}
   #mdqt-panel label.chk.chg{outline-offset:2px;border-radius:4px}
@@ -1614,7 +1645,6 @@
   #mdqt-panel .mailbox{border-left:3px solid #3b82f6;border-radius:0 var(--mq-r) var(--mq-r) 0;padding:6px 0 6px 12px;margin-top:8px;background:var(--mq-mail-bg)}
   #mdqt-panel .doc{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--mq-line)}
   #mdqt-panel .doc:last-child{border-bottom:none}
-  #mdqt-panel .doc .nm{flex:1;word-break:break-all}
   #mdqt-panel .mailinfo{font-size:12px;color:var(--mq-link2);margin-top:4px}
 
   /* ---------- Zeiten ---------- */
@@ -1650,9 +1680,9 @@
   #mdqt-panel .ibx .dt{flex:0 0 auto;font-size:12px;color:var(--mq-muted);white-space:nowrap}
 
   /* Mail-/Kommentarinhalte im Dark Mode auf hellem „Papier“, damit fremde Textfarben lesbar bleiben */
-  #mdqt-panel.dark .rte,#mdqt-panel.dark .card .txt{background:#f5f5f4 !important;color:#1c1917 !important;border-radius:var(--mq-r)}
-  #mdqt-panel.dark .card .txt{padding:8px 10px}
-  #mdqt-panel.dark .card .txt a,#mdqt-panel.dark .rte a{color:#0f766e}
+  #mdqt-panel.dark .rte,#mdqt-panel.dark .card .txt,#mdqt-panel.dark .tile>.txt{background:#f5f5f4 !important;color:#1c1917 !important;border-radius:var(--mq-r)}
+  #mdqt-panel.dark .card .txt,#mdqt-panel.dark .tile>.txt{padding:8px 10px}
+  #mdqt-panel.dark .card .txt a,#mdqt-panel.dark .tile>.txt a,#mdqt-panel.dark .rte a{color:#0f766e}
   #mdqt-panel.dark .card .txt .hint{color:#57534e}
   #mdqt-panel.dark .tb button,#mdqt-panel.dark .tb select{color:var(--mq-fg)}
   #mdqt-panel.dark .flag,#mdqt-panel.dark .dot{box-shadow:0 0 0 1px #0006}
@@ -1789,7 +1819,7 @@
         <div class="row" style="margin-bottom:8px">
           <div class="c s" style="flex-basis:160px"><input type="text" data-ref="tSid" placeholder="Ticket-ID"></div>
           <button class="btn sec" data-ref="tLoad">Laden</button>
-          <button class="btn sec" data-ref="tPage">Aktuelles MultiData-Ticket</button>
+          <button class="btn sec" data-ref="tPage" title="Das gerade in MultiData geöffnete Ticket laden">⇱ Aus MultiData</button>
           <span style="flex:1"></span>
           <button class="btn sec" data-ref="tReload">↻ Neu laden</button>
         </div>
@@ -2801,44 +2831,52 @@
     view.innerHTML = '';
 
     // --- Kopf: alle Felder werden vorgemerkt (gelb markiert) und gemeinsam mit „Speichern“ übernommen ---
-    const head = el('div', { className: 'head' });
+    const head = el('div', { className: 'tview' });
     head.innerHTML = `
-      <div class="hrow1">
-        <h3>#${t.SID}</h3>
-        <input type="text" data-ref="hTitle" spellcheck="true" lang="de" title="Betreff">
-        <div class="dd r" data-dd="tmore">
-          <button type="button" class="btn sec ddb" title="Öffnen, Teilen, Child-Tickets, Zusammenführen">⋯</button>
-          <div class="ddm" style="min-width:220px">
-            <a href="#" data-ref="hOpen" target="_blank" class="btn sm sec mi" title="Öffnet MultiData mit diesem Ticket in einem neuen Tab">↗ In MultiData öffnen</a>
-            <a href="#" data-ref="hNewTab" class="btn sm sec mi" title="Dieses Ticket in einem weiteren Werkbank-Tab öffnen">⧉ In neuem Tab</a>
-            <button class="btn sm sec mi" data-ref="hShare" data-keep title="MultiData-Link des Tickets kopieren (Umschalt+Klick: „#Nr. Betreff“ + Link)">🔗 Link kopieren</button>
-            <div class="ddsep"></div>
-            <button class="btn sm sec mi" data-ref="hKids" title="Child-Tickets anzeigen, zuordnen, erstellen">🌿 Child-Tickets</button>
-            <button class="btn sm sec mi" data-ref="hMerge" title="Dieses Ticket in ein anderes zusammenführen">🔀 Zusammenführen</button>
+      <div class="thero">
+        <div class="hrow1">
+          <span class="sid">#${t.SID}</span>
+          <input type="text" data-ref="hTitle" spellcheck="true" lang="de" title="Betreff (Enter = speichern)">
+          <button class="btn warn" data-ref="hQC" title="Ticket per QuickClose schließen (erzeugt den Abschlusstext)">QuickClose</button>
+          <div class="dd r" data-dd="tmore">
+            <button type="button" class="btn sec ddb" title="Öffnen, Teilen, Child-Tickets, Zusammenführen">⋯</button>
+            <div class="ddm" style="min-width:220px">
+              <a href="#" data-ref="hOpen" target="_blank" class="btn sm sec mi" title="Öffnet MultiData mit diesem Ticket in einem neuen Tab">↗ In MultiData öffnen</a>
+              <a href="#" data-ref="hNewTab" class="btn sm sec mi" title="Dieses Ticket in einem weiteren Werkbank-Tab öffnen">⧉ In neuem Tab</a>
+              <button class="btn sm sec mi" data-ref="hShare" data-keep title="MultiData-Link des Tickets kopieren (Umschalt+Klick: „#Nr. Betreff“ + Link)">🔗 Link kopieren</button>
+              <div class="ddsep"></div>
+              <button class="btn sm sec mi" data-ref="hKids" title="Child-Tickets anzeigen, zuordnen, erstellen">🌿 Child-Tickets</button>
+              <button class="btn sm sec mi" data-ref="hMerge" title="Dieses Ticket in ein anderes zusammenführen">🔀 Zusammenführen</button>
+            </div>
           </div>
         </div>
       </div>
-      <div class="hgrid">
-        <div><label class="l">Status</label><select data-ref="hStatus"></select></div>
-        <div><label class="l">Priorität</label><select data-ref="hPrio"></select></div>
-        <div><label class="l">Queue</label><select data-ref="hQueue"></select></div>
-        <div class="sug"><label class="l">Bearbeiter</label><input type="text" data-ref="hUser" autocomplete="off" placeholder="Name oder Kürzel …"><div class="results" data-ref="hUserRes" style="display:none"></div></div>
-        <div class="sug wide"><label class="l">Firma</label><input type="text" data-ref="hFirm" autocomplete="off" placeholder="Firma suchen (mind. 3 Zeichen) …"><div class="results" data-ref="hFirmRes" style="display:none"></div></div>
-        <div><label class="l">Parent-Ticket</label><input type="text" data-ref="hParent" placeholder="Ticket-Nr. (leer = keins)"></div>
-      </div>
-      <div class="row hbar">
-        <label class="chk" style="margin:0" title="Gesetzt = zu diesem Ticket gehen keine Mails raus"><input type="checkbox" data-ref="hNoNotify"> Keine Benachrichtigungen</label>
-        <span class="hint" data-ref="hParentInfo"></span>
-        <span style="flex:1"></span>
-        <button class="btn sec" data-ref="hReset" style="display:none" title="Vorgemerkte Änderungen verwerfen">Verwerfen</button>
-        <button class="btn" data-ref="hSave" title="Alle gelb markierten Änderungen übernehmen (Enter im Betreff)">Speichern</button>
-      </div>
-      <div class="warnbox" data-ref="hFirmWarn" style="display:none">Firmenwechsel: MultiData kann dabei abrechenbare Stunden zurücksetzen – bitte nach dem Speichern prüfen.</div>
-      <div class="row hbar">
-        <div class="sums" data-ref="hSums" style="flex:1;min-width:240px"></div>
-        <button class="btn sm warn" data-ref="hQC" title="Ticket per QuickClose schließen (erzeugt den Abschlusstext)">QuickClose</button>
-      </div>
-      <div data-ref="hExtra"></div>`;
+      <div data-ref="hExtra"></div>
+      <div class="tgrid" data-ref="tGrid">
+        <div class="tile">
+          <div class="tth">🎫 Ticketdaten</div>
+          <div class="fgrid">
+            <div><label class="l">Status</label><select data-ref="hStatus"></select></div>
+            <div><label class="l">Priorität</label><select data-ref="hPrio"></select></div>
+            <div><label class="l">Queue</label><select data-ref="hQueue"></select></div>
+            <div class="sug"><label class="l">Bearbeiter</label><input type="text" data-ref="hUser" autocomplete="off" placeholder="Name oder Kürzel"><div class="results" data-ref="hUserRes" style="display:none"></div></div>
+            <div class="sug wide"><label class="l">Firma</label><input type="text" data-ref="hFirm" autocomplete="off" placeholder="Firma suchen …"><div class="results" data-ref="hFirmRes" style="display:none"></div></div>
+            <div><label class="l">Parent-Ticket</label><input type="text" data-ref="hParent" placeholder="Ticket-Nr."></div>
+            <div style="align-self:end"><label class="chk" style="margin:0 0 7px" title="Gesetzt = zu diesem Ticket gehen keine Mails raus"><input type="checkbox" data-ref="hNoNotify"> Keine Benachrichtigungen</label></div>
+          </div>
+          <div class="hint" data-ref="hParentInfo"></div>
+          <div class="warnbox" data-ref="hFirmWarn" style="display:none">Firmenwechsel: abrechenbare Stunden nach dem Speichern prüfen.</div>
+          <div class="tfoot">
+            <span style="flex:1"></span>
+            <button class="btn sec" data-ref="hReset" style="display:none" title="Vorgemerkte Änderungen verwerfen">Verwerfen</button>
+            <button class="btn" data-ref="hSave" title="Gelb markierte Änderungen übernehmen (Enter im Betreff)">Speichern</button>
+          </div>
+        </div>
+        <div class="tile">
+          <div class="tth">📊 Übersicht</div>
+          <div class="stats" data-ref="hSums"></div>
+        </div>
+      </div>`;
     view.appendChild(head);
     const F = { title: $('hTitle', head), status: $('hStatus', head), prio: $('hPrio', head), queue: $('hQueue', head), user: $('hUser', head),
       firm: $('hFirm', head), parent: $('hParent', head), nn: $('hNoNotify', head) };
@@ -2906,8 +2944,10 @@
     });
     refreshDirty();
     wbLink($('hNewTab', head), ticketRoute(t.SID), () => openInNewTab(ticketRoute(t.SID)));
-    $('hSums', head).innerHTML = `Angelegt ${fmtDateTime(t.ANLAGE_DATUM)} von <b data-ref="hCreator">${esc(t.ANLAGE_USER_ID || '–')}</b> · Stunden <b>${fmtH(t.SUM_STD)}</b> · abrechenbar <b>${fmtH(t.MEMO_SUM_ABRSTD)}</b><br>` +
-      `An: ${esc(t.EMAIL_TO || '–')}${t.EMAIL_CC ? ' · Cc: ' + esc(t.EMAIL_CC) : ''}`;
+    const st = (label, val, cls = '') => `<div class="st${cls ? ' ' + cls : ''}"><span>${label}</span><b>${val}</b></div>`;
+    $('hSums', head).innerHTML = st('Angelegt', esc(fmtDateTime(t.ANLAGE_DATUM)) || '–') + st('Ersteller', `<i data-ref="hCreator">${esc(t.ANLAGE_USER_ID || '–')}</i>`) +
+      st('Stunden', fmtH(t.SUM_STD)) + st('abrechenbar', fmtH(t.MEMO_SUM_ABRSTD)) +
+      st('An', esc(t.EMAIL_TO || '–'), 'wide') + (t.EMAIL_CC ? st('Cc', esc(t.EMAIL_CC), 'wide') : '');
     $('hOpen', head).href = mdTicketUrl(t.SID); // immer neuer Tab (Linksklick: wechseln, Mittelklick: im Hintergrund)
     $('hShare', head).addEventListener('click', async ev => {
       const url = mdShareUrl(t.SID), text = ev.shiftKey ? `#${t.SID} ${t.TITEL || ''}\n${url}` : url;
@@ -2952,36 +2992,37 @@
       catch (e) { msg('tMsg', '✖ ' + e.message, 'err'); }
     });
 
-    const anl = el('details', { className: 'card' });
-    anl.innerHTML = `<summary>📄 Anlagetext</summary><div class="txt"></div>`;
+    const grid = $('tGrid', head);
+    const anl = el('details', { className: 'tile' });
+    anl.innerHTML = `<summary>📄 Beschreibung</summary><div class="txt"></div>`;
     persistDetails(anl, 'ticket.anlagetext', true);
     const fillAnl = () => { if (anl.dataset.filled) return; anl.dataset.filled = '1'; fillHtml(anl.querySelector('.txt'), t.ANLAGE_NOTIZ, '<span class="hint">– kein Anlagetext –</span>'); };
     if (anl.open) fillAnl();
     anl.addEventListener('toggle', () => { if (anl.open) fillAnl(); });
     if (t.ANLAGE_NOTIZ && t.EMAIL_TO) {
-      const bar = el('div', { className: 'row' }); bar.style.marginTop = '6px';
+      const bar = el('div', { className: 'row tfoot' });
       const srcA = { inbound: true, from: t.EMAIL_TO, cc: t.EMAIL_CC, date: t.ANLAGE_DATUM, subject: t.TITEL, html: t.ANLAGE_NOTIZ };
-      for (const [m, l] of [['one', '↩ Antworten'], ['all', '↩↩ Allen antworten'], ['fwd', '↪ Weiterleiten']]) {
-        const b = el('button', { className: 'btn sm sec', textContent: l }); b.addEventListener('click', () => ui.reply(srcA, m)); bar.appendChild(b);
+      for (const [m, l, tt] of [['one', '↩ Antworten', 'Antworten'], ['all', '↩↩ Allen', 'Allen antworten'], ['fwd', '↪ Weiterleiten', 'Weiterleiten']]) {
+        const b = el('button', { className: 'btn sm sec', textContent: l, title: tt }); b.addEventListener('click', () => ui.reply(srcA, m)); bar.appendChild(b);
       }
       anl.appendChild(bar);
     }
-    view.appendChild(anl);
+    grid.appendChild(anl);
 
     // --- Anhänge ---
     const docs = ui.docs || [];
-    const dd = el('details', { className: 'card' });
-    dd.innerHTML = `<summary>📎 Anhänge (${docs.length})</summary><div data-ref="dList"></div><div class="msg" data-ref="dMsg"></div>`;
+    const dd = el('details', { className: 'tile' });
+    dd.innerHTML = `<summary>📎 Anhänge <span class="cnt">${docs.length}</span></summary><div data-ref="dList"></div><div class="msg" data-ref="dMsg"></div>`;
     persistDetails(dd, 'ticket.anhaenge', true);
     for (const d of docs) {
       const row = el('div', { className: 'doc' });
       const ext = fileExt(d.DOCUMENT_NAME), isOffice = OFFICE_EXT.has(ext), kind = previewKind(ext);
       const B = (a, label, title = '') => `<button class="btn sm sec" data-a="${a}"${title ? ` title="${title}"` : ''}>${label}</button>`;
-      const btns = ext === 'eml' ? B('open', '✉ Anzeigen') + B('dl', '⬇ Herunterladen')
-        : isOffice ? (kind ? B('preview', '👁 Vorschau', 'Im Browser ansehen, ohne Download') : '') + B('office', '🖥 In Office öffnen', 'Originaldatei herunterladen und im installierten Office öffnen')
-        : kind ? B('preview', '👁 Anzeigen', 'Im Browser ansehen, ohne Download') + B('dl', '⬇ Herunterladen')
-        : B('open', 'Öffnen') + B('dl', '⬇ Herunterladen');
-      row.innerHTML = `<span class="nm"></span><span class="hint">${fmtDateTime(d.DATUM)} · ${esc(d.CREATED_BY || '')}${d.TITEL && d.TITEL !== t.TITEL ? ' · ' + esc(d.TITEL) : ''}</span>${btns}`;
+      const btns = ext === 'eml' ? B('open', '✉ Ansehen', 'Mail in der Werkbank anzeigen') + B('dl', '⬇', 'Herunterladen')
+        : isOffice ? (kind ? B('preview', '👁 Ansehen', 'Im Browser ansehen, ohne Download') : '') + B('office', '🖥 Office', 'Originaldatei herunterladen und im installierten Office öffnen')
+        : kind ? B('preview', '👁 Ansehen', 'Im Browser ansehen, ohne Download') + B('dl', '⬇', 'Herunterladen')
+        : B('open', '↗ Öffnen') + B('dl', '⬇', 'Herunterladen');
+      row.innerHTML = `<div class="dinfo"><span class="nm"></span><span class="hint">${fmtDateTime(d.DATUM)} · ${esc(d.CREATED_BY || '')}${d.TITEL && d.TITEL !== t.TITEL && d.TITEL !== d.DOCUMENT_NAME ? ' · ' + esc(d.TITEL) : ''}</span></div>${btns}`;
       row.querySelector('.nm').textContent = '📄 ' + (d.DOCUMENT_NAME || '(ohne Namen)');
       for (const b of row.querySelectorAll('button')) b.addEventListener('click', async () => {
         const win = b.dataset.a === 'open' || b.dataset.a === 'preview' ? window.open('about:blank', '_blank') : null; // synchron öffnen → kein Popup-Blocker
@@ -3004,7 +3045,7 @@
       $('dList', dd).appendChild(row);
     }
     if (!docs.length) $('dList', dd).innerHTML = '<span class="hint">Keine Anhänge.</span>';
-    view.appendChild(dd);
+    grid.appendChild(dd);
 
     // --- Child-Tickets ---
     const kids = ui.children || [];
@@ -3077,8 +3118,8 @@
     if (secGet('ticket.panel', '') === 'kids') kd.style.display = ''; else if (secGet('ticket.panel', '') === 'merge') mg.style.display = '';
 
     // --- Neuer Kommentar / Zeit / Mail ---
-    const add = el('details', { className: 'card' });
-    add.innerHTML = `<summary>＋ Kommentar / Zeit / Mail hinzufügen</summary>`;
+    const add = el('details', { className: 'tile tfull' });
+    add.innerHTML = `<summary>✍ Kommentar, Zeit oder Mail</summary>`;
     persistDetails(add, 'ticket.neuerKommentar', false);
     const form = timeForm({
       billableDefault: billableDefault({ kndId: t.KND_ID, name: t.MATCHCODE }), allowZero: true, kontaktarten: ka,
@@ -3151,12 +3192,13 @@
     view.appendChild(add);
 
     // --- Reiter unten: Kommentare | Verlauf ---
+    const ctile = el('div', { className: 'tile tfull tcom' });
     const bt = el('div', { className: 'btabs' });
-    bt.innerHTML = `<button data-b="c">💬 Kommentare (${ui.comments.length})</button><button data-b="h" title="Änderungen an Status, Bearbeiter, Queue … sowie Kommentare, Mails und Anhänge in zeitlicher Reihenfolge">🕘 Verlauf</button>
-      <span style="flex:1"></span><span data-ref="cTools"><button class="btn sm sec" data-ref="cAllOpen">▾ alle aufklappen</button> <button class="btn sm sec" data-ref="cAllClose">▸ alle einklappen</button></span>`;
-    view.appendChild(bt);
+    bt.innerHTML = `<button data-b="c">💬 Kommentare <span class="cnt">${ui.comments.length}</span></button><button data-b="h" title="Änderungen an Status, Bearbeiter, Queue … sowie Kommentare, Mails und Anhänge in zeitlicher Reihenfolge">🕘 Verlauf</button>
+      <span style="flex:1"></span><span data-ref="cTools"><button class="btn sm sec" data-ref="cAllOpen" title="Alle Kommentare aufklappen">▾ Alle</button> <button class="btn sm sec" data-ref="cAllClose" title="Alle Kommentare einklappen">▸ Alle</button></span>`;
     const cBox = el('div'), hBox = el('div');
-    view.append(cBox, hBox);
+    ctile.append(bt, cBox, hBox);
+    view.appendChild(ctile);
     const showBottom = b => {
       bt.querySelectorAll('[data-b]').forEach(x => x.classList.toggle('on', x.dataset.b === b));
       cBox.style.display = b === 'c' ? '' : 'none'; hBox.style.display = b === 'h' ? '' : 'none'; $('cTools', bt).style.display = b === 'c' ? '' : 'none';
@@ -3227,7 +3269,7 @@
     ev.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
     const onlyCh = secGet('ticket.histOnly', false);
     box.innerHTML = `<div class="row" style="align-items:center;margin-top:6px"><label class="chk" style="margin:0"><input type="checkbox" data-ref="hiOnly"> nur Feldänderungen</label>
-      <span class="hint" style="flex:1;text-align:right">${proto ? 'Feldänderungen aus dem MultiData-Protokoll.'
+      <span class="hint" style="flex:1;text-align:right">${proto ? ''
         : `MultiData-Protokoll nicht abrufbar (${esc(protoErr && protoErr.message || '')}) – angezeigt werden die Änderungen, die die Werkbank selbst erkannt hat${h.since ? ` (seit ${fmtDateTime(h.since)})` : ''}.`}</span></div>`;
     $('hiOnly', box).checked = onlyCh;
     $('hiOnly', box).addEventListener('change', () => { secSet('ticket.histOnly', $('hiOnly', box).checked); renderHistory(box, t); });
