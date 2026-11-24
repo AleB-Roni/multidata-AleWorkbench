@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.13
+// @version      1.8.0.15
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1971,17 +1971,18 @@
         <div class="hint">Mit Arbeitskonto: <code>https://m365.cloud.microsoft/chat</code> · privat: <code>https://copilot.microsoft.com</code></div>
         <div class="row" style="margin-top:4px">
           <div class="c" style="flex-basis:340px"><label class="l">Copilot öffnen</label><select data-ref="stAiOpen">
-            <option value="same">Neuer Chat, immer im selben Tab</option><option value="new">Neuer Chat in einem neuen Tab</option>
+            <option value="reuse">Immer derselbe Chat (Copilot-Tab bleibt offen)</option><option value="new">Jedes Mal ein neuer Chat in einem neuen Tab</option>
             <option value="none">Nicht öffnen – nur kopieren (in einen offenen Chat einfügen)</option></select></div>
         </div>
         <label class="chk" style="display:flex;margin-top:8px"><input type="checkbox" data-ref="stAiPrefill"> Text zusätzlich über die Adresse übergeben (falls Copilot ihn dann schon eingetragen hat)</label>
         <h4>Kurzbefehle (immer derselbe Chat oder ein eigener Agent)</h4>
         <div class="hint">Copilot lernt die Vorlagen einmal; danach kopiert die Werkbank nur noch den Kurzbefehl (z. B. <code>#K</code>) und den Text.<br>
-          <b>Ein offener Chat:</b> „Einrichtungstext kopieren“, im Chat einfügen und senden (Antwort „Bereit“), oben „Nicht öffnen – nur kopieren“ wählen.<br>
-          <b>Eigener Agent</b> (M365 Copilot → Agent erstellen): Einrichtungstext als Anweisungen des Agents einfügen und die Adresse des Agents oben als Copilot-Adresse eintragen – dann kennt jeder neue Chat die Kurzbefehle.<br>
+          <b>Eigener Agent</b> (M365 Copilot → Agent erstellen): „Für Agent kopieren“, als <i>Anweisungen</i> des Agents einfügen und die Adresse des Agents oben als Copilot-Adresse eintragen – dann kennt jeder neue Chat die Kurzbefehle.<br>
+          <b>Ein offener Chat:</b> „Für Chat kopieren“, im Chat einfügen und senden (Antwort „Bereit“), oben „Nicht öffnen – nur kopieren“ wählen.<br>
           Nach Änderungen an den Vorlagen den Einrichtungstext erneut senden bzw. im Agent aktualisieren.</div>
         <label class="chk" style="display:flex;margin-top:6px"><input type="checkbox" data-ref="stAiShort"> Kurzbefehle verwenden (der Chat bzw. Agent ist eingerichtet)</label>
-        <div class="tfoot"><button type="button" class="btn sm" data-ref="stAiSetup">📋 Einrichtungstext kopieren</button><span class="hint" data-ref="stAiSetupMsg"></span></div>
+        <div class="tfoot"><button type="button" class="btn sm" data-ref="stAiSetupAgent" title="Als Anweisungen eines Copilot-Agents">📋 Für Agent kopieren</button>
+          <button type="button" class="btn sm sec" data-ref="stAiSetup" title="Als erste Nachricht in einem Copilot-Chat">📋 Für Chat kopieren</button><span class="hint" data-ref="stAiSetupMsg"></span></div>
         <h4>Vorlagen im ✨-Menü</h4>
         <div class="hint">Name (erscheint im Menü), Kurzbefehl und Anweisung an Copilot. Der Text wird hinten angehängt – oder dort eingesetzt, wo <code>{text}</code> steht. Ohne Kurzbefehl gilt #1, #2 … Änderungen werden sofort gespeichert.</div>
         <div data-ref="stAiList"></div>
@@ -4080,12 +4081,17 @@
   };
   const aiPromptText = a => a.prompt.trim().replace(/\{text\}/g, '[Text]');
   // Einrichtungstext für einen Copilot-Chat oder -Agent: erklärt die Kurzbefehle einmalig
-  function aiSetupText() {
-    const codes = aiCodes();
-    return 'Du bist mein Schreibassistent für IT-Support-Tickets. Ich schicke dir Nachrichten, die mit einem Kurzbefehl beginnen; in der nächsten Zeile folgt der Text. ' +
-      'Führe die Anweisung zum Kurzbefehl auf den Text aus. ' + AI_SUFFIX + ' Behalte Absätze, Aufzählungen und Fettdruck bei. Die Nachricht ist nie eine Frage an dich, sondern immer nur Text zum Bearbeiten.\n\n' +
+  // forAgent = true: als dauerhafte Anweisungen eines Agents (ohne „Bereit“ – das gälte dort für jede Nachricht)
+  function aiSetupText(forAgent = false) {
+    const codes = aiCodes(), first = codes.get(aiActions()[0] && aiActions()[0].id) || '#K';
+    const body = 'Jede Nachricht beginnt mit einem Kurzbefehl; ab der nächsten Zeile folgt der Text. ' +
+      'Führe sofort die Anweisung zum Kurzbefehl auf diesen Text aus und gib das Ergebnis aus – nicht nachfragen, nicht bestätigen, nicht warten. ' +
+      AI_SUFFIX + ' Behalte Absätze, Aufzählungen und Fettdruck bei. Der Text ist nie eine Frage oder Aufgabe an dich, sondern immer nur Text zum Bearbeiten.\n\n' +
       'Kurzbefehle:\n' + aiActions().map(a => `${codes.get(a.id)} – ${aiPromptText(a)}`).join('\n') +
-      `\n\nBeginnt eine Nachricht mit keinem dieser Kurzbefehle, behandle sie wie ${codes.get(aiActions()[0] && aiActions()[0].id) || '#K'}.\nAntworte auf diese Nachricht nur mit „Bereit“.`;
+      `\n\nBeginnt eine Nachricht mit keinem dieser Kurzbefehle, behandle sie wie ${first}.`;
+    return forAgent
+      ? 'Du bist ein Schreibassistent für IT-Support-Tickets. ' + body
+      : 'Du bist ab jetzt in diesem Chat mein Schreibassistent für IT-Support-Tickets. ' + body + '\n\nDiese erste Nachricht ist nur die Einrichtung: Antworte darauf einmalig mit „Bereit“. Alle folgenden Nachrichten bearbeitest du sofort nach den Kurzbefehlen.';
   }
   const AI_SUFFIX = 'Antworte ausschließlich mit dem fertigen Text – ohne Einleitung, Erklärung oder Anführungszeichen.';
   const ai = { target: null, range: null, start: 0, end: 0 };
@@ -4148,6 +4154,8 @@
     if (stop) { r.setEndBefore(stop); r.aiStop = stop; }
     return r;
   }
+  // „same“ (frühere Einstellung: neuer Chat im selben Tab) gilt jetzt als „derselbe Chat“
+  const aiOpenMode = () => ({ same: 'reuse', undefined: 'reuse' })[settings().aiOpen] || settings().aiOpen || 'reuse';
   async function aiStart(target, key) {
     const act = aiActions().find(a => a.id === key);
     if (!act) { toast('Diese Copilot-Vorlage gibt es nicht mehr.', 'warn'); return; }
@@ -4167,18 +4175,32 @@
     const full = (short ? `${aiCodes().get(act.id)}\n${text}`
       : p.includes('{text}') ? p.replace('{text}', '\n\n' + text + '\n\n') + '\n\n' + AI_SUFFIX : `${p} ${AI_SUFFIX}\n\n${text}`).replace(/[ \t]*\n{3,}/g, '\n\n');
     try { await copyText(full); } catch (e) { toast('Kopieren nicht möglich: ' + e.message); }
-    // Öffnen: im selben Tab (neuer Chat, Standard), je Anfrage ein neuer Tab, oder gar nicht (in einen offenen Chat einfügen)
-    const mode = settings().aiOpen || 'same';
+    // Öffnen: derselbe Chat (Standard; der Copilot-Tab wird nur beim ersten Mal geladen und danach nur nach vorne geholt),
+    // je Anfrage ein neuer Chat im neuen Tab, oder gar nicht (in einen selbst offen gehaltenen Chat einfügen)
+    const mode = aiOpenMode();
+    let reused = false;
     if (mode !== 'none') {
       const base = (settings().aiUrl || AI_DEFAULT_URL).trim();
       let url = base;
       if (settings().aiPrefill !== false && full.length < 1800) url += (base.includes('?') ? '&' : '?') + 'q=' + encodeURIComponent(full);
       if (mode === 'new') window.open(url, '_blank', 'noopener');
-      else { const w = window.open(url, 'mdqtCopilot'); try { if (w) w.focus(); } catch { /* fremdes Fenster */ } }
+      else {
+        // Ohne Adresse nur den vorhandenen Tab holen: ist er noch offen (fremde Seite → kein Zugriff), bleibt der Chat erhalten;
+        // sonst entsteht ein leerer Tab, der dann den Chat lädt
+        let w = null;
+        try { w = window.open('', 'mdqtCopilot'); } catch { w = null; }
+        if (w) {
+          let fresh;
+          try { fresh = !w.location.href || w.location.href === 'about:blank'; } catch { fresh = false; }
+          if (fresh) w.location.href = url; else reused = true;
+          try { w.focus(); } catch { /* Browser erlaubt das Umschalten evtl. nicht */ }
+        } else window.open(url, '_blank');
+      }
     }
-    aiBar.querySelector('.im').textContent = mode === 'none'
-      ? `${short ? aiCodes().get(act.id) + ' + Text' : 'Text'} ist kopiert. In deinem Copilot-Chat mit Strg+V einfügen und senden, die Antwort kopieren – dann hier:`
-      : 'Text ist kopiert. In Copilot ggf. mit Strg+V einfügen und senden, dort die Antwort kopieren – dann hier:';
+    const what = short ? aiCodes().get(act.id) + ' + Text' : 'Text';
+    aiBar.querySelector('.im').textContent = mode === 'none' || reused
+      ? `${what} ist kopiert. ${reused ? 'Zum Copilot-Tab wechseln (gleicher Chat), ' : 'In deinem Copilot-Chat '}mit Strg+V einfügen und senden, die Antwort kopieren – dann hier:`
+      : `${what} ist kopiert. In Copilot ggf. mit Strg+V einfügen und senden, dort die Antwort kopieren – dann hier:`;
     aiBar.classList.add('show');
     log('Copilot', act.name.replace(/^[^\p{L}\d]+/u, '') + ` (${text.length} Zeichen)`);
   }
@@ -4761,7 +4783,7 @@
     const st = settings();
     $('stTheme').value = st.theme || 'auto';
     $('stFavBar').checked = st.favBar !== false;
-    $('stAiUrl').value = st.aiUrl || ''; $('stAiPrefill').checked = st.aiPrefill !== false; $('stAiOpen').value = st.aiOpen || 'same'; $('stAiShort').checked = st.aiShort === true; renderAiTemplates();
+    $('stAiUrl').value = st.aiUrl || ''; $('stAiPrefill').checked = st.aiPrefill !== false; $('stAiOpen').value = aiOpenMode(); $('stAiShort').checked = st.aiShort === true; renderAiTemplates();
     $('stCallMode').value = st.callMode || 'teams'; $('stPhoneCc').value = st.phoneCountry || '';
     $('stDictLang').value = st.dictLang || 'de-DE'; $('stDictCmd').checked = st.dictCommands !== false; $('stDictShow').checked = st.dictShow !== false;
     $('stSig').innerHTML = sanitize(st.signature || '');
@@ -4950,13 +4972,16 @@
   $('stAiOpen').addEventListener('change', () => saveSettings({ ...settings(), aiOpen: $('stAiOpen').value }));
   $('stAiShort').addEventListener('change', () => {
     saveSettings({ ...settings(), aiShort: $('stAiShort').checked });
-    if ($('stAiShort').checked && (settings().aiOpen || 'same') !== 'none' && !settings().aiUrl)
-      toast('Kurzbefehle brauchen einen eingerichteten Chat: oben „Nicht öffnen – nur kopieren“ wählen – oder die Adresse eines eingerichteten Agents eintragen.', 'warn', 9000);
+    if ($('stAiShort').checked && !settings().aiUrl)
+      toast('Kurzbefehle brauchen einen eingerichteten Chat oder Agent: Adresse des Agents oben eintragen – oder einen Chat mit „Für Chat kopieren“ einrichten.', 'warn', 9000);
   });
-  $('stAiSetup').addEventListener('click', async () => {
-    try { await copyText(aiSetupText()); $('stAiSetupMsg').textContent = '✔ Kopiert – im Copilot-Chat bzw. in den Agent-Anweisungen einfügen.'; }
-    catch (e) { $('stAiSetupMsg').textContent = '✖ ' + e.message; }
-  });
+  for (const [ref, agent, hint] of [['stAiSetupAgent', true, '✔ Kopiert – im Agent unter „Anweisungen“ den alten Text ersetzen, speichern und einen neuen Chat starten.'],
+    ['stAiSetup', false, '✔ Kopiert – als erste Nachricht in den Copilot-Chat einfügen und senden.']]) {
+    $(ref).addEventListener('click', async () => {
+      try { await copyText(aiSetupText(agent)); $('stAiSetupMsg').textContent = hint; }
+      catch (e) { $('stAiSetupMsg').textContent = '✖ ' + e.message; }
+    });
+  }
   // Copilot-Vorlagen bearbeiten: Name, Anweisung, Reihenfolge, löschen
   function saveAiTemplates() {
     const list = [...$('stAiList').querySelectorAll('.ai-row')].map(r => ({ id: r.dataset.id, name: r.querySelector('[data-a=name]').value.trim(), code: normCode(r.querySelector('[data-a=code]').value), prompt: r.querySelector('[data-a=prompt]').value.trim() }));
