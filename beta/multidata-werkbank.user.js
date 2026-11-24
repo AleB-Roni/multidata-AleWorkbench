@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.10
+// @version      1.8.0.12
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1460,6 +1460,20 @@
   #mdqt-panel label.lmic{display:flex;align-items:center;gap:6px}
   #mdqt-panel .mic.inl{padding:1px 6px;min-height:22px;font-size:12px}
   #mdqt-panel.nomic .mic{display:none}
+  #mdqt-panel .dd.ai .aib{border:1px solid transparent;background:transparent;border-radius:var(--mq-r-sm);cursor:pointer;font-size:13px;padding:3px 6px;min-height:24px;color:var(--mq-fg)}
+  #mdqt-panel .dd.ai .aib:hover{background:var(--mq-btn);border-color:var(--mq-border2)}
+  #mdqt-panel .dd.ai.inl .aib{padding:1px 5px;min-height:22px;font-size:12px}
+  #mdqt-panel .dd.ai .ddm button.mi{display:flex;width:100%;justify-content:flex-start;border:none;background:transparent;font:500 13px/1.3 var(--mq-font);color:var(--mq-fg);padding:6px 8px;border-radius:var(--mq-r-sm);cursor:pointer}
+  #mdqt-panel .dd.ai .ddm button.mi:hover{background:var(--mq-soft2)}
+  #mdqt-panel label.lmic .dd.ai .ddm{font-weight:400;text-transform:none}
+  #mdqt-panel .dictbar.aibar{border-color:#a5b4fc;border-radius:var(--mq-r-lg);max-width:min(720px,calc(100% - 32px))}
+  #mdqt-panel .dictbar.aibar .im{white-space:normal;font-style:normal;font-size:12px;color:var(--mq-muted2);line-height:1.35}
+  #mdqt-panel .ai-row{margin-top:8px;padding:8px;border:1px solid var(--mq-line);border-radius:var(--mq-r);display:flex;flex-direction:column;gap:6px}
+  #mdqt-panel .ai-row textarea{min-height:48px}
+  #mdqt-panel .aipaste{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);z-index:61;width:min(420px,calc(100% - 32px));background:var(--mq-bg);border:1px solid var(--mq-border);
+    border-radius:var(--mq-r-lg);box-shadow:var(--mq-shadow);padding:14px;display:flex;flex-direction:column;gap:8px}
+  #mdqt-panel .aipaste .dt{font-weight:700;font-size:14px}
+  #mdqt-panel .aipaste .aitarget{min-height:70px;border:2px dashed var(--mq-accent);border-radius:var(--mq-r);padding:8px;outline:none}
   #mdqt-panel .dictbar{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);z-index:59;display:none;align-items:center;gap:10px;max-width:min(640px,calc(100% - 32px));
     padding:7px 8px 7px 14px;border-radius:999px;background:var(--mq-bg);border:1px solid #fca5a5;box-shadow:0 12px 28px -8px rgba(0,0,0,.35);font-size:13px}
   #mdqt-panel .dictbar.show{display:flex}
@@ -1502,6 +1516,7 @@
   #mdqt-panel .toast{pointer-events:auto;display:flex;align-items:flex-start;gap:12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.4;
     white-space:pre-wrap;color:#fff;background:#b91c1c;box-shadow:0 12px 28px -8px rgba(0,0,0,.45);cursor:pointer;animation:mqToastIn .18s ease-out}
   #mdqt-panel .toast.warn{background:#c2410c}
+  #mdqt-panel .toast.ok{background:#15803d}
   #mdqt-panel .toast b{font-size:16px;line-height:1;opacity:.8}
   @keyframes mqToastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   #mdqt-panel .hint{color:var(--mq-muted);font-size:12px}
@@ -1947,6 +1962,24 @@
         </div>
         <div class="hint" style="margin-top:4px">Teams braucht eine Telefonie-Lizenz für Anrufe ins Telefonnetz. Ohne Lizenz die Nummer mit 📋 kopieren. Ist Teams als Standard-App für Telefonlinks eingerichtet, funktioniert auch „tel:“.</div>
         </details>
+        <details class="card set" data-set="ai"><summary>Copilot (Text korrigieren)</summary>
+        <div class="hint">Der Knopf ✨ im Editor kopiert den Text samt Anweisung und öffnet Copilot. Dort senden, die Antwort kopieren und mit „📋 Antwort einfügen“ übernehmen. Der Text geht dabei an Microsoft Copilot – nur nutzen, wenn das für Kundendaten erlaubt ist.</div>
+        <div class="row" style="margin-top:4px">
+          <div class="c" style="flex-basis:340px"><label class="l">Copilot-Adresse</label><input type="text" data-ref="stAiUrl" placeholder="https://m365.cloud.microsoft/chat"></div>
+        </div>
+        <div class="hint">Mit Arbeitskonto: <code>https://m365.cloud.microsoft/chat</code> · privat: <code>https://copilot.microsoft.com</code></div>
+        <div class="row" style="margin-top:4px">
+          <div class="c" style="flex-basis:340px"><label class="l">Copilot öffnen</label><select data-ref="stAiOpen">
+            <option value="same">Neuer Chat, immer im selben Tab</option><option value="new">Neuer Chat in einem neuen Tab</option>
+            <option value="none">Nicht öffnen – nur kopieren (in einen offenen Chat einfügen)</option></select></div>
+        </div>
+        <label class="chk" style="display:flex;margin-top:8px"><input type="checkbox" data-ref="stAiPrefill"> Text zusätzlich über die Adresse übergeben (falls Copilot ihn dann schon eingetragen hat)</label>
+        <h4>Vorlagen im ✨-Menü</h4>
+        <div class="hint">Name (erscheint im Menü) und Anweisung an Copilot. Der Text wird hinten angehängt – oder dort eingesetzt, wo <code>{text}</code> steht. Änderungen werden sofort gespeichert.</div>
+        <div data-ref="stAiList"></div>
+        <div class="tfoot"><button type="button" class="btn sm sec" data-ref="stAiAdd">＋ Vorlage hinzufügen</button>
+          <button type="button" class="btn sm sec" data-ref="stAiReset">Standard-Vorlagen wiederherstellen</button></div>
+        </details>
         <details class="card set" data-set="dict"><summary>Diktieren (Spracheingabe)</summary>
         <div class="hint">Der Knopf 🎤 an Kommentar, Beschreibung, Betreff, Signatur und Textbausteinen startet das Diktat; ein zweiter Klick oder Esc beendet es. Der Text landet an der Einfügemarke.
           Es wird die Spracherkennung des Browsers genutzt (Chrome oder Edge). <b>Dabei schickt der Browser die Sprachaufnahme an seinen Anbieter</b> (Chrome: Google, Edge: Microsoft) – bitte keine vertraulichen Daten diktieren, wenn das nicht erlaubt ist.</div>
@@ -2048,7 +2081,7 @@
     if (!n) {
       n = el('div', { className: 'toast ' + kind, role: 'alert', title: 'Klicken zum Schließen' });
       n.dataset.t = t;
-      n.append(el('span', { textContent: (kind === 'err' ? '✖ ' : '⚠ ') + t }), el('b', { textContent: '×' }));
+      n.append(el('span', { textContent: (kind === 'err' ? '✖ ' : kind === 'ok' ? '✔ ' : '⚠ ') + t }), el('b', { textContent: '×' }));
       n.addEventListener('click', () => n.remove());
       toastBox.appendChild(n);
       while (toastBox.children.length > 3) toastBox.firstChild.remove();
@@ -4014,13 +4047,210 @@
   $('nTitleL').appendChild(micBtn($('nTitle'), 'inl'));
   $('nDescL').appendChild(micBtn($('nDesc'), 'inl'));
 
+  // ================= COPILOT (Text korrigieren / umformulieren) =================
+  // Copilot hat keine Schnittstelle für die Werkbank. Ablauf deshalb: Anweisung + Text in die Zwischenablage, Copilot öffnen
+  // (Text zusätzlich über ?q= in der Adresse, falls Copilot das übernimmt), dort senden und die Antwort kopieren,
+  // dann „📋 Antwort einfügen“: ersetzt die Auswahl bzw. den eigenen Text (Signatur und zitierte Mail bleiben unverändert).
+  const AI_DEFAULT_URL = 'https://m365.cloud.microsoft/chat';
+  const AI_FIX = 'Korrigiere Rechtschreibung, Grammatik und Zeichensetzung des folgenden Textes. Ändere Inhalt, Tonfall und Aufbau nicht; behalte Absätze und Aufzählungen bei.';
+  // Vorlagen (eigene unter ⚙ → Copilot): Name im Menü + Anweisung. {text} in der Anweisung = Stelle, an der der Text eingesetzt wird.
+  const AI_DEFAULTS = [
+    { id: 'fix', name: '✓ Korrigieren', prompt: AI_FIX },
+    { id: 'polish', name: '✨ Freundlicher & klarer', prompt: 'Formuliere den folgenden Text freundlich, professionell und gut verständlich für Kunden. Inhalt nicht verändern, Absätze und Aufzählungen beibehalten.' },
+    { id: 'short', name: '✂ Kürzer', prompt: 'Kürze den folgenden Text auf das Wesentliche, ohne Informationen wegzulassen. Aufzählungen beibehalten.' },
+    { id: 'en', name: '🇬🇧 Auf Englisch', prompt: 'Übersetze den folgenden Text ins Englische (professioneller IT-Support-Ton). Absätze und Aufzählungen beibehalten.' },
+  ];
+  // ältere Einstellung „eigene Anweisung für Korrigieren“ wird übernommen
+  const aiActionsRaw = () => settings().aiActions ?? AI_DEFAULTS.map(a => a.id === 'fix' && settings().aiFixPrompt ? { ...a, prompt: settings().aiFixPrompt } : a);
+  const aiActions = () => aiActionsRaw().filter(a => a && a.name && a.prompt);
+  const AI_SUFFIX = 'Antworte ausschließlich mit dem fertigen Text – ohne Einleitung, Erklärung oder Anführungszeichen.';
+  const ai = { target: null, range: null, start: 0, end: 0 };
+  const aiBar = el('div', { className: 'dictbar aibar' });
+  aiBar.innerHTML = '<span class="dt">✨ Copilot</span><span class="im">Text ist kopiert. In Copilot ggf. mit Strg+V einfügen und senden, dort die Antwort kopieren – dann hier:</span>' +
+    '<button type="button" class="btn sm" data-a="ins">📋 Antwort einfügen</button><button type="button" class="btn sm sec" data-a="x" title="Schließen">✕</button>';
+  aiBar.querySelector('[data-a=ins]').addEventListener('mousedown', e => e.preventDefault());
+  aiBar.querySelector('[data-a=ins]').addEventListener('click', () => aiPaste());
+  aiBar.querySelector('[data-a=x]').addEventListener('click', () => { aiBar.classList.remove('show'); ai.target = null; });
+  panel.appendChild(aiBar);
+  // Editor-Inhalt als Text mit einfacher Formatierung (Absätze, Aufzählungen „- “ / „1. “, **fett**)
+  function rteToText(root) {
+    let out = '';
+    const walk = (n, depth) => {
+      for (const c of n.childNodes) {
+        if (c.nodeType === 3) { out += c.nodeValue.replace(/\s+/g, ' '); continue; }
+        if (c.nodeType !== 1 || c.tagName === 'IMG') continue;
+        const tag = c.tagName;
+        if (tag === 'BR') { out += '\n'; continue; }
+        if (tag === 'LI') {
+          const ol = c.parentElement && c.parentElement.tagName === 'OL';
+          out += '\n' + '   '.repeat(Math.max(0, depth - 1)) + (ol ? ([...c.parentElement.children].indexOf(c) + 1) + '. ' : '- ');
+          walk(c, depth); continue;
+        }
+        if (tag === 'UL' || tag === 'OL') { walk(c, depth + 1); out += '\n'; continue; }
+        if (tag === 'B' || tag === 'STRONG') { out += '**'; walk(c, depth); out += '**'; continue; }
+        const block = /^(P|DIV|H[1-6]|TR|BLOCKQUOTE|TABLE|PRE)$/.test(tag);
+        if (block) out += '\n';
+        walk(c, depth);
+        if (block) out += '\n';
+      }
+    };
+    walk(root, 0);
+    return out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  // Antwort (Markdown-artiger Text) → HTML: Absätze, Aufzählungen, nummerierte Listen, **fett**
+  function aiTextToHtml(text) {
+    const t = String(text || '').replace(/^\s*```[a-z]*\s*\n?|\n?```\s*$/gi, '').replace(/^\s*["„“](.*)["“”]\s*$/s, '$1').trim();
+    const inline = x => esc(x).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/__(.+?)__/g, '<b>$1</b>');
+    let html = '', list = null;
+    const close = () => { if (list) { html += `</${list}>`; list = null; } };
+    for (const raw of t.split(/\r?\n/)) {
+      const line = raw.trimEnd();
+      let m;
+      if ((m = line.match(/^\s*[-*•]\s+(.*)$/))) { if (list !== 'ul') { close(); html += '<ul>'; list = 'ul'; } html += `<li>${inline(m[1])}</li>`; continue; }
+      if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) { if (list !== 'ol') { close(); html += '<ol>'; list = 'ol'; } html += `<li>${inline(m[1])}</li>`; continue; }
+      close();
+      if ((m = line.match(/^\s*#{1,6}\s+(.*)$/))) { html += `<p><b>${inline(m[1])}</b></p>`; continue; }
+      if (line.trim()) html += `<p>${inline(line)}</p>`;
+    }
+    close();
+    return html || '<p></p>';
+  }
+  // Bereich, den die KI bearbeiten soll: die Auswahl, sonst der eigene Text vor Signatur bzw. zitierter Mail
+  function aiRange(rte) {
+    const sel = getSelection();
+    if (sel.rangeCount && !sel.isCollapsed && rte.contains(sel.anchorNode) && rte.contains(sel.focusNode)) { const r = sel.getRangeAt(0).cloneRange(); r.aiSel = true; return r; }
+    const r = document.createRange(); r.selectNodeContents(rte);
+    const stop = [...rte.childNodes].find(n => n.nodeType === 1 && (n.matches('[data-mdqt-sig],hr') || n.querySelector('[data-mdqt-sig]')));
+    if (stop) { r.setEndBefore(stop); r.aiStop = stop; }
+    return r;
+  }
+  async function aiStart(target, key) {
+    const act = aiActions().find(a => a.id === key);
+    if (!act) { toast('Diese Copilot-Vorlage gibt es nicht mehr.', 'warn'); return; }
+    let text;
+    if (target.isContentEditable) {
+      ai.range = aiRange(target);
+      const box = document.createElement('div'); box.appendChild(ai.range.cloneContents()); text = rteToText(box);
+    } else {
+      ai.start = target.selectionStart ?? 0; ai.end = target.selectionEnd ?? 0;
+      if (ai.start === ai.end) { ai.start = 0; ai.end = target.value.length; }
+      text = target.value.slice(ai.start, ai.end).trim();
+    }
+    if (!text) { toast('Kein Text zum Bearbeiten – erst etwas schreiben oder Text markieren.', 'warn'); return; }
+    ai.target = target;
+    const p = act.prompt.trim();
+    const full = (p.includes('{text}') ? p.replace('{text}', '\n\n' + text + '\n\n') + '\n\n' + AI_SUFFIX : `${p} ${AI_SUFFIX}\n\n${text}`).replace(/[ \t]*\n{3,}/g, '\n\n');
+    try { await copyText(full); } catch (e) { toast('Kopieren nicht möglich: ' + e.message); }
+    // Öffnen: im selben Tab (neuer Chat, Standard), je Anfrage ein neuer Tab, oder gar nicht (in einen offenen Chat einfügen)
+    const mode = settings().aiOpen || 'same';
+    if (mode !== 'none') {
+      const base = (settings().aiUrl || AI_DEFAULT_URL).trim();
+      let url = base;
+      if (settings().aiPrefill !== false && full.length < 1800) url += (base.includes('?') ? '&' : '?') + 'q=' + encodeURIComponent(full);
+      if (mode === 'new') window.open(url, '_blank', 'noopener');
+      else { const w = window.open(url, 'mdqtCopilot'); try { if (w) w.focus(); } catch { /* fremdes Fenster */ } }
+    }
+    aiBar.querySelector('.im').textContent = mode === 'none'
+      ? 'Text ist kopiert. In deinem Copilot-Chat mit Strg+V einfügen und senden, die Antwort kopieren – dann hier:'
+      : 'Text ist kopiert. In Copilot ggf. mit Strg+V einfügen und senden, dort die Antwort kopieren – dann hier:';
+    aiBar.classList.add('show');
+    log('Copilot', act.name.replace(/^[^\p{L}\d]+/u, '') + ` (${text.length} Zeichen)`);
+  }
+  // Antwort aus der Zwischenablage holen (HTML bevorzugt); ohne Leserecht: Einfügefeld zum Strg+V
+  async function aiPaste() {
+    const target = ai.target;
+    if (!target || !target.isConnected) { toast('Das Textfeld ist nicht mehr geöffnet – bitte erneut über ✨ starten.', 'warn'); aiBar.classList.remove('show'); return; }
+    let html = '', text = '';
+    try {
+      if (navigator.clipboard.read) {
+        for (const item of await navigator.clipboard.read()) {
+          if (item.types.includes('text/html')) html = await (await item.getType('text/html')).text();
+          if (item.types.includes('text/plain')) text = await (await item.getType('text/plain')).text();
+        }
+      } else text = await navigator.clipboard.readText();
+    } catch { return aiPasteBox(); }
+    aiApply(target, html, text);
+  }
+  function aiPasteBox() {
+    const box = el('div', { className: 'aipaste' });
+    box.innerHTML = '<div class="dt">Antwort hier mit <b>Strg+V</b> einfügen</div><div class="hint">Der Browser hat das Lesen der Zwischenablage nicht erlaubt.</div><div class="aitarget" contenteditable="true"></div><button type="button" class="btn sm sec">Abbrechen</button>';
+    const zone = box.querySelector('.aitarget');
+    zone.addEventListener('paste', e => {
+      e.preventDefault();
+      const html = e.clipboardData.getData('text/html'), text = e.clipboardData.getData('text/plain');
+      box.remove(); aiApply(ai.target, html, text);
+    });
+    box.querySelector('button').addEventListener('click', () => box.remove());
+    panel.appendChild(box); zone.focus();
+  }
+  function aiApply(target, html, text) {
+    if (!String(text || '').trim() && !String(html || '').trim()) { toast('Die Zwischenablage ist leer – in Copilot zuerst die Antwort kopieren.', 'warn'); return; }
+    if (target.isContentEditable) {
+      target.focus();
+      const r = ai.range && target.contains(ai.range.startContainer) ? ai.range : aiRange(target);
+      if (target._um) target._um.checkpoint();
+      // HTML nur, wenn es echte Struktur hat; sonst den Text (Markdown) umwandeln
+      const useHtml = html && /<(p|li|ul|ol|br|b|strong)\b/i.test(html) && !/\*\*/.test(htmlToText(html));
+      let out = useHtml ? cleanPaste(html) : aiTextToHtml(text || htmlToText(html));
+      if (r.aiSel) {
+        // Markierung: einzelner Absatz → nur dessen Inhalt einfügen (bleibt im umgebenden Absatz)
+        const one = out.match(/^\s*<p>([\s\S]*?)<\/p>\s*$/i);
+        if (one && !/<p>/i.test(one[1])) out = one[1];
+        const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+        document.execCommand('insertHTML', false, out);
+      } else {
+        // eigener Text vor Signatur/Zitat: Block für Block ersetzen, Signatur und Zitat bleiben unberührt
+        r.deleteContents();
+        const frag = r.createContextualFragment(out + (r.aiStop ? '<p><br></p>' : ''));
+        const last = frag.lastChild;
+        r.insertNode(frag);
+        if (last) { const c = document.createRange(); c.selectNodeContents(last); c.collapse(false); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(c); }
+      }
+    } else {
+      const v = String(text || htmlToText(html)).replace(/\*\*(.+?)\*\*/g, '$1').trim();
+      target.setRangeText(v, ai.start, Math.min(ai.end, target.value.length), 'end');
+      target.focus();
+    }
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    aiBar.classList.remove('show'); ai.target = null; ai.range = null;
+    toast('Antwort von Copilot eingefügt (Strg+Z macht es rückgängig).', 'ok', 4000);
+  }
+  // Knopf mit Menü (Korrigieren, Freundlicher, Kürzer, Englisch, Antwort einfügen)
+  function aiBtn(target, extraClass = '') {
+    const d = el('div', { className: 'dd r ai' + (extraClass ? ' ' + extraClass : '') });
+    d.innerHTML = `<button type="button" class="ddb aib" title="Mit Copilot korrigieren oder umformulieren">✨ <span class="car">▾</span></button>
+      <div class="ddm" style="min-width:230px"></div>`;
+    const menu = d.querySelector('.ddm');
+    const fill = () => {
+      menu.innerHTML = `<div class="ddh">Mit Copilot</div>
+        ${aiActions().map(a => `<button type="button" class="mi" data-ai="${esc(a.id)}" title="${esc(a.prompt)}">${esc(a.name)}</button>`).join('')}
+        <div class="ddsep"></div><button type="button" class="mi" data-ai="paste">📋 Antwort einfügen</button>
+        <button type="button" class="mi" data-ai="edit">✎ Vorlagen bearbeiten …</button>
+        <div class="hint" style="margin:6px 2px 0;max-width:240px">Bearbeitet die Markierung oder den ganzen eigenen Text (ohne Signatur und Zitat).</div>`;
+      menu.querySelectorAll('[data-ai]').forEach(b => {
+        b.addEventListener('mousedown', e => e.preventDefault());
+        b.addEventListener('click', () => {
+          closeDds();
+          const k = b.dataset.ai;
+          if (k === 'paste') { if (ai.target !== target) ai.target = target; aiPaste(); }
+          else if (k === 'edit') { showTab('settings'); const st = panel.querySelector('details[data-set=ai]'); st.open = true; st.scrollIntoView({ block: 'start' }); }
+          else aiStart(target, k);
+        });
+      });
+    };
+    d.querySelector('.ddb').addEventListener('mousedown', e => { e.preventDefault(); fill(); }); // Markierung im Text behalten
+    fill();
+    return d;
+  }
+  $('nDescL').appendChild(aiBtn($('nDesc'), 'inl'));
+
   // Kleine Werkzeugleiste für Kommentar bearbeiten, Signatur, Textbausteine
   function rteBar(rte, sizeKey = null) {
     const tb = el('div', { className: 'tb' });
     tb.innerHTML = `<button type="button" data-cmd="bold" title="Fett (Strg+B)"><b>F</b></button><button type="button" data-cmd="italic" title="Kursiv (Strg+I)"><i>K</i></button>
       <button type="button" data-cmd="underline" title="Unterstrichen (Strg+U)"><u>U</u></button><span class="sep"></span>${LIST_BTNS}<span class="sep"></span>
       <button type="button" data-cmd="removeFormat" title="Formatierung entfernen">✕</button>`;
-    tb.appendChild(micBtn(rte));
+    tb.append(micBtn(rte), aiBtn(rte));
     rte.before(tb);
     const um = setupRte(rte, { toolbar: tb, sizeKey });
     tb.querySelectorAll('button[data-cmd]').forEach(b => b.addEventListener('mousedown', e => {
@@ -4113,7 +4343,7 @@
 
     // Text-Editor: Toolbar + Bilder aus der Zwischenablage als eingebettete Bilder (wie MultiData)
     const rte = $('fText', w);
-    w.querySelector('.tb').appendChild(micBtn(rte));
+    w.querySelector('.tb').append(micBtn(rte), aiBtn(rte));
     // Auswahl im Editor merken (Toolbar-Felder nehmen den Fokus weg)
     let savedRange = null;
     const saveSel = () => { const sel = getSelection(); if (sel.rangeCount && rte.contains(sel.anchorNode)) savedRange = sel.getRangeAt(0).cloneRange(); };
@@ -4505,6 +4735,7 @@
     const st = settings();
     $('stTheme').value = st.theme || 'auto';
     $('stFavBar').checked = st.favBar !== false;
+    $('stAiUrl').value = st.aiUrl || ''; $('stAiPrefill').checked = st.aiPrefill !== false; $('stAiOpen').value = st.aiOpen || 'same'; renderAiTemplates();
     $('stCallMode').value = st.callMode || 'teams'; $('stPhoneCc').value = st.phoneCountry || '';
     $('stDictLang').value = st.dictLang || 'de-DE'; $('stDictCmd').checked = st.dictCommands !== false; $('stDictShow').checked = st.dictShow !== false;
     $('stSig').innerHTML = sanitize(st.signature || '');
@@ -4688,6 +4919,34 @@
     box.appendChild(c);
   }
   rteBar($('stSig'), 'sig');
+  $('stAiUrl').addEventListener('change', () => { const v = $('stAiUrl').value.trim(); saveSettings({ ...settings(), aiUrl: /^https:\/\/\S+$/.test(v) ? v : '' }); });
+  $('stAiPrefill').addEventListener('change', () => saveSettings({ ...settings(), aiPrefill: $('stAiPrefill').checked }));
+  $('stAiOpen').addEventListener('change', () => saveSettings({ ...settings(), aiOpen: $('stAiOpen').value }));
+  // Copilot-Vorlagen bearbeiten: Name, Anweisung, Reihenfolge, löschen
+  function saveAiTemplates() {
+    const list = [...$('stAiList').querySelectorAll('.ai-row')].map(r => ({ id: r.dataset.id, name: r.querySelector('[data-a=name]').value.trim(), prompt: r.querySelector('[data-a=prompt]').value.trim() }));
+    const st = settings(); delete st.aiFixPrompt; saveSettings({ ...st, aiActions: list });
+  }
+  function renderAiTemplates() {
+    const box = $('stAiList'); box.innerHTML = '';
+    for (const a of aiActionsRaw()) {
+      const r = el('div', { className: 'ai-row' }); r.dataset.id = a.id || ('a' + Date.now() + Math.random().toString(36).slice(2, 6));
+      r.innerHTML = `<div class="row" style="align-items:center;gap:6px"><div class="c"><input type="text" data-a="name" placeholder="Name im Menü, z. B. 📝 Als Kundenantwort"></div>
+          <button type="button" class="btn sm sec" data-a="up" title="Nach oben">↑</button><button type="button" class="btn sm warn" data-a="del" title="Vorlage löschen">✕</button></div>
+        <textarea data-a="prompt" rows="2" placeholder="Anweisung an Copilot, z. B. „Formuliere aus den Stichpunkten eine höfliche Antwort an den Kunden.“"></textarea>`;
+      r.querySelector('[data-a=name]').value = a.name || ''; r.querySelector('[data-a=prompt]').value = a.prompt || '';
+      r.querySelectorAll('input,textarea').forEach(i => i.addEventListener('input', saveAiTemplates));
+      r.querySelector('[data-a=del]').addEventListener('click', () => { r.remove(); saveAiTemplates(); });
+      r.querySelector('[data-a=up]').addEventListener('click', () => { if (r.previousElementSibling) { r.previousElementSibling.before(r); saveAiTemplates(); } });
+      box.appendChild(r);
+    }
+    if (!box.children.length) box.innerHTML = '<div class="hint">Keine Vorlagen.</div>';
+  }
+  $('stAiAdd').addEventListener('click', () => {
+    saveSettings({ ...settings(), aiActions: [...aiActionsRaw(), { id: 'a' + Date.now(), name: '', prompt: '' }] }); renderAiTemplates();
+    const rows = $('stAiList').querySelectorAll('.ai-row'); rows[rows.length - 1].querySelector('input').focus();
+  });
+  confirmBtn($('stAiReset'), 'Eigene Vorlagen verwerfen?', async () => { const st = settings(); delete st.aiActions; delete st.aiFixPrompt; saveSettings(st); renderAiTemplates(); });
   $('stCallMode').addEventListener('change', () => { saveSettings({ ...settings(), callMode: $('stCallMode').value }); if (ui.ticket) renderTicket(); });
   $('stPhoneCc').addEventListener('change', () => { const v = $('stPhoneCc').value.trim(); saveSettings({ ...settings(), phoneCountry: /^\+\d{1,4}$/.test(v) ? v : '' }); });
   $('stDictLang').addEventListener('change', () => saveSettings({ ...settings(), dictLang: $('stDictLang').value }));
