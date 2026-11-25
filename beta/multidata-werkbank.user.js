@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.15
+// @version      1.8.0.16
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1611,6 +1611,9 @@
   #mdqt-panel .cflist{display:flex;flex-direction:column;gap:2px;margin-top:4px;max-height:220px;overflow:auto}
   #mdqt-panel .cflist .chk{margin:2px 0;font-size:12px}
   #mdqt-panel .cflist .chk i{color:var(--mq-muted);font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #mdqt-panel .remm{width:400px}
+  #mdqt-panel .remm .chips{margin-top:2px}
+  #mdqt-panel .remm label.l{margin-top:8px}
   #mdqt-panel .doc .dinfo{flex:1;min-width:0;display:flex;flex-direction:column}
   #mdqt-panel .doc .dinfo .nm{word-break:break-all}
   #mdqt-panel .doc .dinfo .hint{font-size:11px}
@@ -1962,6 +1965,16 @@
           <div class="c s" style="flex-basis:140px"><label class="l">Ländervorwahl</label><input type="text" data-ref="stPhoneCc" placeholder="+49"></div>
         </div>
         <div class="hint" style="margin-top:4px">Teams braucht eine Telefonie-Lizenz für Anrufe ins Telefonnetz. Ohne Lizenz die Nummer mit 📋 kopieren. Ist Teams als Standard-App für Telefonlinks eingerichtet, funktioniert auch „tel:“.</div>
+        </details>
+        <details class="card set" data-set="remind"><summary>Erinnerungen (Outlook-Kalender)</summary>
+        <div class="hint">Der Knopf ⏰ im Ticket-Kopf legt einen Termin mit Ticketnummer, Betreff, Kunde und Links zum Ticket an. Outlook öffnet den Termin vorausgefüllt – dort nur noch „Speichern“.</div>
+        <div class="row" style="margin-top:4px">
+          <div class="c" style="flex-basis:300px"><label class="l">Kalender</label><select data-ref="stRemTarget">
+            <option value="work">Outlook im Web – Arbeitskonto (outlook.office.com)</option><option value="private">Outlook.com – privates Konto</option>
+            <option value="ics">.ics-Datei – öffnet in Outlook am Desktop</option></select></div>
+          <div class="c s" style="flex-basis:140px"><label class="l">Standard-Dauer</label><select data-ref="stRemMin"><option value="15">15 Min.</option><option value="30">30 Min.</option><option value="60">1 Std.</option></select></div>
+        </div>
+        <div class="hint" style="margin-top:4px">.ics: Damit sich die Datei direkt in Outlook öffnet, im Browser bei der heruntergeladenen Datei „Dateien dieses Typs immer öffnen“ wählen.</div>
         </details>
         <details class="card set" data-set="ai"><summary>Copilot (Text korrigieren)</summary>
         <div class="hint">Der Knopf ✨ im Editor kopiert den Text samt Anweisung und öffnet Copilot. Dort senden, die Antwort kopieren und mit „📋 Antwort einfügen“ übernehmen. Der Text geht dabei an Microsoft Copilot – nur nutzen, wenn das für Kundendaten erlaubt ist.</div>
@@ -2968,6 +2981,85 @@
     }
   }
 
+  // ================= ERINNERUNG (Outlook-Kalender) =================
+  // Termin mit Ticketbezug: Outlook im Web über den offiziellen Termin-Link (deeplink/compose) oder .ics-Datei für Outlook am Desktop
+  const remPad = n => String(n).padStart(2, '0');
+  const remLocal = d => `${d.getFullYear()}-${remPad(d.getMonth() + 1)}-${remPad(d.getDate())}T${remPad(d.getHours())}:${remPad(d.getMinutes())}`;
+  const remOffset = d => { const o = -d.getTimezoneOffset(); return (o >= 0 ? '+' : '-') + remPad(Math.floor(Math.abs(o) / 60)) + ':' + remPad(Math.abs(o) % 60); };
+  const remIsoOff = d => remLocal(d) + ':00' + remOffset(d);
+  const remUtc = d => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const remAt = (days, h, m = 0) => { const d = new Date(); d.setDate(d.getDate() + days); d.setHours(h, m, 0, 0); return d; };
+  const nextWeekday = (wd, h) => { const d = new Date(); let add = (wd - d.getDay() + 7) % 7; if (add === 0) add = 7; return remAt(add, h); };
+  const REM_QUICK = [
+    ['In 1 Std.', () => { const d = new Date(Date.now() + 3600e3); d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0); return d; }],
+    ['Heute 16:00', () => remAt(0, 16)], ['Morgen 9:00', () => remAt(1, 9)], ['In 3 Tagen 9:00', () => remAt(3, 9)],
+    ['Montag 9:00', () => nextWeekday(1, 9)], ['In 1 Woche', () => remAt(7, 9)],
+  ];
+  function reminderText(t, note) {
+    const cust = String(t.MATCHCODE || '').replace(/^\d+\s*-\s*/, '');
+    return { subject: `🔔 #${t.SID} ${t.TITEL || ''}`.trim(),
+      body: [note ? note + '\n' : '', `Ticket #${t.SID}: ${t.TITEL || ''}`, cust ? `Kunde: ${cust}` : '', `Status: ${statusInfo(t.STATUS)[1]}`, '',
+        `Werkbank: ${appUrl(ticketRoute(t.SID))}`, `MultiData: ${mdShareUrl(t.SID)}`].filter((x, i) => x !== '' || i === 4).join('\n') };
+  }
+  function createReminder(t, start, minutes, note) {
+    const end = new Date(start.getTime() + minutes * 60e3), { subject, body } = reminderText(t, note);
+    const target = settings().remTarget || 'work';
+    if (target === 'ics') {
+      const icsEsc = x => String(x).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+      const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//MultiData Werkbank//DE', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
+        `UID:mdqt-${t.SID}-${Date.now()}@werkbank`, `DTSTAMP:${remUtc(new Date())}`, `DTSTART:${remUtc(start)}`, `DTEND:${remUtc(end)}`,
+        `SUMMARY:${icsEsc(subject)}`, `DESCRIPTION:${icsEsc(body)}`, `URL:${appUrl(ticketRoute(t.SID))}`, 'TRANSP:TRANSPARENT',
+        'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEsc(subject)}`, 'TRIGGER:-PT0M', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+      download(`erinnerung-${t.SID}.ics`, ics, 'text/calendar;charset=utf-8');
+    } else {
+      const host = target === 'private' ? 'https://outlook.live.com' : 'https://outlook.office.com';
+      const q = new URLSearchParams({ path: '/calendar/action/compose', rru: 'addevent', subject, body, startdt: remIsoOff(start), enddt: remIsoOff(end) });
+      window.open(`${host}/calendar/deeplink/compose?${q.toString().replace(/\+/g, '%20')}`, '_blank', 'noopener');
+    }
+    log('Erinnerung angelegt', `#${t.SID} ${start.toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}${note ? ' – ' + note : ''}`);
+  }
+  // Menü am Knopf „⏰“: Schnellwahl, eigener Zeitpunkt, Dauer, Notiz
+  function reminderMenu(dd, t) {
+    dd.innerHTML = `<button type="button" class="btn sec ddb" title="Erinnerung in den Outlook-Kalender eintragen">⏰ <span class="car">▾</span></button>
+      <div class="ddm remm">
+        <div class="ddh">Erinnerung in Outlook</div>
+        <div class="row" style="gap:6px;flex-wrap:nowrap;align-items:flex-end">
+          <div class="c"><label class="l" style="margin-top:0">Datum</label><input type="date" data-ref="rDate"></div>
+          <div class="c s" style="flex-basis:124px"><label class="l" style="margin-top:0">Uhrzeit</label><input type="time" data-ref="rTime" step="300"></div>
+          <div class="c s" style="flex-basis:90px"><label class="l" style="margin-top:0">Dauer</label><select data-ref="rDur">
+            <option value="15">15 Min.</option><option value="30">30 Min.</option><option value="60">1 Std.</option></select></div></div>
+        <div class="hint" style="margin-top:6px">Schnellwahl:</div>
+        <div class="chips" data-ref="rQuick"></div>
+        <label class="l">Notiz <span class="hint">(optional)</span></label><input type="text" data-ref="rNote" placeholder="z. B. Kunde zurückrufen">
+        <div class="tfoot"><span class="hint" data-ref="rWhere" style="flex:1"></span><button type="button" class="btn" data-ref="rGo">📅 Im Kalender anlegen</button></div>
+      </div>`;
+    const dEl = $('rDate', dd), tEl = $('rTime', dd), dur = $('rDur', dd), qbox = $('rQuick', dd);
+    const setAt = d => { const v = remLocal(d); dEl.value = v.slice(0, 10); tEl.value = v.slice(11, 16); };
+    const getAt = () => dEl.value && tEl.value ? new Date(`${dEl.value}T${tEl.value}`) : null;
+    for (const [label, fn] of REM_QUICK) {
+      const c = el('button', { type: 'button', className: 'chip', textContent: label });
+      c.addEventListener('click', () => { setAt(fn()); qbox.querySelectorAll('.chip').forEach(x => x.classList.toggle('sel', x === c)); });
+      qbox.appendChild(c);
+    }
+    [dEl, tEl].forEach(x => x.addEventListener('input', () => qbox.querySelectorAll('.chip').forEach(c => c.classList.remove('sel'))));
+    // beim Öffnen: Standardwerte (morgen 9:00, gespeicherte Dauer, Ziel)
+    dd.querySelector('.ddb').addEventListener('click', () => {
+      if (!dEl.value || !tEl.value) setAt(remAt(1, 9));
+      dur.value = String(settings().remMinutes || 15);
+      const tg = settings().remTarget || 'work';
+      $('rWhere', dd).textContent = tg === 'ics' ? '→ .ics-Datei (Outlook Desktop)' : tg === 'private' ? '→ Outlook.com' : '→ Outlook im Web';
+    });
+    $('rNote', dd).addEventListener('keydown', e => { if (e.key === 'Enter') $('rGo', dd).click(); });
+    $('rGo', dd).addEventListener('click', () => {
+      const d = getAt();
+      if (!d || isNaN(d)) { toast('Bitte Datum und Uhrzeit angeben.', 'warn'); return; }
+      if (d < new Date(Date.now() - 60e3)) { toast('Der Zeitpunkt liegt in der Vergangenheit.', 'warn'); return; }
+      createReminder(t, d, Number(dur.value) || 15, $('rNote', dd).value.trim());
+      closeDds(); $('rNote', dd).value = ''; dEl.value = ''; tEl.value = ''; qbox.querySelectorAll('.chip').forEach(c => c.classList.remove('sel'));
+      toast(`Erinnerung für ${d.toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })} – im Outlook-Fenster noch „Speichern“ klicken.`, 'ok', 6000);
+    });
+  }
+
   // ================= TICKET =================
   async function openTicket(sid, switchTab = true) {
     if (switchTab) showTab('ticket');
@@ -3012,6 +3104,7 @@
         <div class="hrow1">
           <span class="sid">#${t.SID}</span>
           <input type="text" data-ref="hTitle" spellcheck="true" lang="de" title="Betreff (Enter = speichern)">
+          <div class="dd r" data-dd="remind" data-ref="hRemind"></div>
           <button class="btn warn" data-ref="hQC" title="Ticket per QuickClose schließen (erzeugt den Abschlusstext)">QuickClose</button>
           <div class="dd r" data-dd="tmore">
             <button type="button" class="btn sec ddb" title="Öffnen, Teilen, Child-Tickets, Zusammenführen">⋯</button>
@@ -3120,6 +3213,7 @@
     });
     refreshDirty();
     wbLink($('hNewTab', head), ticketRoute(t.SID), () => openInNewTab(ticketRoute(t.SID)));
+    reminderMenu($('hRemind', head), t);
     const st = (label, val, cls = '') => `<div class="st${cls ? ' ' + cls : ''}"><span>${label}</span><b>${val}</b></div>`;
     $('hSums', head).innerHTML = st('Angelegt', esc(fmtDateTime(t.ANLAGE_DATUM)) || '–') + st('Ersteller', `<i data-ref="hCreator">${esc(t.ANLAGE_USER_ID || '–')}</i>`) +
       st('Stunden', fmtH(t.SUM_STD)) + st('abrechenbar', fmtH(t.MEMO_SUM_ABRSTD));
@@ -4783,6 +4877,7 @@
     const st = settings();
     $('stTheme').value = st.theme || 'auto';
     $('stFavBar').checked = st.favBar !== false;
+    $('stRemTarget').value = st.remTarget || 'work'; $('stRemMin').value = String(st.remMinutes || 15);
     $('stAiUrl').value = st.aiUrl || ''; $('stAiPrefill').checked = st.aiPrefill !== false; $('stAiOpen').value = aiOpenMode(); $('stAiShort').checked = st.aiShort === true; renderAiTemplates();
     $('stCallMode').value = st.callMode || 'teams'; $('stPhoneCc').value = st.phoneCountry || '';
     $('stDictLang').value = st.dictLang || 'de-DE'; $('stDictCmd').checked = st.dictCommands !== false; $('stDictShow').checked = st.dictShow !== false;
@@ -4969,6 +5064,8 @@
   rteBar($('stSig'), 'sig');
   $('stAiUrl').addEventListener('change', () => { const v = $('stAiUrl').value.trim(); saveSettings({ ...settings(), aiUrl: /^https:\/\/\S+$/.test(v) ? v : '' }); });
   $('stAiPrefill').addEventListener('change', () => saveSettings({ ...settings(), aiPrefill: $('stAiPrefill').checked }));
+  $('stRemTarget').addEventListener('change', () => saveSettings({ ...settings(), remTarget: $('stRemTarget').value }));
+  $('stRemMin').addEventListener('change', () => saveSettings({ ...settings(), remMinutes: Number($('stRemMin').value) }));
   $('stAiOpen').addEventListener('change', () => saveSettings({ ...settings(), aiOpen: $('stAiOpen').value }));
   $('stAiShort').addEventListener('change', () => {
     saveSettings({ ...settings(), aiShort: $('stAiShort').checked });
