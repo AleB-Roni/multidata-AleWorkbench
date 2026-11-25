@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.16
+// @version      1.8.0.17
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1567,7 +1567,12 @@
   #mdqt-panel .thero .sid{font-size:19px;font-weight:700;letter-spacing:-.01em;color:var(--mq-accent-fg);white-space:nowrap;font-variant-numeric:tabular-nums}
   #mdqt-panel .thero .hrow1 input{font-weight:600;font-size:15px;min-height:36px}
   #mdqt-panel .tgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px;align-items:start}
-  @container wb (max-width:760px){#mdqt-panel .tgrid{grid-template-columns:minmax(0,1fr)}}
+  #mdqt-panel .tcol{display:flex;flex-direction:column;gap:12px;min-width:0}
+  @container wb (max-width:760px){
+    #mdqt-panel .tgrid{display:flex;flex-direction:column}
+    #mdqt-panel .tcol{display:contents}
+    #mdqt-panel .t-data{order:1}#mdqt-panel .t-over{order:2}#mdqt-panel .t-desc{order:3}#mdqt-panel .t-att{order:4}
+  }
   #mdqt-panel .tile{border:1px solid var(--mq-border);border-radius:var(--mq-r-lg);background:var(--mq-bg);padding:12px 14px;box-shadow:var(--mq-shadow-sm);min-width:0}
   #mdqt-panel .tile.tfull{margin-top:12px}
   #mdqt-panel [data-ref=hExtra]>.card{margin-top:12px;border-radius:var(--mq-r-lg);padding:12px 14px}
@@ -3121,7 +3126,8 @@
       </div>
       <div data-ref="hExtra"></div>
       <div class="tgrid" data-ref="tGrid">
-        <div class="tile">
+        <div class="tcol" data-ref="tColL">
+        <div class="tile t-data">
           <div class="tth">🎫 Ticketdaten</div>
           <div class="fgrid">
             <div><label class="l">Status</label><select data-ref="hStatus"></select></div>
@@ -3140,10 +3146,13 @@
             <button class="btn" data-ref="hSave" title="Gelb markierte Änderungen übernehmen (Enter im Betreff)">Speichern</button>
           </div>
         </div>
-        <div class="tile">
+        </div>
+        <div class="tcol" data-ref="tColR">
+        <div class="tile t-over">
           <div class="tth">📇 Übersicht & Kontakt</div>
           <div class="stats" data-ref="hSums"></div>
           <div class="contact" data-ref="hContact"><div class="hint">Kontaktdaten werden geladen …</div></div>
+        </div>
         </div>
       </div>`;
     view.appendChild(head);
@@ -3262,8 +3271,9 @@
       catch (e) { msg('tMsg', '✖ ' + e.message, 'err'); }
     });
 
-    const grid = $('tGrid', head);
-    const anl = el('details', { className: 'tile' });
+    // zwei unabhängige Spalten: links Ticketdaten → Beschreibung, rechts Übersicht → Anhänge (keine Lücken durch unterschiedlich hohe Kacheln)
+    const colL = $('tColL', head), colR = $('tColR', head);
+    const anl = el('details', { className: 'tile t-desc' });
     anl.innerHTML = `<summary>📄 Beschreibung</summary><div class="txt"></div>`;
     persistDetails(anl, 'ticket.anlagetext', true);
     const fillAnl = () => { if (anl.dataset.filled) return; anl.dataset.filled = '1'; fillHtml(anl.querySelector('.txt'), t.ANLAGE_NOTIZ, '<span class="hint">– kein Anlagetext –</span>'); };
@@ -3277,11 +3287,11 @@
       }
       anl.appendChild(bar);
     }
-    grid.appendChild(anl);
+    colL.appendChild(anl);
 
     // --- Anhänge ---
     const docs = ui.docs || [];
-    const dd = el('details', { className: 'tile' });
+    const dd = el('details', { className: 'tile t-att' });
     dd.innerHTML = `<summary>📎 Anhänge <span class="cnt">${docs.length}</span></summary><div data-ref="dList"></div><div class="msg" data-ref="dMsg"></div>`;
     persistDetails(dd, 'ticket.anhaenge', true);
     for (const d of docs) {
@@ -3315,7 +3325,7 @@
       $('dList', dd).appendChild(row);
     }
     if (!docs.length) $('dList', dd).innerHTML = '<span class="hint">Keine Anhänge.</span>';
-    grid.appendChild(dd);
+    colR.appendChild(dd);
 
     // --- Child-Tickets ---
     const kids = ui.children || [];
