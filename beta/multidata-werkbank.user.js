@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.18
+// @version      1.8.0.19
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1548,6 +1548,11 @@
   #mdqt-panel .card .txt{margin-top:6px;overflow-x:auto;contain:content}
   #mdqt-panel .card .txt p,#mdqt-panel .tile .txt p,#mdqt-panel .rte p{margin:2px 0}
   #mdqt-panel .tile>.txt{overflow-x:auto;contain:content}
+  #mdqt-panel .tile>.txt.rsz{overflow:auto;resize:vertical;max-height:340px;min-height:60px;padding:6px 8px;border:1px solid var(--mq-line);border-radius:var(--mq-r)}
+  #mdqt-panel .grip{cursor:grab;user-select:none;opacity:.6;font-size:14px;line-height:1;padding:0 2px;margin-right:-4px;align-self:center}
+  #mdqt-panel .grip:hover{opacity:1}
+  #mdqt-panel .grip:active{cursor:grabbing}
+  #mdqt-panel .toasts.moved{align-items:flex-start}
   #mdqt-panel .card .txt ul,#mdqt-panel .card .txt ol,#mdqt-panel .tile .txt ul,#mdqt-panel .tile .txt ol,#mdqt-panel .rte ul,#mdqt-panel .rte ol{margin:2px 0;padding-left:26px}
   #mdqt-panel .card .txt li,#mdqt-panel .rte li{margin:1px 0}
   #mdqt-panel .card .meta[data-ref=cHead]{cursor:pointer}
@@ -1966,6 +1971,8 @@
       <section data-tab="settings">
         <details class="card set" data-set="look"><summary>Darstellung</summary>
         <div class="row"><div class="c s" style="flex-basis:260px"><select data-ref="stTheme"><option value="auto">Automatisch (wie Windows/Browser)</option><option value="light">Hell</option><option value="dark">Dunkel</option></select></div></div>
+        <div class="tfoot" style="justify-content:flex-start"><span class="hint">Meldungen und Leisten lassen sich am Griff ⠿ verschieben.</span>
+          <button type="button" class="btn sm sec" data-ref="stPosReset">Meldungen an den Standardplatz</button></div>
         <label class="chk" style="display:flex;margin-top:8px"><input type="checkbox" data-ref="stFavBar"> Favorisierte Suchvorlagen (★) als Leiste über der Suche anzeigen</label>
         <div class="hint" style="margin:2px 0 0 22px">Vorlagen favorisieren: in der Suche unter ☆ Vorlagen auf den Stern klicken. Ein Klick in der Leiste wendet die Vorlage an und sucht sofort.</div>
         </details>
@@ -2107,6 +2114,40 @@
   // Klick schließt; gleiche Meldung erneut → Zeit wird verlängert statt doppelt angezeigt.
   const toastBox = el('div', { className: 'toasts' });
   panel.appendChild(toastBox);
+  // --- Meldungen und Leisten frei verschiebbar: am Griff ⠿ ziehen, Doppelklick = Standardplatz ---
+  // Position je Bereich als Anteil der Fenstergröße (bleibt beim Ändern der Größe passend)
+  const POS_KEY = 'mdqt.notifyPos';
+  function applyPos(node, name) {
+    const p = store.get(POS_KEY, {})[name];
+    if (!p) { Object.assign(node.style, { left: '', top: '', bottom: '', transform: '' }); node.classList.remove('moved'); return; }
+    const pw = panel.clientWidth, ph = panel.clientHeight, w = node.offsetWidth || 320, h = node.offsetHeight || 40;
+    Object.assign(node.style, { left: Math.max(0, Math.min(pw - w, p.x * pw)) + 'px', top: Math.max(0, Math.min(ph - h, p.y * ph)) + 'px', bottom: 'auto', transform: 'none' });
+    node.classList.add('moved');
+  }
+  function gripFor(node, name, onDrag = null) {
+    const g = el('span', { className: 'grip', textContent: '⠿', title: 'Ziehen: Meldungen verschieben · Doppelklick: zurück an den Standardplatz' });
+    g.addEventListener('click', e => e.stopPropagation());
+    g.addEventListener('dblclick', e => { e.stopPropagation(); const all = store.get(POS_KEY, {}); delete all[name]; store.set(POS_KEY, all); applyPos(node, name); });
+    g.addEventListener('mousedown', e => {
+      e.preventDefault(); e.stopPropagation();
+      if (onDrag) onDrag(true);
+      const pr = panel.getBoundingClientRect(), nr = node.getBoundingClientRect(), dx = e.clientX - nr.left, dy = e.clientY - nr.top;
+      const move = ev => {
+        const x = Math.max(0, Math.min(pr.width - nr.width, ev.clientX - pr.left - dx)), y = Math.max(0, Math.min(pr.height - nr.height, ev.clientY - pr.top - dy));
+        Object.assign(node.style, { left: x + 'px', top: y + 'px', bottom: 'auto', transform: 'none' }); node.classList.add('moved');
+      };
+      const up = () => {
+        document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); document.body.style.userSelect = '';
+        const r = node.getBoundingClientRect();
+        store.set(POS_KEY, { ...store.get(POS_KEY, {}), [name]: { x: (r.left - pr.left) / pr.width, y: (r.top - pr.top) / pr.height } });
+        if (onDrag) onDrag(false);
+      };
+      document.body.style.userSelect = 'none';
+      document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    });
+    return g;
+  }
+  let toastDragging = false;
   function toast(text, kind = 'err', ms = kind === 'err' ? 9000 : 6000) {
     const t = String(text || '').replace(/^\s*[✖⚠]\s*/, '').trim();
     if (!t) return;
@@ -2114,12 +2155,16 @@
     if (!n) {
       n = el('div', { className: 'toast ' + kind, role: 'alert', title: 'Klicken zum Schließen' });
       n.dataset.t = t;
-      n.append(el('span', { textContent: (kind === 'err' ? '✖ ' : kind === 'ok' ? '✔ ' : '⚠ ') + t }), el('b', { textContent: '×' }));
+      // Griff verschiebt den ganzen Meldungsbereich; während des Ziehens verschwindet keine Meldung
+      n.append(gripFor(toastBox, 'toasts', d => { toastDragging = d; if (!d) [...toastBox.children].forEach(x => x._restart && x._restart()); }),
+        el('span', { textContent: (kind === 'err' ? '✖ ' : kind === 'ok' ? '✔ ' : '⚠ ') + t }), el('b', { textContent: '×' }));
       n.addEventListener('click', () => n.remove());
       toastBox.appendChild(n);
       while (toastBox.children.length > 3) toastBox.firstChild.remove();
     }
-    clearTimeout(n._timer); n._timer = setTimeout(() => n.remove(), ms);
+    n._restart = () => { clearTimeout(n._timer); n._timer = setTimeout(() => { if (toastDragging) n._restart(); else n.remove(); }, ms); };
+    n._restart();
+    applyPos(toastBox, 'toasts');
   }
   const msg = (ref, text, kind = '') => {
     const m = $(ref); m.textContent = text; m.className = 'msg ' + kind;
@@ -3282,6 +3327,7 @@
     const anl = el('details', { className: 'tile t-desc' });
     anl.innerHTML = `<summary>📄 Beschreibung</summary><div class="txt"></div>`;
     persistDetails(anl, 'ticket.anlagetext', true);
+    const dtxt = anl.querySelector('.txt'); dtxt.classList.add('rsz'); resizable(dtxt, 'desc'); // Höhe unten rechts ziehen, innen scrollen
     const fillAnl = () => { if (anl.dataset.filled) return; anl.dataset.filled = '1'; fillHtml(anl.querySelector('.txt'), t.ANLAGE_NOTIZ, '<span class="hint">– kein Anlagetext –</span>'); };
     if (anl.open) fillAnl();
     anl.addEventListener('toggle', () => { if (anl.open) fillAnl(); });
@@ -4080,6 +4126,7 @@
     [/\s*\bausrufezeichen\b/gi, '!'], [/\s*\bkomma\b/gi, ','], [/\s*\bpunkt\b/gi, '.']];
   const dictBar = el('div', { className: 'dictbar' });
   dictBar.innerHTML = '<span class="rec"></span><span class="dt">Diktat läuft …</span><span class="im"></span><button type="button" class="btn sm sec">■ Stopp</button>';
+  dictBar.prepend(gripFor(dictBar, 'dict'));
   dictBar.querySelector('button').addEventListener('click', () => dictStop());
   panel.appendChild(dictBar);
   const applyDictShow = () => panel.classList.toggle('nomic', settings().dictShow === false);
@@ -4119,6 +4166,7 @@
   function dictUi(interim = '') {
     panel.querySelectorAll('.mic').forEach(b => { const on = dict.on && b === dict.btn; b.classList.toggle('on', on); b.title = on ? 'Diktat beenden (Klick oder Esc)' : (SR ? MIC_TITLE : b.title); });
     dictBar.classList.toggle('show', dict.on);
+    if (dict.on) applyPos(dictBar, 'dict');
     dictBar.querySelector('.im').textContent = interim;
   }
   function dictStop() {
@@ -4208,6 +4256,7 @@
   const aiBar = el('div', { className: 'dictbar aibar' });
   aiBar.innerHTML = '<span class="dt">✨ Copilot</span><span class="im">Text ist kopiert. In Copilot ggf. mit Strg+V einfügen und senden, dort die Antwort kopieren – dann hier:</span>' +
     '<button type="button" class="btn sm" data-a="ins">📋 Antwort einfügen</button><button type="button" class="btn sm sec" data-a="x" title="Schließen">✕</button>';
+  aiBar.prepend(gripFor(aiBar, 'ai'));
   aiBar.querySelector('[data-a=ins]').addEventListener('mousedown', e => e.preventDefault());
   aiBar.querySelector('[data-a=ins]').addEventListener('click', () => aiPaste());
   aiBar.querySelector('[data-a=x]').addEventListener('click', () => { aiBar.classList.remove('show'); ai.target = null; });
@@ -4311,7 +4360,7 @@
     aiBar.querySelector('.im').textContent = mode === 'none' || reused
       ? `${what} ist kopiert. ${reused ? 'Zum Copilot-Tab wechseln (gleicher Chat), ' : 'In deinem Copilot-Chat '}mit Strg+V einfügen und senden, die Antwort kopieren – dann hier:`
       : `${what} ist kopiert. In Copilot ggf. mit Strg+V einfügen und senden, dort die Antwort kopieren – dann hier:`;
-    aiBar.classList.add('show');
+    aiBar.classList.add('show'); applyPos(aiBar, 'ai');
     log('Copilot', act.name.replace(/^[^\p{L}\d]+/u, '') + ` (${text.length} Zeichen)`);
   }
   // Antwort aus der Zwischenablage holen (HTML bevorzugt); ohne Leserecht: Einfügefeld zum Strg+V
@@ -5155,6 +5204,7 @@
   $('stDictLang').addEventListener('change', () => saveSettings({ ...settings(), dictLang: $('stDictLang').value }));
   $('stDictCmd').addEventListener('change', () => saveSettings({ ...settings(), dictCommands: $('stDictCmd').checked }));
   $('stDictShow').addEventListener('change', () => { saveSettings({ ...settings(), dictShow: $('stDictShow').checked }); applyDictShow(); });
+  $('stPosReset').addEventListener('click', () => { store.set(POS_KEY, {}); applyPos(toastBox, 'toasts'); applyPos(dictBar, 'dict'); applyPos(aiBar, 'ai'); toast('Meldungen stehen wieder am Standardplatz.', 'ok', 3000); });
   $('stFavBar').addEventListener('change', () => { saveSettings({ ...settings(), favBar: $('stFavBar').checked }); renderFavBar(); });
   $('stTheme').addEventListener('change', () => { saveSettings({ ...settings(), theme: $('stTheme').value }); applyTheme(); });
 
