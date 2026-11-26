@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.20
+// @version      1.8.0.21
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1827,6 +1827,8 @@
               <label class="l">Kunden</label><div data-ref="nwCusts"></div>
               <label class="l">Queues</label><div data-ref="nwQueues"></div>
               <label class="l">Status</label><div class="chips" data-ref="nwStatus"></div>
+              <label class="l">Betreff enthält nicht <span class="hint">(ausblenden, mehrere mit ; trennen)</span></label>
+              <input type="text" data-ref="nwNot" placeholder="z. B. Backup; Monitoring; Spam">
               <div class="row" style="align-items:flex-end;gap:6px">
                 <div class="c s" style="flex-basis:110px"><label class="l">Prüfen alle</label><select data-ref="nwEvery"><option value="1">1 Min.</option><option value="2">2 Min.</option><option value="5">5 Min.</option><option value="10">10 Min.</option></select></div>
                 <label class="chk" style="margin:0 0 7px"><input type="checkbox" data-ref="nwPop"> Pop-up bei neuen</label>
@@ -2999,7 +3001,7 @@
   // prüft regelmäßig, markiert Ungesehenes (Zähler am Tab) und erlaubt „✋ Nehmen“ (Bearbeiter = ich).
   const DASH_KEY = 'mdqt.dash', NEW_KEY = 'mdqt.dashNew', SEEN_KEY = 'mdqt.dashSeen';
   const dashCfg = () => ({ users: [userItem('__ME__')], custs: [], queues: [], statuses: OPEN_STATUSES, group: false, ...store.get(DASH_KEY, {}) });
-  const newCfg = () => ({ users: [userItem(NONE)], custs: [], queues: [], statuses: ['N', 'NR'], every: 2, pop: true, ...store.get(NEW_KEY, {}) });
+  const newCfg = () => ({ users: [userItem(NONE)], custs: [], queues: [], statuses: ['N', 'NR'], every: 2, pop: true, notText: '', ...store.get(NEW_KEY, {}) });
   const custSrc = async q => q && q.length >= 2 ? (await searchCustomersByTickets(q).catch(() => [])).map(c => { ui.custNames[c.id] = c.name; return { value: c.id, label: custLabel(c.id, c.name) }; }) : [];
   const queueSrc = async q => [...(!q || /^(o|oh|ohn|ohne)/.test(q) ? [{ value: NONE, label: '∅ ohne Queue' }] : []),
     ...(await loadQueues()).filter(x => !q || x.name.toLowerCase().includes(q)).map(x => ({ value: String(x.id), label: x.name }))];
@@ -3037,6 +3039,11 @@
   $('nwEvery').value = String(newCfg().every); $('nwPop').checked = newCfg().pop !== false;
   $('nwEvery').addEventListener('change', () => newSave({ every: Number($('nwEvery').value) }));
   $('nwPop').addEventListener('change', () => newSave({ pop: $('nwPop').checked }));
+  // Wörter im Betreff ausblenden (im Browser gefiltert; wirkt sofort auf die geladene Liste)
+  $('nwNot').value = newCfg().notText || '';
+  let nwNotTimer = null;
+  $('nwNot').addEventListener('input', () => { clearTimeout(nwNotTimer); nwNotTimer = setTimeout(() => { newSave({ notText: $('nwNot').value.trim() }); newSum(); newRender(); }, 300); });
+  const nwHidden = r => { const words = splitWords(newCfg().notText).map(w => w.toLowerCase()), t = String(r.TITEL || '').toLowerCase(); return words.some(w => t.includes(w)); };
   // gespeicherte Filter einsetzen (nach dem Laden der Benutzernamen, damit die Pillen lesbar sind)
   function dashApplyCfg() {
     const d = dashCfg(), n = newCfg(), fix = list => (list || []).map(u => typeof u === 'string' ? userItem(u) : u);
@@ -3046,7 +3053,8 @@
   }
   function newSum() {
     const n = newCfg(), part = (l, all) => l.length ? l.map(x => x.label).join(', ') : all;
-    $('nwSum').textContent = `${part(n.users, 'alle Bearbeiter')} · ${part(n.queues, 'alle Queues')}${n.custs.length ? ' · ' + part(n.custs) : ''} · ${n.statuses.length ? n.statuses.map(x => statusInfo(x)[1]).join(', ') : 'alle Status'}`;
+    const not = splitWords(n.notText);
+    $('nwSum').textContent = `${part(n.users, 'alle Bearbeiter')} · ${part(n.queues, 'alle Queues')}${n.custs.length ? ' · ' + part(n.custs) : ''} · ${n.statuses.length ? n.statuses.map(x => statusInfo(x)[1]).join(', ') : 'alle Status'}${not.length ? ' · ohne „' + not.join('“, „') + '“' : ''}`;
   }
   const filterOf = c => ({ users: c.users.map(u => u.value), kndIds: c.custs.map(x => String(x.value)), queues: c.queues.map(x => String(x.value)), statuses: c.statuses, dateMode: 'none', text: '' });
   const dash = { rows: null, at: 0, seq: 0, newRows: null, newAt: 0, newSeq: 0, known: null };
@@ -3105,7 +3113,7 @@
       // neu seit der letzten Prüfung → Pop-up (nicht beim ersten Laden)
       const before = dash.known;
       dash.known = new Set(rows.map(r => r.SID));
-      const fresh = before ? rows.filter(r => !before.has(r.SID)) : [];
+      const fresh = before ? rows.filter(r => !before.has(r.SID) && !nwHidden(r)) : [];
       if (fresh.length && newCfg().pop !== false && !(ui.tab === 'dash' && panel.classList.contains('open') && !document.hidden))
         toast(fresh.length === 1 ? `🆕 Neues Ticket #${fresh[0].SID} ${fresh[0].TITEL || ''}` : `🆕 ${fresh.length} neue Tickets`, 'ok', 8000);
       dash.newRows = rows; dash.newAt = Date.now();
@@ -3114,10 +3122,11 @@
   }
   const seenSet = () => new Set(store.get(SEEN_KEY, []));
   function newRender() {
-    const box = $('nwList'), rows = dash.newRows || [], seen = seenSet();
+    const all = dash.newRows || [], rows = all.filter(r => !nwHidden(r)), hidden = all.length - rows.length, seen = seenSet();
+    const box = $('nwList');
     box.innerHTML = '';
     $('nwCount').textContent = dash.newRows ? String(rows.length) : '–';
-    $('nwLast').textContent = dash.newAt ? `geprüft ${new Date(dash.newAt).toLocaleTimeString('de-DE').slice(0, 5)} · alle ${newCfg().every} Min.` : '';
+    $('nwLast').textContent = dash.newAt ? `geprüft ${new Date(dash.newAt).toLocaleTimeString('de-DE').slice(0, 5)} · alle ${newCfg().every} Min.${hidden ? ` · ${hidden} ausgeblendet` : ''}` : '';
     for (const r of rows) {
       const it = el('div', { className: 'nwi' + (seen.has(r.SID) ? '' : ' fresh') });
       it.innerHTML = `<a class="nwt"><span class="nwid">${prioHtml(r.PRIORITY).replace(/<\/span>.*/, '</span>')}#${r.SID}</span> <span class="nwtt"></span></a>
@@ -3145,7 +3154,7 @@
   }
   function markSeen(sids) { const s = seenSet(); sids.forEach(x => s.add(x)); store.set(SEEN_KEY, [...s].slice(-500)); updateDashBadge(); }
   function updateDashBadge() {
-    const seen = seenSet(), n = (dash.newRows || []).filter(r => !seen.has(r.SID)).length;
+    const seen = seenSet(), n = (dash.newRows || []).filter(r => !seen.has(r.SID) && !nwHidden(r)).length;
     $('bDash').textContent = n || '';
   }
   // Übersicht sichtbar: Liste laden, ungesehene neue Tickets nach kurzer Zeit als gesehen markieren (Hervorhebung bleibt bis zum nächsten Laden)
