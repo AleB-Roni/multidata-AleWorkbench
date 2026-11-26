@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.19
+// @version      1.8.0.20
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1622,6 +1622,21 @@
   #mdqt-panel .cflist .chk{margin:2px 0;font-size:12px}
   #mdqt-panel .cflist .chk i{color:var(--mq-muted);font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #mdqt-panel .remm{width:400px}
+  #mdqt-panel .dgrid{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:12px;align-items:start}
+  @container wb (max-width:900px){#mdqt-panel .dgrid{grid-template-columns:minmax(0,1fr)}#mdqt-panel .dside{order:-1}}
+  #mdqt-panel .dside{position:sticky;top:-12px;max-height:calc(100vh - 140px);overflow:auto}
+  #mdqt-panel .dtbl{margin-top:6px}
+  #mdqt-panel .nwf{margin:-2px 0 8px}
+  #mdqt-panel .nwf summary{font-weight:500;font-size:12px;color:var(--mq-muted2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #mdqt-panel .nwlist{display:flex;flex-direction:column;gap:6px}
+  #mdqt-panel .nwi{border:1px solid var(--mq-border);border-radius:var(--mq-r);padding:7px 9px;background:var(--mq-bg)}
+  #mdqt-panel .nwi.fresh{border-color:var(--mq-amber);background:var(--mq-unread);box-shadow:inset 3px 0 0 var(--mq-amber)}
+  #mdqt-panel .nwi .nwt{display:block;color:var(--mq-fg);text-decoration:none;font-weight:600;line-height:1.3;cursor:pointer}
+  #mdqt-panel .nwi .nwt:hover .nwtt{text-decoration:underline}
+  #mdqt-panel .nwi .nwid{color:var(--mq-accent-fg);font-variant-numeric:tabular-nums;white-space:nowrap}
+  #mdqt-panel .nwi .nwm{display:flex;gap:8px;justify-content:space-between;font-size:12px;color:var(--mq-muted2);margin-top:2px}
+  #mdqt-panel .nwi .nwm .nwc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #mdqt-panel .nwi .nwb{display:flex;align-items:center;gap:4px;margin-top:5px;font-size:12px}
   #mdqt-panel .remm .chips{margin-top:2px}
   #mdqt-panel .remm label.l{margin-top:8px}
   #mdqt-panel .doc .dinfo{flex:1;min-width:0;display:flex;flex-direction:column}
@@ -1761,6 +1776,7 @@
     <div class="hdr">
       <span class="brand" title="Kopfzeile ziehen = verschieben · Doppelklick = Vollbild"><i>⚡</i><span>Werkbank</span></span>
       <nav class="tabs">
+      <button class="tab" data-tab="dash" title="Übersicht: meine Tickets und neue Tickets">🏠 Übersicht <span class="badge" data-ref="bDash"></span></button>
       <button class="tab" data-tab="inbox">📥 Inbox <span class="badge" data-ref="bInbox"></span></button>
       <button class="tab active" data-tab="search">🔎 Suche</button>
       <button class="tab" data-tab="ticket">🎫 Ticket</button>
@@ -1780,8 +1796,50 @@
     <div class="body">
       <div class="warnbox" data-ref="teamHint" style="display:none;margin-bottom:8px">Noch keine Team-Konfiguration: Bitte unter ⚙ festlegen, welche Kunden nicht abrechenbar bzw. intern sind – oder eine Datei von Kolleg:innen importieren.
         <button class="btn sm" data-ref="teamHintGo">Zu den Einstellungen</button> <button class="btn sm sec" data-ref="teamHintNo">Später</button></div>
+      <!-- ÜBERSICHT -->
+      <section data-tab="dash">
+        <div class="dgrid">
+          <div class="dmain tile">
+            <div class="tth">🏠 Meine Tickets <span class="cnt" data-ref="dCount">–</span><span style="flex:1"></span>
+              <span class="hint" data-ref="dLast" style="font-weight:400"></span><button class="btn sm sec" data-ref="dReload" title="Jetzt aktualisieren">↻</button></div>
+            <div class="row" style="align-items:flex-start">
+              <div class="c"><label class="l" style="margin-top:0">Bearbeiter</label><div data-ref="dUsers"></div></div>
+              <div class="c"><label class="l" style="margin-top:0">Kunden</label><div data-ref="dCusts"></div></div>
+              <div class="c"><label class="l" style="margin-top:0">Queues</label><div data-ref="dQueues"></div></div>
+            </div>
+            <div class="row fbar">
+              <div class="dd" data-dd="dstatus">
+                <button type="button" class="btn sm sec ddb">Status: <b data-ref="ddDStatus">–</b> <span class="car">▾</span></button>
+                <div class="ddm"><div class="row" style="gap:6px;margin-bottom:6px;align-items:center"><span class="ddh" style="flex:1;margin:0">Status</span>
+                  <button class="btn sm sec" data-ref="dOpen">nur offene</button><button class="btn sm sec" data-ref="dAll">alle</button></div>
+                  <div class="chips list check" data-ref="dStatus"></div></div>
+              </div>
+              <label class="chk"><input type="checkbox" data-ref="dGroup"> nach Status gruppieren</label>
+              <span class="hint" style="flex:1;text-align:right">Filter bleiben gespeichert · aktualisiert sich automatisch</span>
+            </div>
+            <div class="msg" data-ref="dMsg"></div>
+            <div data-ref="dList"></div>
+          </div>
+          <div class="dside tile">
+            <div class="tth">🆕 Neue Tickets <span class="cnt" data-ref="nwCount">–</span><span style="flex:1"></span><button class="btn sm sec" data-ref="nwReload" title="Jetzt prüfen">↻</button></div>
+            <details class="nwf" data-ref="nwFilter"><summary>⚙ <span data-ref="nwSum"></span></summary>
+              <label class="l">Bearbeiter</label><div data-ref="nwUsers"></div>
+              <label class="l">Kunden</label><div data-ref="nwCusts"></div>
+              <label class="l">Queues</label><div data-ref="nwQueues"></div>
+              <label class="l">Status</label><div class="chips" data-ref="nwStatus"></div>
+              <div class="row" style="align-items:flex-end;gap:6px">
+                <div class="c s" style="flex-basis:110px"><label class="l">Prüfen alle</label><select data-ref="nwEvery"><option value="1">1 Min.</option><option value="2">2 Min.</option><option value="5">5 Min.</option><option value="10">10 Min.</option></select></div>
+                <label class="chk" style="margin:0 0 7px"><input type="checkbox" data-ref="nwPop"> Pop-up bei neuen</label>
+              </div>
+            </details>
+            <div data-ref="nwList" class="nwlist"></div>
+            <div class="hint" data-ref="nwLast" style="margin-top:6px"></div>
+          </div>
+        </div>
+      </section>
+
       <!-- SUCHE -->
-      <section data-tab="search" class="active">
+      <section data-tab="search">
         <div class="favbar" data-ref="sFavBar" style="display:none"></div>
         <div class="row bar">
           <div class="c"><input type="text" data-ref="sText" placeholder="🔎 Betreff oder Ticket-Nr. …" title="Freitext: Betreff oder Ticket-ID"></div>
@@ -1970,6 +2028,8 @@
       <!-- EINSTELLUNGEN -->
       <section data-tab="settings">
         <details class="card set" data-set="look"><summary>Darstellung</summary>
+        <div class="row" style="margin-bottom:6px"><div class="c s" style="flex-basis:260px"><label class="l" style="margin-top:0">Start-Ansicht</label><select data-ref="stStart">
+          <option value="dash">🏠 Übersicht</option><option value="search">🔎 Suche</option><option value="inbox">📥 Inbox</option><option value="times">⏱ Zeiten</option></select></div></div>
         <div class="row"><div class="c s" style="flex-basis:260px"><select data-ref="stTheme"><option value="auto">Automatisch (wie Windows/Browser)</option><option value="light">Hell</option><option value="dark">Dunkel</option></select></div></div>
         <div class="tfoot" style="justify-content:flex-start"><span class="hint">Meldungen und Leisten lassen sich am Griff ⠿ verschieben.</span>
           <button type="button" class="btn sm sec" data-ref="stPosReset">Meldungen an den Standardplatz</button></div>
@@ -2278,7 +2338,7 @@
   };
 
   // --- Tabs / Öffnen ---
-  const TAB_NAMES = { inbox: 'Inbox', search: 'Suche', ticket: 'Ticket', times: 'Zeiten', new: 'Neues Ticket', drafts: 'Entwürfe', log: 'Protokoll', settings: 'Einstellungen' };
+  const TAB_NAMES = { dash: 'Übersicht', inbox: 'Inbox', search: 'Suche', ticket: 'Ticket', times: 'Zeiten', new: 'Neues Ticket', drafts: 'Entwürfe', log: 'Protokoll', settings: 'Einstellungen' };
   function showTab(tab) {
     ui.tab = tab;
     panel.querySelectorAll('.hdr .tab, section').forEach(x => x.classList.toggle('active', x.dataset.tab === tab));
@@ -2294,6 +2354,7 @@
     }
     if (tab === 'search' && ui.searchStale) { ui.searchStale = false; runSearch(true); }
     if (tab === 'search' && ui.facetsStale) scheduleFacets();
+    if (tab === 'dash') dashShow();
     setRoute(); updateTitle();
   }
   panel.querySelectorAll('.hdr .tab').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
@@ -2434,6 +2495,7 @@
     setTimeout(() => init(), 0);
   }
 
+  const startTab = () => { const v = settings().startTab || 'dash'; return TAB_NAMES[v] ? v : 'dash'; };
   async function init() {
     ui.initDone = true;
     if (appMode) { const r0 = tabStore.get('route', null) || {}; if (TAB_NAMES[r0.tab]) ui.tab = r0.tab; }
@@ -2443,9 +2505,10 @@
     if (appMode) {
       // gemerkte Ansicht dieses Tabs wiederherstellen
       const r = tabStore.get('route', null) || {};
-      if (r.tab === 'ticket' && r.sid) openTicket(r.sid); else showTab(TAB_NAMES[r.tab] ? r.tab : 'search');
+      if (r.tab === 'ticket' && r.sid) openTicket(r.sid); else showTab(TAB_NAMES[r.tab] ? r.tab : startTab());
       return;
     }
+    showTab(startTab());
     // Overlay über MultiData: mit dem dort geöffneten Ticket starten
     const t = await currentPageTicket().catch(() => null);
     if (t) openTicket(t.SID, false);
@@ -2930,6 +2993,182 @@
     const box = $('sResults'); box.innerHTML = ''; box.appendChild(tbl);
   }
   $('sReset').addEventListener('click', () => { ui.activeTpl = null; applyFilterState(defaultFilterState()); readFilters(); renderFavBar(); msg('sMsg', 'Filter zurückgesetzt.'); });
+
+  // ================= ÜBERSICHT (Hauptseite) =================
+  // Links: eigene Ticketliste mit gespeicherten Filtern. Rechts: Widget „Neue Tickets“ mit eigenem Filter,
+  // prüft regelmäßig, markiert Ungesehenes (Zähler am Tab) und erlaubt „✋ Nehmen“ (Bearbeiter = ich).
+  const DASH_KEY = 'mdqt.dash', NEW_KEY = 'mdqt.dashNew', SEEN_KEY = 'mdqt.dashSeen';
+  const dashCfg = () => ({ users: [userItem('__ME__')], custs: [], queues: [], statuses: OPEN_STATUSES, group: false, ...store.get(DASH_KEY, {}) });
+  const newCfg = () => ({ users: [userItem(NONE)], custs: [], queues: [], statuses: ['N', 'NR'], every: 2, pop: true, ...store.get(NEW_KEY, {}) });
+  const custSrc = async q => q && q.length >= 2 ? (await searchCustomersByTickets(q).catch(() => [])).map(c => { ui.custNames[c.id] = c.name; return { value: c.id, label: custLabel(c.id, c.name) }; }) : [];
+  const queueSrc = async q => [...(!q || /^(o|oh|ohn|ohne)/.test(q) ? [{ value: NONE, label: '∅ ohne Queue' }] : []),
+    ...(await loadQueues()).filter(x => !q || x.name.toLowerCase().includes(q)).map(x => ({ value: String(x.id), label: x.name }))];
+  const userSrc = async q => [...(!q || 'ich'.includes(q) ? [userItem('__ME__')] : []), ...(!q || /^(o|oh|ohn|ohne)/.test(q) ? [userItem(NONE)] : []), ...(await userSource()(q))];
+  const dashSave = patch => { store.set(DASH_KEY, { ...dashCfg(), ...patch }); };
+  const newSave = patch => { store.set(NEW_KEY, { ...newCfg(), ...patch }); };
+  const dUsers = multiPick($('dUsers'), { placeholder: 'alle Bearbeiter …', source: userSrc, onChange: () => { dashSave({ users: dUsers.items() }); dashLoad(); } });
+  const dCusts = multiPick($('dCusts'), { placeholder: 'alle Kunden …', source: custSrc, onChange: () => { dashSave({ custs: dCusts.items() }); dashLoad(); } });
+  const dQueues = multiPick($('dQueues'), { placeholder: 'alle Queues …', source: queueSrc, onChange: () => { dashSave({ queues: dQueues.items() }); dashLoad(); } });
+  const nwUsers = multiPick($('nwUsers'), { placeholder: 'alle Bearbeiter …', source: userSrc, onChange: () => { newSave({ users: nwUsers.items() }); newSum(); newLoad(); } });
+  const nwCusts = multiPick($('nwCusts'), { placeholder: 'alle Kunden …', source: custSrc, onChange: () => { newSave({ custs: nwCusts.items() }); newSum(); newLoad(); } });
+  const nwQueues = multiPick($('nwQueues'), { placeholder: 'alle Queues …', source: queueSrc, onChange: () => { newSave({ queues: nwQueues.items() }); newSum(); newLoad(); } });
+  // Status-Auswahl als Liste mit Häkchen
+  function statusChips(box, sel, onChange, list = true) {
+    box.innerHTML = '';
+    for (const [id, name, color] of CFG.statuses) {
+      const c = el('button', { type: 'button', className: 'chip' + (sel.has(id) ? ' sel' : '') }, `<span class="dot" style="background:${color}"></span>${esc(name)}`);
+      c.addEventListener('click', () => { sel.has(id) ? sel.delete(id) : sel.add(id); statusChips(box, sel, onChange, list); onChange(); });
+      box.appendChild(c);
+    }
+  }
+  const dSel = new Set(dashCfg().statuses), nwSel = new Set(newCfg().statuses);
+  const dStatusChanged = () => { dashSave({ statuses: [...dSel] }); dashLoad(); };
+  statusChips($('dStatus'), dSel, dStatusChanged);
+  statusChips($('nwStatus'), nwSel, () => { newSave({ statuses: [...nwSel] }); newSum(); newLoad(); });
+  $('dOpen').addEventListener('click', () => { dSel.clear(); OPEN_STATUSES.forEach(x => dSel.add(x)); statusChips($('dStatus'), dSel, dStatusChanged); dStatusChanged(); });
+  $('dAll').addEventListener('click', () => { dSel.clear(); statusChips($('dStatus'), dSel, dStatusChanged); dStatusChanged(); });
+  ddSummary('ddDStatus', () => {
+    if (!dSel.size || dSel.size === CFG.statuses.length) return ['alle', false];
+    if (dSel.size === OPEN_STATUSES.length && OPEN_STATUSES.every(x => dSel.has(x))) return ['offene', false];
+    return [dSel.size === 1 ? statusInfo([...dSel][0])[1] : `${dSel.size} gewählt`, true];
+  }, ['dStatus'])();
+  $('dGroup').checked = !!dashCfg().group;
+  $('dGroup').addEventListener('change', () => { dashSave({ group: $('dGroup').checked }); dashRender(); });
+  $('nwEvery').value = String(newCfg().every); $('nwPop').checked = newCfg().pop !== false;
+  $('nwEvery').addEventListener('change', () => newSave({ every: Number($('nwEvery').value) }));
+  $('nwPop').addEventListener('change', () => newSave({ pop: $('nwPop').checked }));
+  // gespeicherte Filter einsetzen (nach dem Laden der Benutzernamen, damit die Pillen lesbar sind)
+  function dashApplyCfg() {
+    const d = dashCfg(), n = newCfg(), fix = list => (list || []).map(u => typeof u === 'string' ? userItem(u) : u);
+    dUsers.set(fix(d.users)); dCusts.set(d.custs || []); dQueues.set(d.queues || []);
+    nwUsers.set(fix(n.users)); nwCusts.set(n.custs || []); nwQueues.set(n.queues || []);
+    newSum();
+  }
+  function newSum() {
+    const n = newCfg(), part = (l, all) => l.length ? l.map(x => x.label).join(', ') : all;
+    $('nwSum').textContent = `${part(n.users, 'alle Bearbeiter')} · ${part(n.queues, 'alle Queues')}${n.custs.length ? ' · ' + part(n.custs) : ''} · ${n.statuses.length ? n.statuses.map(x => statusInfo(x)[1]).join(', ') : 'alle Status'}`;
+  }
+  const filterOf = c => ({ users: c.users.map(u => u.value), kndIds: c.custs.map(x => String(x.value)), queues: c.queues.map(x => String(x.value)), statuses: c.statuses, dateMode: 'none', text: '' });
+  const dash = { rows: null, at: 0, seq: 0, newRows: null, newAt: 0, newSeq: 0, known: null };
+  async function dashLoad(silent = false) {
+    const seq = ++dash.seq;
+    if (!silent) msg('dMsg', 'Lade …');
+    try {
+      const res = await searchTickets(filterOf(dashCfg()));
+      if (seq !== dash.seq) return;
+      dash.rows = res.rows; dash.total = res.total; dash.at = Date.now();
+      dashRender(); msg('dMsg', '');
+    } catch (e) { if (seq === dash.seq) msg('dMsg', '✖ ' + e.message, 'err'); }
+  }
+  function dashRender() {
+    const box = $('dList'); box.innerHTML = '';
+    const rows = [...(dash.rows || [])];
+    $('dCount').textContent = dash.rows ? String(dash.total ?? rows.length) : '–';
+    $('dLast').textContent = dash.at ? 'aktualisiert ' + new Date(dash.at).toLocaleTimeString('de-DE').slice(0, 5) : '';
+    if (!dash.rows) return;
+    if (!rows.length) { box.innerHTML = '<div class="hint" style="margin-top:8px">Keine Tickets für diese Filter.</div>'; return; }
+    const stIdx = id => { const i = CFG.statuses.findIndex(x => x[0] === id); return i < 0 ? 99 : i; };
+    const group = $('dGroup').checked;
+    rows.sort((a, b) => (group ? stIdx(a.STATUS) - stIdx(b.STATUS) : 0) || (a.PRIORITY ?? 99) - (b.PRIORITY ?? 99) || b.SID - a.SID);
+    const tbl = el('table', { className: 'dtbl' });
+    tbl.innerHTML = '<thead><tr><th>Prio</th><th>ID</th><th>Betreff</th><th>Kunde</th><th>Status</th><th>Bearbeiter</th><th>Angelegt</th><th class="n">Std.</th></tr></thead>';
+    const tb = el('tbody'); tbl.appendChild(tb);
+    let cur = null;
+    for (const r of rows) {
+      if (group && r.STATUS !== cur) {
+        cur = r.STATUS;
+        const n = rows.filter(x => x.STATUS === cur).length, [, sn, sc] = statusInfo(cur);
+        const gh = el('tr', { className: 'ghead' }); gh.innerHTML = `<td colspan="8"><span class="dot" style="background:${sc}"></span>${esc(sn)} <span class="gcnt">${n}</span></td>`; tb.appendChild(gh);
+      }
+      const [, sn, sc] = statusInfo(r.STATUS), tp = topicOf(r.TITEL);
+      const tr = el('tr', { className: 'r' });
+      tr.innerHTML = `<td style="white-space:nowrap">${prioHtml(r.PRIORITY)}</td><td class="n">${r.SID}</td><td>${esc(r.TITEL)}${tp ? ` <span class="tag topic">🏷 ${esc(tp.name)}</span>` : ''}</td>
+        <td>${esc(String(r.MATCHCODE || '').replace(/^\d+\s*-\s*/, ''))}</td><td style="white-space:nowrap"><span class="dot" style="background:${sc}"></span>${esc(sn)}</td>
+        <td>${esc(r.BEARBEITER_USER_ID || '–')}</td><td>${fmtDate(r.ANLAGE_DATUM)}</td><td class="n">${fmtH(r.SUM_STD)}</td>`;
+      tr.title = 'Klick: öffnen · Mittelklick oder Strg+Klick: in neuem Tab';
+      wbRow(tr, ticketRoute(r.SID), () => openTicket(r.SID));
+      tb.appendChild(tr);
+    }
+    box.appendChild(tbl);
+  }
+  // --- Widget „Neue Tickets“ ---
+  const ago = iso => {
+    const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    return !isFinite(m) ? '' : m < 1 ? 'gerade eben' : m < 60 ? `vor ${m} Min.` : m < 1440 ? `vor ${Math.round(m / 60)} Std.` : `vor ${Math.round(m / 1440)} Tg.`;
+  };
+  async function newLoad() {
+    const seq = ++dash.newSeq;
+    try {
+      const res = await searchTickets(filterOf(newCfg()), { take: 60 });
+      if (seq !== dash.newSeq) return;
+      const rows = res.rows.sort((a, b) => b.SID - a.SID);
+      // neu seit der letzten Prüfung → Pop-up (nicht beim ersten Laden)
+      const before = dash.known;
+      dash.known = new Set(rows.map(r => r.SID));
+      const fresh = before ? rows.filter(r => !before.has(r.SID)) : [];
+      if (fresh.length && newCfg().pop !== false && !(ui.tab === 'dash' && panel.classList.contains('open') && !document.hidden))
+        toast(fresh.length === 1 ? `🆕 Neues Ticket #${fresh[0].SID} ${fresh[0].TITEL || ''}` : `🆕 ${fresh.length} neue Tickets`, 'ok', 8000);
+      dash.newRows = rows; dash.newAt = Date.now();
+      newRender();
+    } catch (e) { if (seq === dash.newSeq) $('nwLast').textContent = '✖ ' + e.message; }
+  }
+  const seenSet = () => new Set(store.get(SEEN_KEY, []));
+  function newRender() {
+    const box = $('nwList'), rows = dash.newRows || [], seen = seenSet();
+    box.innerHTML = '';
+    $('nwCount').textContent = dash.newRows ? String(rows.length) : '–';
+    $('nwLast').textContent = dash.newAt ? `geprüft ${new Date(dash.newAt).toLocaleTimeString('de-DE').slice(0, 5)} · alle ${newCfg().every} Min.` : '';
+    for (const r of rows) {
+      const it = el('div', { className: 'nwi' + (seen.has(r.SID) ? '' : ' fresh') });
+      it.innerHTML = `<a class="nwt"><span class="nwid">${prioHtml(r.PRIORITY).replace(/<\/span>.*/, '</span>')}#${r.SID}</span> <span class="nwtt"></span></a>
+        <div class="nwm"><span class="nwc"></span><span class="hint">${esc(ago(r.ANLAGE_DATUM))}</span></div>
+        <div class="nwb"><span class="dot" style="background:${statusInfo(r.STATUS)[2]}"></span><span class="hint">${esc(statusInfo(r.STATUS)[1])}${r.BEARBEITER_USER_ID ? ' · ' + esc(r.BEARBEITER_USER_ID) : ''}</span><span style="flex:1"></span>
+          <button type="button" class="btn sm" data-a="take" title="Ticket übernehmen (Bearbeiter = ich)">✋ Nehmen</button></div>`;
+      it.querySelector('.nwtt').textContent = r.TITEL || '';
+      it.querySelector('.nwc').textContent = String(r.MATCHCODE || '').replace(/^\d+\s*-\s*/, '');
+      wbLink(it.querySelector('.nwt'), ticketRoute(r.SID), () => { markSeen([r.SID]); openTicket(r.SID); });
+      confirmBtn(it.querySelector('[data-a=take]'), 'Nehmen?', async () => {
+        try {
+          const [t, mid] = await Promise.all([ticketBySid(r.SID), me()]);
+          if (!t) throw new Error(`Ticket ${r.SID} nicht gefunden.`);
+          if (t.BEARBEITER_USER_ID && t.BEARBEITER_USER_ID !== mid) throw new Error(`#${r.SID} wurde inzwischen von ${t.BEARBEITER_USER_ID} übernommen.`);
+          await updateTicket(t, { BEARBEITER_USER_ID: mid });
+          markSeen([r.SID]); log('Ticket übernommen', `#${r.SID} ${r.TITEL || ''}`);
+          toast(`#${r.SID} gehört jetzt dir.`, 'ok', 4000);
+          newLoad(); dashLoad(true);
+        } catch (e) { toast(e.message); }
+      });
+      box.appendChild(it);
+    }
+    if (dash.newRows && !rows.length) box.innerHTML = '<div class="hint" style="margin-top:6px">Keine neuen Tickets 🎉</div>';
+    updateDashBadge();
+  }
+  function markSeen(sids) { const s = seenSet(); sids.forEach(x => s.add(x)); store.set(SEEN_KEY, [...s].slice(-500)); updateDashBadge(); }
+  function updateDashBadge() {
+    const seen = seenSet(), n = (dash.newRows || []).filter(r => !seen.has(r.SID)).length;
+    $('bDash').textContent = n || '';
+  }
+  // Übersicht sichtbar: Liste laden, ungesehene neue Tickets nach kurzer Zeit als gesehen markieren (Hervorhebung bleibt bis zum nächsten Laden)
+  let seenTimer = null;
+  function dashShow() {
+    if (!dash.applied) { dash.applied = true; loadUsers().catch(() => null).then(dashApplyCfg); }
+    if (!dash.rows || Date.now() - dash.at > 60e3) dashLoad(!!dash.rows);
+    if (!dash.newRows || Date.now() - dash.newAt > 60e3) newLoad();
+    clearTimeout(seenTimer);
+    seenTimer = setTimeout(() => { if (ui.tab === 'dash' && dash.newRows) markSeen(dash.newRows.map(r => r.SID)); }, 4000);
+  }
+  $('dReload').addEventListener('click', ev => busy(ev.target, () => dashLoad()));
+  $('nwReload').addEventListener('click', ev => busy(ev.target, () => newLoad()));
+  persistDetails($('nwFilter'), 'dash.newFilter', false);
+  // regelmäßig: Widget nach Intervall (auch wenn ein anderer Reiter offen ist), Liste nur, wenn die Übersicht sichtbar ist
+  setInterval(() => {
+    if (!ui.initDone) return;
+    if (!dash.applied) { dash.applied = true; loadUsers().catch(() => null).then(dashApplyCfg); }
+    if (Date.now() - dash.newAt > newCfg().every * 60e3 - 5000) newLoad();
+    const typing = document.activeElement && document.activeElement.closest && document.activeElement.closest('section[data-tab=dash]');
+    if (ui.tab === 'dash' && !document.hidden && panel.classList.contains('open') && !typing && Date.now() - dash.at > CFG.pollSearchSec * 1000) dashLoad(true);
+  }, 20000);
+  bus.on('tickets', () => { if (dash.rows && ui.tab === 'dash') setTimeout(() => dashLoad(true), 800); if (dash.newRows) setTimeout(newLoad, 900); });
 
   // ================= KONTAKT & TELEFON =================
   // Kontaktfelder aus dem Ticket (alle Felder) und der Firmenadresse. Telefonnummern: Anruf über Teams (bzw. tel:) oder kopieren.
@@ -4968,7 +5207,7 @@
   // ================= EINSTELLUNGEN =================
   function renderSettings() {
     const st = settings();
-    $('stTheme').value = st.theme || 'auto';
+    $('stTheme').value = st.theme || 'auto'; $('stStart').value = st.startTab || 'dash';
     $('stFavBar').checked = st.favBar !== false;
     $('stRemTarget').value = st.remTarget || 'work'; $('stRemMin').value = String(st.remMinutes || 15);
     $('stAiUrl').value = st.aiUrl || ''; $('stAiPrefill').checked = st.aiPrefill !== false; $('stAiOpen').value = aiOpenMode(); $('stAiShort').checked = st.aiShort === true; renderAiTemplates();
@@ -5205,6 +5444,7 @@
   $('stDictCmd').addEventListener('change', () => saveSettings({ ...settings(), dictCommands: $('stDictCmd').checked }));
   $('stDictShow').addEventListener('change', () => { saveSettings({ ...settings(), dictShow: $('stDictShow').checked }); applyDictShow(); });
   $('stPosReset').addEventListener('click', () => { store.set(POS_KEY, {}); applyPos(toastBox, 'toasts'); applyPos(dictBar, 'dict'); applyPos(aiBar, 'ai'); toast('Meldungen stehen wieder am Standardplatz.', 'ok', 3000); });
+  $('stStart').addEventListener('change', () => saveSettings({ ...settings(), startTab: $('stStart').value }));
   $('stFavBar').addEventListener('change', () => { saveSettings({ ...settings(), favBar: $('stFavBar').checked }); renderFavBar(); });
   $('stTheme').addEventListener('change', () => { saveSettings({ ...settings(), theme: $('stTheme').value }); applyTheme(); });
 
