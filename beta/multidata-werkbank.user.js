@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.17
+// @version      1.8.0.18
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -1715,6 +1715,11 @@
   /* ---------- Inbox ---------- */
   #mdqt-panel .ibx{display:flex;gap:12px;padding:6px 8px;border-bottom:1px solid var(--mq-line);cursor:pointer;align-items:flex-start;border-radius:var(--mq-r);transition:background .08s}
   #mdqt-panel .ibx:hover{background:var(--mq-hover)}
+  #mdqt-panel .iday{display:flex;align-items:center;gap:8px;position:sticky;top:-12px;z-index:2;margin:14px 0 4px;padding:8px 10px;
+    background:var(--mq-soft2);border:1px solid var(--mq-border);border-radius:var(--mq-r);font-weight:700;font-size:14px}
+  #mdqt-panel .iday:first-child{margin-top:6px}
+  #mdqt-panel .iday .hint{font-weight:500}
+  #mdqt-panel .ibx .dt{font-variant-numeric:tabular-nums;font-weight:600;color:var(--mq-muted2)}
   #mdqt-panel .ibx.unread{background:var(--mq-unread);box-shadow:inset 3px 0 0 var(--mq-amber)}
   #mdqt-panel .ibx.unread .tt{font-weight:700}
   #mdqt-panel .ibx .ty{flex:0 0 150px;font-size:12px;color:var(--mq-muted2)}
@@ -1942,6 +1947,7 @@
           <div class="c s" style="flex-basis:200px"><select data-ref="iCust"><option value="">Alle Kunden</option></select></div>
           <div class="c s" style="flex-basis:150px"><select data-ref="iRange"><option value="1">Heute</option><option value="7" selected>Letzte 7 Tage</option><option value="14">Letzte 14 Tage</option><option value="30">Letzte 30 Tage</option></select></div>
           <label class="chk" style="margin:0"><input type="checkbox" data-ref="iUnread" checked> nur ungelesene</label>
+          <button class="btn sm sec" data-ref="iSort" title="Sortierung nach Datum umkehren">↓ Neueste zuerst</button>
           <span class="hint" data-ref="iLast" style="flex:1;text-align:right"></span>
           <button class="btn sm sec" data-ref="iRefresh" title="Aktualisieren">↻</button>
           <button class="btn sm sec" data-ref="iAllRead">✓ Alle gelesen</button>
@@ -4786,7 +4792,19 @@
       .filter(i => !$('iUnread').checked || !i.read)
       .filter(i => !$('iCust').value || String(i.kndId) === $('iCust').value)
       .filter(i => (i.date || i.found || '').slice(0, 10) >= from)
-      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      .sort((a, b) => inboxAt(b).localeCompare(inboxAt(a)) * (inboxAsc() ? -1 : 1));
+  }
+  // Datum eines Eintrags (Ereignis, sonst Fund-Zeitpunkt); Sortierung wird gemerkt
+  const inboxAt = i => String(i.date || i.found || '');
+  const inboxAsc = () => store.get('mdqt.inboxSort', 'desc') === 'asc';
+  const syncInboxSort = () => { $('iSort').textContent = inboxAsc() ? '↑ Älteste zuerst' : '↓ Neueste zuerst'; };
+  $('iSort').addEventListener('click', () => { store.set('mdqt.inboxSort', inboxAsc() ? 'desc' : 'asc'); syncInboxSort(); renderInbox(); });
+  syncInboxSort();
+  // Überschrift je Tag: „Heute · Donnerstag, 26.11.2026“
+  const WD_LONG = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+  function dayLabel(day) {
+    const t = todayStr(), rel = day === t ? 'Heute · ' : day === addDays(t, -1) ? 'Gestern · ' : '';
+    return rel + WD_LONG[new Date(day + 'T12:00:00').getDay()] + ', ' + fmtDate(day);
   }
   function renderInbox() {
     renderInboxTypes();
@@ -4800,10 +4818,26 @@
     $('iLast').textContent = st.last ? `zuletzt aktualisiert ${new Date(st.last).toLocaleTimeString('de-DE').slice(0, 5)}` : 'noch nicht geladen';
     const box = $('iList'); box.innerHTML = '';
     const items = inboxItems();
+    let curDay = null;
     for (const i of items) {
+      // neuer Tag → Überschrift mit Anzahl und „Tag gelesen“
+      const day = inboxAt(i).slice(0, 10);
+      if (day !== curDay) {
+        curDay = day;
+        const ofDay = items.filter(x => inboxAt(x).slice(0, 10) === day), unread = ofDay.filter(x => !x.read).length;
+        const h = el('div', { className: 'iday' });
+        h.innerHTML = `<span class="dl"></span><span class="cnt" title="Einträge an diesem Tag">${ofDay.length}</span>${unread ? `<span class="hint">${unread} ungelesen</span>` : ''}<span style="flex:1"></span>`;
+        h.querySelector('.dl').textContent = day ? dayLabel(day) : 'ohne Datum';
+        if (unread) {
+          const b = el('button', { className: 'btn sm sec', textContent: '✓ Tag gelesen', title: 'Alle Einträge dieses Tages als gelesen markieren' });
+          b.addEventListener('click', () => { setInboxRead(ofDay.map(x => x.key), true); renderInbox(); updateBadges(); });
+          h.appendChild(b);
+        }
+        box.appendChild(h);
+      }
       const r = el('a', { className: 'ibx' + (i.read ? '' : ' unread') });
       r.innerHTML = `<div class="ty">${esc(INBOX_TYPES[i.type] || i.type)}</div><div class="bd"><div class="tt"></div><div class="sn"></div></div>
-        <div class="dt">${esc(fmtDateTime(i.date))}</div><button class="btn sm sec" data-a="rd" title="${i.read ? 'als ungelesen markieren' : 'als gelesen markieren'}">${i.read ? '○' : '✓'}</button>`;
+        <div class="dt" title="${esc(fmtDateTime(inboxAt(i)))}">${esc(inboxAt(i).slice(11, 16) || '–')}</div><button class="btn sm sec" data-a="rd" title="${i.read ? 'als ungelesen markieren' : 'als gelesen markieren'}">${i.read ? '○' : '✓'}</button>`;
       r.querySelector('.tt').textContent = `${i.sid ? '#' + i.sid + ' ' : ''}${i.title || ''}${i.cust ? ' · ' + String(i.cust).replace(/^\d+\s*-\s*/, '') : ''}`;
       r.querySelector('.sn').textContent = `${i.from ? (i.type === 'comment' ? userLabel(i.from) : i.from) + ': ' : ''}${i.text || ''}`;
       r.querySelector('[data-a=rd]').addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setInboxRead([i.key], !i.read); renderInbox(); updateBadges(); });
