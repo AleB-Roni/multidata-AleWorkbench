@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.22
+// @version      1.8.0.23
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -3178,7 +3178,14 @@
   const alSave = patch => store.set(AL_KEY, { ...alCfg(), ...patch });
   const alKey = c => JSON.stringify([c.queues.map(x => String(x.value)).sort(), c.custs.map(x => String(x.value)).sort(), [...c.statuses].sort()]);
   const alNote = t => { $('alMsg').textContent = t; };
+  // Läuft die Werkbank im Tickets-Tab von AleRt, direkt dorthin melden (keine Adresse nötig)
+  const alInApp = () => !!(window.__aleRt && typeof window.__aleRt.ticket === 'function');
   async function alSend(count, test = false) {
+    if (alInApp()) {
+      const r = await window.__aleRt.ticket(count, test);
+      if (r && r.ok === false && r.error) throw new Error(r.error);
+      return;
+    }
     const url = String(alCfg().url || 'http://127.0.0.1:8090').trim().replace(/\/+$/, '') + '/v1/ticket';
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ count, test }) });
     if (!r.ok) throw new Error(`AleRt antwortet mit HTTP ${r.status}`);
@@ -3207,7 +3214,8 @@
   const alCusts = multiPick($('alCusts'), { placeholder: 'alle Kunden …', source: custSrc, onChange: () => { alSave({ custs: alCusts.items() }); alTick(true); } });
   const alSel = new Set(alCfg().statuses);
   statusChips($('alStatus'), alSel, () => { alSave({ statuses: [...alSel] }); alTick(true); });
-  { const c = alCfg(); alQueues.set(c.queues); alCusts.set(c.custs); $('alOn').checked = !!c.on; $('alEvery').value = String(c.every); $('alUrl').value = c.url; }
+  { const c = alCfg(); alQueues.set(c.queues); alCusts.set(c.custs); $('alOn').checked = !!c.on; $('alEvery').value = String(c.every); $('alUrl').value = c.url;
+    if (alInApp()) { $('alUrl').disabled = true; $('alUrl').value = ''; $('alUrl').placeholder = 'läuft in AleRt – nicht nötig'; } }
   $('alOn').addEventListener('change', () => { alSave({ on: $('alOn').checked }); if ($('alOn').checked) alTick(true); else alNote('aus'); });
   $('alEvery').addEventListener('change', () => alSave({ every: Number($('alEvery').value) || 2 }));
   $('alUrl').addEventListener('change', () => alSave({ url: $('alUrl').value.trim() || 'http://127.0.0.1:8090' }));
