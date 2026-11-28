@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MultiData Werkbank (Beta)
 // @namespace    https://github.com/lukasebner1998-ship-it/multidata-werkbank
-// @version      1.8.0.21
+// @version      1.8.0.22
 // @description  Ticket-Werkbank für MultiData: Suche, Tickets & Kommentare bearbeiten, Zeiten buchen, Mails senden, Anhänge, Ticket anlegen, QuickClose
 // @author       Lukas Ebner
 // @match        https://csp.synaforce.com/mdweb/*
@@ -2046,6 +2046,20 @@
         </div>
         <div class="hint" style="margin-top:4px">Teams braucht eine Telefonie-Lizenz für Anrufe ins Telefonnetz. Ohne Lizenz die Nummer mit 📋 kopieren. Ist Teams als Standard-App für Telefonlinks eingerichtet, funktioniert auch „tel:“.</div>
         </details>
+        <details class="card set" data-set="alert"><summary>📱 AleRt – Handy-Meldung bei neuen Tickets</summary>
+        <div class="hint">Meldet neue Tickets, die zu diesem Filter passen, an die AleRt-App auf diesem PC – die gibt sie ans Handy weiter. Gesendet wird <b>nur die Anzahl</b> („Neues Ticket“): keine Ticketnummer, kein Betreff, kein Kunde. Eigener Filter, unabhängig von „Neue Tickets“ in der Übersicht – z. B. nur ein Kunde für den Wochenenddienst.</div>
+        <label class="chk" style="display:flex;margin-top:8px"><input type="checkbox" data-ref="alOn"> Handy-Meldung einschalten</label>
+        <label class="l">Queues <span class="hint">(leer = alle)</span></label><div data-ref="alQueues"></div>
+        <label class="l">Kunden <span class="hint">(leer = alle · mind. 2 Zeichen tippen)</span></label><div data-ref="alCusts"></div>
+        <label class="l">Status <span class="hint">(leer = alle)</span></label><div class="chips" data-ref="alStatus"></div>
+        <div class="row" style="margin-top:6px;align-items:flex-end">
+          <div class="c s" style="flex-basis:120px"><label class="l">Prüfen alle</label><select data-ref="alEvery"><option value="1">1 Min.</option><option value="2">2 Min.</option><option value="5">5 Min.</option><option value="10">10 Min.</option></select></div>
+          <div class="c s" style="flex-basis:220px"><label class="l">AleRt-Adresse</label><input type="text" data-ref="alUrl" placeholder="http://127.0.0.1:8090"></div>
+          <button type="button" class="btn sm sec" data-ref="alTest" style="margin-bottom:2px">Test senden</button>
+        </div>
+        <div class="hint" data-ref="alMsg" style="margin-top:6px"></div>
+        <div class="hint" style="margin-top:4px">Gemeldet wird nur, was nach dem Einschalten bzw. nach einer Filteränderung neu dazukommt. Es reicht ein offener Werkbank-Tab (bei mehreren meldet nur einer). Chrome/Edge fragt beim ersten Senden evtl., ob die Seite auf Geräte im lokalen Netzwerk zugreifen darf → zulassen.</div>
+        </details>
         <details class="card set" data-set="remind"><summary>Erinnerungen (Outlook-Kalender)</summary>
         <div class="hint">Der Knopf ⏰ im Ticket-Kopf legt einen Termin mit Ticketnummer, Betreff, Kunde und Links zum Ticket an. Outlook öffnet den Termin vorausgefüllt – dort nur noch „Speichern“.</div>
         <div class="row" style="margin-top:4px">
@@ -3157,6 +3171,54 @@
     const seen = seenSet(), n = (dash.newRows || []).filter(r => !seen.has(r.SID) && !nwHidden(r)).length;
     $('bDash').textContent = n || '';
   }
+  // --- AleRt: Handy-Meldung bei neuen Tickets (eigener Filter, ⚙ → „📱 AleRt“) ---
+  // Schickt NUR die Anzahl neuer Tickets an die AleRt-App auf diesem PC – keine Nummer, kein Betreff, kein Kunde.
+  const AL_KEY = 'mdqt.aleRt', AL_KNOWN = 'mdqt.aleRtKnown';
+  const alCfg = () => ({ on: false, queues: [], custs: [], statuses: ['N', 'NR'], every: 2, url: 'http://127.0.0.1:8090', ...store.get(AL_KEY, {}) });
+  const alSave = patch => store.set(AL_KEY, { ...alCfg(), ...patch });
+  const alKey = c => JSON.stringify([c.queues.map(x => String(x.value)).sort(), c.custs.map(x => String(x.value)).sort(), [...c.statuses].sort()]);
+  const alNote = t => { $('alMsg').textContent = t; };
+  async function alSend(count, test = false) {
+    const url = String(alCfg().url || 'http://127.0.0.1:8090').trim().replace(/\/+$/, '') + '/v1/ticket';
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ count, test }) });
+    if (!r.ok) throw new Error(`AleRt antwortet mit HTTP ${r.status}`);
+  }
+  let alBusy = false, alLast = 0;
+  async function alTick(force = false) {
+    const c = alCfg();
+    if (!c.on || !ui.initDone || alBusy) return;
+    if (!force && Date.now() - alLast < (Number(c.every) || 2) * 60e3) return;
+    alBusy = true; alLast = Date.now();
+    try {
+      const res = await searchTickets({ users: [], kndIds: c.custs.map(x => String(x.value)), queues: c.queues.map(x => String(x.value)),
+        statuses: c.statuses, dateMode: 'none', text: '' }, { take: 100 });
+      const sids = res.rows.map(r => r.SID), key = alKey(c), st = store.get(AL_KNOWN, null);
+      const time = new Date().toLocaleTimeString('de-DE').slice(0, 5);
+      // neuer/geänderter Filter: aktuellen Stand merken, nichts melden
+      if (!st || st.key !== key) { store.set(AL_KNOWN, { key, sids: sids.slice(-1000) }); alNote(`✔ aktiv · ${sids.length} passende Tickets als bekannt gemerkt (${time})`); return; }
+      const known = new Set(st.sids), fresh = sids.filter(s => !known.has(s));
+      if (fresh.length) await alSend(fresh.length); // schlägt das fehl, bleiben sie „neu“ → nächster Versuch
+      store.set(AL_KNOWN, { key, sids: [...new Set([...st.sids, ...sids])].slice(-1000) });
+      alNote(`✔ geprüft ${time}${fresh.length ? ` · ${fresh.length} neue gemeldet` : ''}`);
+    } catch (e) { alNote('✖ ' + e.message + (/fetch|network|Failed/i.test(e.message) ? ' – läuft AleRt?' : '')); }
+    finally { alBusy = false; }
+  }
+  const alQueues = multiPick($('alQueues'), { placeholder: 'alle Queues …', source: queueSrc, onChange: () => { alSave({ queues: alQueues.items() }); alTick(true); } });
+  const alCusts = multiPick($('alCusts'), { placeholder: 'alle Kunden …', source: custSrc, onChange: () => { alSave({ custs: alCusts.items() }); alTick(true); } });
+  const alSel = new Set(alCfg().statuses);
+  statusChips($('alStatus'), alSel, () => { alSave({ statuses: [...alSel] }); alTick(true); });
+  { const c = alCfg(); alQueues.set(c.queues); alCusts.set(c.custs); $('alOn').checked = !!c.on; $('alEvery').value = String(c.every); $('alUrl').value = c.url; }
+  $('alOn').addEventListener('change', () => { alSave({ on: $('alOn').checked }); if ($('alOn').checked) alTick(true); else alNote('aus'); });
+  $('alEvery').addEventListener('change', () => alSave({ every: Number($('alEvery').value) || 2 }));
+  $('alUrl').addEventListener('change', () => alSave({ url: $('alUrl').value.trim() || 'http://127.0.0.1:8090' }));
+  $('alTest').addEventListener('click', ev => busy(ev.target, async () => {
+    try { await alSend(1, true); alNote('✔ Test an AleRt gesendet – schau aufs Handy.'); }
+    catch (e) { alNote('✖ AleRt nicht erreichbar (' + e.message + ') – läuft AleRt auf diesem PC?'); }
+  }));
+  // nur ein Werkbank-Tab prüft (sonst doppelte Meldungen)
+  const alStart = () => setInterval(() => alTick(), 20e3);
+  if (navigator.locks && navigator.locks.request) navigator.locks.request('mdqt-alert-leader', () => { alStart(); return new Promise(() => {}); });
+  else alStart();
   // Übersicht sichtbar: Liste laden, ungesehene neue Tickets nach kurzer Zeit als gesehen markieren (Hervorhebung bleibt bis zum nächsten Laden)
   let seenTimer = null;
   function dashShow() {
